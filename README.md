@@ -1,0 +1,172 @@
+# Svit
+
+Svit is a research-stage agent process runtime. It gives an agent one durable
+state tree, named restricted-Lua scripts, bounded transactional execution,
+snapshots, and forks—without giving guest code an operating system.
+
+The current implementation is a deliberately small vertical slice. It is
+runnable and tested, but it is not yet a production multi-tenant platform or a
+formally verified security boundary.
+
+## Quick start
+
+Run the durable counter example:
+
+```console
+$ cargo run -p svit --example durable_counter
+durable_counter count=9 version=4
+```
+
+The same lifecycle through the Rust API:
+
+```rust
+use svit::{Process, Value, value};
+
+fn main() -> svit::Result<()> {
+    let mut process = Process::builder("svit://local/demo/counter")?
+        .memory(value!({"count": 0}))
+        .build()?;
+
+    process.save_script("counter", r#"
+        function main(input)
+            memory.count = memory.count + input.by
+            return { count = memory.count }
+        end
+    "#)?;
+
+    let activation = process.run("counter", value!({"by": 3}))?;
+    assert_eq!(activation.output, value!({"count": 3}));
+    assert_eq!(
+        process.read("/memory/count")?,
+        Some(&Value::Integer(3)),
+    );
+
+    let snapshot = process.snapshot()?;
+    let restored = Process::restore(&snapshot)?;
+    let child = restored.fork("svit://local/demo/child")?;
+    assert_eq!(child.read("/memory/count")?, Some(&Value::Integer(3)));
+    Ok(())
+}
+```
+
+Run one standalone script through the CLI:
+
+```console
+cargo run -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
+```
+
+The CLI creates a fresh process, installs the script as `main`, executes one
+activation, and prints committed memory, output, and version as JSON. It is a
+smoke-test tool, not a persistent process supervisor.
+
+## What works now
+
+- One committed state root containing `/memory`, `/lib`, and
+  `/system/outbox`.
+- Named script installation and guest-side `scripts.list`, `scripts.read`, and
+  transactional `scripts.save`.
+- Transactional activations: memory, staged scripts, and message intents all
+  commit, or none do.
+- Structured `log.info` records and deterministic buffered `send` intents.
+- Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
+- Forks that copy committed memory and scripts into an independently mutable
+  child without copying the parent's outbox.
+- Configurable execution, heap, value, text, script, log, message, and staged
+  script limits.
+- Typed host activation hooks that may rewrite, deny, or observe activations.
+- Reflection over committed memory and the named script library.
+
+## Svit Lua 1
+
+A named script defines `main(input)`. The initial guest surface is:
+
+```text
+memory
+input
+scripts.list()
+scripts.read(name)
+scripts.save(name, source, documentation?)
+log.info(message, fields?)
+send(process_address, body)
+```
+
+Svit Lua is a versioned restricted language, not full Lua or Luau. It exposes
+selected base functions plus table, string, math, UTF-8, and bit operations.
+Randomness is removed from math. Guest code has no `os`, `io`, `debug`, package
+loader, `require`, `loadstring`, FFI, filesystem, network, environment, host
+process, wall clock, or ambient randomness access.
+
+Persistent values are null, booleans, signed integers, finite floats, text,
+arrays, and text-keyed maps. Functions, threads, userdata, cycles, sparse or
+mixed tables, non-text map keys, NaN, and infinity cannot cross a commit
+boundary.
+
+## Executable examples
+
+Every Rust example contains assertions and deterministic output:
+
+```console
+cargo run -p svit --example durable_counter
+cargo run -p svit --example self_authoring_library
+cargo run -p svit --example atomic_outbox
+cargo run -p svit --example fork_research
+cargo run -p svit --example sandbox_limits
+```
+
+They cover persistence and restore, functional self-reflection, rollback of a
+state-plus-message transaction, isolated forks, denied ambient APIs, and a
+bounded infinite loop. See [examples/README.md](examples/README.md), or run all
+of them with `just examples`.
+
+## Current security status
+
+The runtime starts a fresh sandboxed Luau VM for every activation and builds
+the guest environment from an explicit allowlist. Guest heap growth and VM
+interrupt ticks are limited; persistent values and snapshots are bounded and
+validated; failures leave committed state unchanged; guest-visible interpreter
+diagnostics are capped.
+
+Those controls do not establish a formal hostile-tenant isolation proof. The
+interpreter is native code in the host process, interrupt ticks are not an
+independent wall-clock deadline, and a SHA-256 snapshot hash provides integrity
+rather than provenance or authorization. Deploy untrusted tenants behind a
+Wasm or OS process boundary and enforce an outer deadline until stronger
+evidence exists.
+
+See the canonical [threat model](knowledge/security/threat-model.md),
+[security-testing requirements](knowledge/security/security-testing.md), and
+[limitations](knowledge/operations/limitations.md). Report vulnerabilities as
+described in [SECURITY.md](SECURITY.md).
+
+## Not implemented
+
+Svit does not yet provide scheduling, timers, background activations, message
+delivery, retries, global routing, authenticated identity, authorization,
+external capabilities, filesystem or network projections, secrets, durable
+database storage, distributed migration, exactly-once effects, snapshot
+signatures, or formal verification. Process addresses are validated logical
+identifiers; they are not authenticated principals.
+
+The broader direction and alternatives are in the
+[agent process runtime research proposal](docs/research-proposal.md). Research
+goals are not current API promises.
+
+## Development
+
+The repository uses a pinned Rust toolchain and `just` as its command index:
+
+```console
+just build
+just test
+just examples
+just check
+just pre-pr
+```
+
+Durable engineering decisions live in the OKF v0.2 `knowledge/` bundle. Read
+[AGENTS.md](AGENTS.md) and [CONTRIBUTING.md](CONTRIBUTING.md) before changing
+runtime behavior.
+
+## License
+
+MIT. See [LICENSE](LICENSE) and [NOTICE](NOTICE).

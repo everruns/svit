@@ -1,0 +1,4 @@
+# Keep exceptions narrow, documented, and temporary. There are none today.
+
+[advisories]
+ignore = []

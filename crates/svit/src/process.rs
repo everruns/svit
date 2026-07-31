@@ -1,0 +1,1322 @@
+// The process root is the only durable guest state. Activations work on Lua
+// copies and replace the Arc root only after every value and staged script has
+// validated, providing rollback without a mutable undo log.
+
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+
+use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value as LuaValue, VmState};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::error::sanitize_diagnostic;
+use crate::hooks::{
+    ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction, SharedHook,
+};
+use crate::{Error, Limits, Result, Script, Value};
+
+const SNAPSHOT_FORMAT: u32 = 1;
+const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
+const EXECUTION_LIMIT_SENTINEL: &str = "__svit_execution_limit__";
+const LOG_LIMIT_SENTINEL: &str = "__svit_log_limit__";
+const MESSAGE_LIMIT_SENTINEL: &str = "__svit_message_limit__";
+const SCRIPT_LIMIT_SENTINEL: &str = "__svit_script_limit__";
+
+/// Stable logical address of one agent process.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct ProcessId(String);
+
+impl ProcessId {
+    /// Parses and validates a logical process address.
+    pub fn new(value: impl Into<String>) -> Result<Self> {
+        let value = value.into();
+        validate_process_id(&value)?;
+        Ok(Self(value))
+    }
+
+    /// Returns the address string.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProcessId {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+/// One structured log record emitted during an activation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LogRecord {
+    /// Human-readable message.
+    pub message: String,
+    /// Structured fields supplied by the script.
+    pub fields: Value,
+}
+
+/// A committed intent to deliver a message to another process.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessageIntent {
+    /// Deterministic identifier derived from sender, commit version, and index.
+    pub message_id: String,
+    /// Destination logical process address.
+    pub to: ProcessId,
+    /// Persistent message body.
+    pub body: Value,
+}
+
+/// Result of a successfully committed activation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Activation {
+    /// Value returned by the script's `main(input)` function.
+    pub output: Value,
+    /// Structured logs emitted during this activation.
+    pub logs: Vec<LogRecord>,
+    /// Newly committed message intents.
+    pub messages: Vec<MessageIntent>,
+    /// Process version after the commit.
+    pub version: u64,
+    /// SHA-256 of the canonical committed root encoding.
+    pub root_hash: String,
+    /// Number of Luau interrupt ticks consumed.
+    pub interrupt_ticks: u64,
+}
+
+/// Builder for a process with initial memory, limits, and frozen hooks.
+pub struct ProcessBuilder {
+    id: ProcessId,
+    memory: Value,
+    limits: Limits,
+    hooks: Vec<SharedHook>,
+}
+
+impl ProcessBuilder {
+    /// Replaces the initial `/memory` value.
+    pub fn memory(mut self, memory: Value) -> Self {
+        self.memory = memory;
+        self
+    }
+
+    /// Replaces the process resource limits.
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
+    }
+
+    /// Registers a typed interceptor hook.
+    pub fn hook(mut self, hook: impl ActivationHook + 'static) -> Self {
+        self.hooks.push(Arc::new(hook));
+        self
+    }
+
+    /// Validates the initial state and constructs the process.
+    pub fn build(self) -> Result<Process> {
+        self.limits.validate()?;
+        self.memory.validate(&self.limits, false)?;
+        Ok(Process {
+            id: self.id,
+            version: 0,
+            root: Arc::new(initial_root(self.memory)),
+            limits: self.limits,
+            hooks: self.hooks.into(),
+        })
+    }
+}
+
+/// In-memory, serializable agent process.
+pub struct Process {
+    id: ProcessId,
+    version: u64,
+    root: Arc<Value>,
+    limits: Limits,
+    hooks: Arc<[SharedHook]>,
+}
+
+impl Process {
+    /// Starts a process builder for a globally meaningful logical address.
+    pub fn builder(id: impl Into<String>) -> Result<ProcessBuilder> {
+        Ok(ProcessBuilder {
+            id: ProcessId::new(id)?,
+            memory: Value::empty_map(),
+            limits: Limits::default(),
+            hooks: Vec::new(),
+        })
+    }
+
+    /// Creates a process with default limits and empty memory.
+    pub fn new(id: impl Into<String>) -> Result<Self> {
+        Self::builder(id)?.build()
+    }
+
+    /// Returns this process's stable logical address.
+    pub fn id(&self) -> &ProcessId {
+        &self.id
+    }
+
+    /// Returns the current committed version.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Returns the configured limits.
+    pub fn limits(&self) -> &Limits {
+        &self.limits
+    }
+
+    /// Returns the SHA-256 integrity hash of the canonical committed root.
+    ///
+    /// This detects accidental or malicious byte changes but does not
+    /// authenticate who created the state.
+    pub fn root_hash(&self) -> String {
+        root_hash(self.root.as_ref()).expect("validated process roots serialize")
+    }
+
+    /// Reads a committed value by slash-separated path.
+    pub fn read(&self, path: &str) -> Result<Option<&Value>> {
+        if path.is_empty() || path == "/" {
+            return Ok(Some(self.root.as_ref()));
+        }
+        let path = path
+            .strip_prefix('/')
+            .ok_or_else(|| Error::InvalidPath(path.into()))?;
+        let mut current = self.root.as_ref();
+        for segment in path.split('/') {
+            if segment.is_empty() || segment == "." || segment == ".." {
+                return Err(Error::InvalidPath(path.into()));
+            }
+            current = match current {
+                Value::Map(values) => match values.get(segment) {
+                    Some(value) => value,
+                    None => return Ok(None),
+                },
+                Value::Array(values) => {
+                    let index = segment
+                        .parse::<usize>()
+                        .map_err(|_| Error::InvalidPath(path.into()))?;
+                    match values.get(index) {
+                        Some(value) => value,
+                        None => return Ok(None),
+                    }
+                }
+                _ => return Err(Error::InvalidPath(path.into())),
+            };
+        }
+        Ok(Some(current))
+    }
+
+    /// Saves or replaces a named script and commits a new process version.
+    pub fn save_script(&mut self, name: &str, source: impl Into<String>) -> Result<()> {
+        self.save_script_record(name, Script::new(source))
+    }
+
+    /// Saves a script record with discoverable documentation.
+    pub fn save_script_record(&mut self, name: &str, script: Script) -> Result<()> {
+        validate_script_name(name)?;
+        script_value(&script).validate(&self.limits, true)?;
+        validate_script_source(name, script.source(), &self.limits)?;
+
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let lib = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
+        lib.insert(name.into(), Value::Script(script));
+        self.root = Arc::new(Value::Map(root));
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Returns a stored script record.
+    pub fn script(&self, name: &str) -> Option<&Script> {
+        let root = root_map(self.root.as_ref()).ok()?;
+        let lib = root_map(root.get("lib")?).ok()?;
+        match lib.get(name)? {
+            Value::Script(script) => Some(script),
+            _ => None,
+        }
+    }
+
+    /// Lists stored script names in deterministic order.
+    pub fn script_names(&self) -> Vec<String> {
+        root_map(self.root.as_ref())
+            .ok()
+            .and_then(|root| root.get("lib"))
+            .and_then(|lib| root_map(lib).ok())
+            .map(|lib| lib.keys().cloned().collect())
+            .unwrap_or_default()
+    }
+
+    /// Returns every committed but not externally acknowledged message intent.
+    pub fn outbox(&self) -> Result<Vec<MessageIntent>> {
+        let root = root_map(self.root.as_ref())?;
+        let system = root_map(root.get("system").expect("validated process root"))?;
+        let Value::Array(values) = system.get("outbox").expect("validated process root") else {
+            return Err(Error::InvalidSnapshot(
+                "/system/outbox is not an array".into(),
+            ));
+        };
+        values.iter().map(message_from_value).collect()
+    }
+
+    /// Invokes a named script transactionally.
+    ///
+    /// The script must define `main(input)`. Any error leaves memory, scripts,
+    /// outbox, and version unchanged.
+    pub fn run(&mut self, script: &str, input: Value) -> Result<Activation> {
+        let version_before = self.version;
+        let mut request = Ok(ActivationRequest {
+            script: script.into(),
+            input,
+        });
+
+        if !self.hooks.is_empty() {
+            for hook in self.hooks.iter() {
+                let current = match request {
+                    Ok(current) => current,
+                    Err(_) => break,
+                };
+                request = match hook.before_activation(current) {
+                    HookAction::Continue(current) => Ok(current),
+                    HookAction::Cancel(reason) => Err(Error::HookCancelled(reason)),
+                };
+            }
+        }
+
+        let event_script = request
+            .as_ref()
+            .map(|request| request.script.clone())
+            .unwrap_or_else(|_| script.into());
+        let result = request.and_then(|request| self.run_inner(request));
+
+        if !self.hooks.is_empty() {
+            let status = match &result {
+                Ok(activation) => ActivationStatus::Committed {
+                    version: activation.version,
+                },
+                Err(error) => ActivationStatus::Failed {
+                    error: sanitize_diagnostic(error),
+                },
+            };
+            let event = ActivationEvent {
+                process_id: self.id.clone(),
+                script: event_script,
+                version_before,
+                status,
+            };
+            for hook in self.hooks.iter() {
+                hook.after_activation(&event);
+            }
+        }
+
+        result
+    }
+
+    /// Serializes a committed process boundary.
+    pub fn snapshot(&self) -> Result<Vec<u8>> {
+        let snapshot = Snapshot {
+            format: SNAPSHOT_FORMAT,
+            id: self.id.clone(),
+            version: self.version,
+            root: self.root.as_ref().clone(),
+            root_hash: self.root_hash(),
+            limits: self.limits.clone(),
+        };
+        serde_json::to_vec(&snapshot)
+            .map_err(|error| Error::InvalidSnapshot(sanitize_diagnostic(error)))
+    }
+
+    /// Restores a process from a committed snapshot.
+    ///
+    /// Host hooks are intentionally not serialized and must be attached by the
+    /// host when constructing a new policy boundary.
+    pub fn restore(bytes: &[u8]) -> Result<Self> {
+        // THREAT[TM-SNAP-001]: Bound untrusted bytes before the JSON decoder
+        // can allocate from attacker-controlled lengths.
+        if bytes.len() > MAX_SNAPSHOT_BYTES {
+            return Err(Error::InvalidSnapshot(
+                "snapshot byte limit exceeded".into(),
+            ));
+        }
+        let snapshot: Snapshot = serde_json::from_slice(bytes)
+            .map_err(|error| Error::InvalidSnapshot(sanitize_diagnostic(error)))?;
+        if snapshot.format != SNAPSHOT_FORMAT {
+            return Err(Error::InvalidSnapshot(format!(
+                "unsupported format {}",
+                snapshot.format
+            )));
+        }
+        snapshot.limits.validate()?;
+        validate_root(&snapshot.root, &snapshot.limits)?;
+        // THREAT[TM-SNAP-001]: Recompute integrity after decoding and complete
+        // invariant validation. Hashes detect corruption, not provenance.
+        if root_hash(&snapshot.root)? != snapshot.root_hash {
+            return Err(Error::InvalidSnapshot("root hash mismatch".into()));
+        }
+        Ok(Self {
+            id: snapshot.id,
+            version: snapshot.version,
+            root: Arc::new(snapshot.root),
+            limits: snapshot.limits,
+            hooks: Arc::from([]),
+        })
+    }
+
+    /// Creates an independent child at the current committed boundary.
+    ///
+    /// Memory and scripts are copied. Already-committed parent message intents
+    /// are not duplicated into the child.
+    pub fn fork(&self, child_id: impl Into<String>) -> Result<Self> {
+        // THREAT[TM-FORK-001]: Clone the committed root before clearing
+        // process-local delivery state; subsequent child commits replace only
+        // the child's root.
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let system = root_map_mut(root.get_mut("system").expect("validated process root"))?;
+        system.insert("outbox".into(), Value::Array(Vec::new()));
+        Ok(Self {
+            id: ProcessId::new(child_id)?,
+            version: self.version,
+            root: Arc::new(Value::Map(root)),
+            limits: self.limits.clone(),
+            hooks: Arc::clone(&self.hooks),
+        })
+    }
+
+    fn run_inner(&mut self, request: ActivationRequest) -> Result<Activation> {
+        request.input.validate(&self.limits, false)?;
+        let script = self
+            .script(&request.script)
+            .cloned()
+            .ok_or_else(|| Error::ScriptNotFound(request.script.clone()))?;
+        let memory = self
+            .read("/memory")?
+            .expect("validated process root")
+            .clone();
+
+        let lua = secure_lua(&self.limits)?;
+        let array_tags = Arc::new(Mutex::new(HashSet::new()));
+        let logs = Arc::new(Mutex::new(Vec::new()));
+        let messages = Arc::new(Mutex::new(Vec::<StagedMessage>::new()));
+        let staged_scripts = Arc::new(Mutex::new(Vec::<(String, Script)>::new()));
+        let interrupt_ticks = Arc::new(AtomicU64::new(0));
+
+        install_interrupt(&lua, &self.limits, Arc::clone(&interrupt_ticks));
+        let environment = build_environment(
+            &lua,
+            &memory,
+            &request.input,
+            &self.script_records(),
+            &self.limits,
+            Arc::clone(&array_tags),
+            Arc::clone(&logs),
+            Arc::clone(&messages),
+            Arc::clone(&staged_scripts),
+        )?;
+
+        lua.load(script.source())
+            .set_name(format!("@/lib/{}.lua", request.script))
+            .set_environment(environment.clone())
+            .exec()
+            .map_err(map_lua_error)?;
+        let main: Function = environment
+            .get("main")
+            .map_err(|_| Error::Script("script must define main(input)".into()))?;
+        let input_lua = environment
+            .get::<LuaValue>("input")
+            .map_err(map_lua_error)?;
+        let output_lua: LuaValue = main.call(input_lua).map_err(map_lua_error)?;
+
+        let tags = lock(&array_tags)?;
+        let output = persistent_from_lua(output_lua, &self.limits, &tags)?;
+        let memory_lua = environment
+            .get::<LuaValue>("memory")
+            .map_err(map_lua_error)?;
+        let new_memory = persistent_from_lua(memory_lua, &self.limits, &tags)?;
+        drop(tags);
+        output.validate(&self.limits, false)?;
+        new_memory.validate(&self.limits, false)?;
+
+        let staged_scripts = lock(&staged_scripts)?.clone();
+        for (name, script) in &staged_scripts {
+            validate_script_name(name)?;
+            script_value(script).validate(&self.limits, true)?;
+            validate_script_source(name, script.source(), &self.limits)?;
+        }
+
+        let version = self.version + 1;
+        let staged_messages = lock(&messages)?.clone();
+        let committed_messages = staged_messages
+            .into_iter()
+            .enumerate()
+            .map(|(index, message)| MessageIntent {
+                // THREAT[TM-MSG-001]: Sender and ordering components are
+                // derived by the host, never accepted from guest memory.
+                message_id: format!("{}:{version}:{index}", self.id),
+                to: message.to,
+                body: message.body,
+            })
+            .collect::<Vec<_>>();
+
+        let mut root = root_map(self.root.as_ref())?.clone();
+        root.insert("memory".into(), new_memory);
+        let lib = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
+        for (name, script) in staged_scripts {
+            lib.insert(name, Value::Script(script));
+        }
+        let system = root_map_mut(root.get_mut("system").expect("validated process root"))?;
+        let Value::Array(outbox) = system.get_mut("outbox").expect("validated process root") else {
+            return Err(Error::InvalidSnapshot(
+                "/system/outbox is not an array".into(),
+            ));
+        };
+        outbox.extend(committed_messages.iter().map(message_to_value));
+
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.limits)?;
+        // THREAT[TM-EFF-001]: This is the only activation commit point. Every
+        // fallible guest conversion and staged-script validation is complete.
+        self.root = Arc::new(new_root);
+        self.version = version;
+
+        Ok(Activation {
+            output,
+            logs: lock(&logs)?.clone(),
+            messages: committed_messages,
+            version,
+            root_hash: self.root_hash(),
+            interrupt_ticks: interrupt_ticks.load(Ordering::Relaxed),
+        })
+    }
+
+    fn script_records(&self) -> BTreeMap<String, Script> {
+        self.script_names()
+            .into_iter()
+            .filter_map(|name| self.script(&name).cloned().map(|script| (name, script)))
+            .collect()
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Snapshot {
+    format: u32,
+    id: ProcessId,
+    version: u64,
+    root: Value,
+    root_hash: String,
+    limits: Limits,
+}
+
+#[derive(Clone)]
+struct StagedMessage {
+    to: ProcessId,
+    body: Value,
+}
+
+fn initial_root(memory: Value) -> Value {
+    Value::Map(BTreeMap::from([
+        ("lib".into(), Value::empty_map()),
+        ("memory".into(), memory),
+        (
+            "system".into(),
+            Value::Map(BTreeMap::from([(
+                "outbox".into(),
+                Value::Array(Vec::new()),
+            )])),
+        ),
+    ]))
+}
+
+fn validate_root(root: &Value, limits: &Limits) -> Result<()> {
+    let root = root_map(root)?;
+    if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
+        != BTreeSet::from(["lib", "memory", "system"])
+    {
+        return Err(Error::InvalidSnapshot(
+            "process root must contain exactly lib, memory, and system".into(),
+        ));
+    }
+    let memory = root
+        .get("memory")
+        .ok_or_else(|| Error::InvalidSnapshot("missing /memory".into()))?;
+    memory.validate(limits, false)?;
+
+    let lib = root_map(
+        root.get("lib")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /lib".into()))?,
+    )?;
+    Value::Map(lib.clone()).validate(limits, true)?;
+    for (name, value) in lib {
+        validate_script_name(name)?;
+        let Value::Script(script) = value else {
+            return Err(Error::InvalidSnapshot(format!(
+                "/lib/{name} is not a script"
+            )));
+        };
+        script_value(script).validate(limits, true)?;
+        validate_script_source(name, script.source(), limits)?;
+    }
+
+    let system = root_map(
+        root.get("system")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /system".into()))?,
+    )?;
+    if system.keys().map(String::as_str).collect::<BTreeSet<_>>() != BTreeSet::from(["outbox"]) {
+        return Err(Error::InvalidSnapshot(
+            "/system must contain exactly outbox".into(),
+        ));
+    }
+    let Value::Array(outbox) = system
+        .get("outbox")
+        .ok_or_else(|| Error::InvalidSnapshot("missing /system/outbox".into()))?
+    else {
+        return Err(Error::InvalidSnapshot(
+            "/system/outbox is not an array".into(),
+        ));
+    };
+    Value::Array(outbox.clone()).validate(limits, false)?;
+    for message in outbox {
+        message_from_value(message)?;
+    }
+    Ok(())
+}
+
+fn validate_process_id(value: &str) -> Result<()> {
+    if value.len() > 256
+        || !value.starts_with("svit://")
+        || value[7..].is_empty()
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err(Error::InvalidValue(format!(
+            "process address must be svit:// followed by a non-empty path: {value}"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_script_name(name: &str) -> Result<()> {
+    if name.is_empty()
+        || name.len() > 64
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.'))
+    {
+        return Err(Error::InvalidScriptName(name.into()));
+    }
+    Ok(())
+}
+
+fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<()> {
+    if source.len() > limits.max_script_bytes {
+        return Err(Error::ResourceLimitExceeded("script source"));
+    }
+    let lua = secure_lua(limits)?;
+    lua.load(source)
+        .set_name(format!("@/lib/{name}.lua"))
+        .into_function()
+        .map(|_| ())
+        .map_err(map_lua_error)
+}
+
+fn secure_lua(limits: &Limits) -> Result<Lua> {
+    // THREAT[TM-ESC-001]: Build the VM from an explicit library allowlist;
+    // guest chunks later receive a still smaller explicit environment.
+    let libraries = StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::BIT;
+    // THREAT[TM-ISO-001]: A fresh VM per activation prevents mutable globals
+    // and interpreter objects from crossing process boundaries.
+    let lua = Lua::new_with(libraries, LuaOptions::default()).map_err(map_lua_error)?;
+    lua.sandbox(true).map_err(map_lua_error)?;
+    let absolute_limit = lua
+        .used_memory()
+        .checked_add(limits.max_heap_bytes)
+        .ok_or(Error::ResourceLimitExceeded("guest heap"))?;
+    // THREAT[TM-DOS-002]: mlua's allocator limit bounds guest VM growth.
+    lua.set_memory_limit(absolute_limit)
+        .map_err(map_lua_error)?;
+    Ok(lua)
+}
+
+fn install_interrupt(lua: &Lua, limits: &Limits, ticks: Arc<AtomicU64>) {
+    // THREAT[TM-DOS-001]: Luau interrupt ticks stop unbounded guest loops.
+    // The caller still owns an outer wall-time boundary for native defects.
+    let maximum = limits.max_interrupt_ticks;
+    lua.set_interrupt(move |_| {
+        let current = ticks.fetch_add(1, Ordering::Relaxed);
+        if current >= maximum {
+            return Err(mlua::Error::RuntimeError(EXECUTION_LIMIT_SENTINEL.into()));
+        }
+        Ok(VmState::Continue)
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_environment(
+    lua: &Lua,
+    memory: &Value,
+    input: &Value,
+    scripts: &BTreeMap<String, Script>,
+    limits: &Limits,
+    array_tags: Arc<Mutex<HashSet<usize>>>,
+    logs: Arc<Mutex<Vec<LogRecord>>>,
+    messages: Arc<Mutex<Vec<StagedMessage>>>,
+    staged_scripts: Arc<Mutex<Vec<(String, Script)>>>,
+) -> Result<Table> {
+    let environment = lua.create_table().map_err(map_lua_error)?;
+    let globals = lua.globals();
+
+    for name in [
+        "assert", "error", "ipairs", "next", "pairs", "select", "tonumber", "tostring", "type",
+    ] {
+        let value = globals.get::<LuaValue>(name).map_err(map_lua_error)?;
+        environment.set(name, value).map_err(map_lua_error)?;
+    }
+    for name in ["table", "string", "utf8", "bit32"] {
+        if let Ok(value) = globals.get::<LuaValue>(name) {
+            environment.set(name, value).map_err(map_lua_error)?;
+        }
+    }
+    environment
+        .set("math", filtered_math(lua, &globals)?)
+        .map_err(map_lua_error)?;
+    environment
+        .set("_VERSION", "Svit Lua 1")
+        .map_err(map_lua_error)?;
+
+    let memory_lua = lua_from_persistent(lua, memory, false, &array_tags)?;
+    let input_lua = lua_from_persistent(lua, input, true, &array_tags)?;
+    environment
+        .set("memory", memory_lua)
+        .map_err(map_lua_error)?;
+    environment.set("input", input_lua).map_err(map_lua_error)?;
+
+    let scripts_api = lua.create_table().map_err(map_lua_error)?;
+    let script_names = scripts.keys().cloned().collect::<Vec<_>>();
+    scripts_api
+        .set(
+            "list",
+            lua.create_function(move |lua, ()| {
+                let result = lua.create_table()?;
+                for (index, name) in script_names.iter().enumerate() {
+                    result.raw_set(index + 1, name.as_str())?;
+                }
+                result.set_readonly(true);
+                Ok(result)
+            })
+            .map_err(map_lua_error)?,
+        )
+        .map_err(map_lua_error)?;
+
+    let readable_scripts = scripts.clone();
+    scripts_api
+        .set(
+            "read",
+            lua.create_function(move |lua, name: String| match readable_scripts.get(&name) {
+                Some(script) => {
+                    let record = lua.create_table()?;
+                    record.set("source", script.source())?;
+                    record.set("documentation", script.documentation())?;
+                    record.set_readonly(true);
+                    Ok(LuaValue::Table(record))
+                }
+                None => Ok(LuaValue::Nil),
+            })
+            .map_err(map_lua_error)?,
+        )
+        .map_err(map_lua_error)?;
+
+    let staged_for_save = Arc::clone(&staged_scripts);
+    let maximum_scripts = limits.max_staged_scripts;
+    let maximum_script_bytes = limits.max_script_bytes;
+    scripts_api
+        .set(
+            "save",
+            lua.create_function(
+                move |_, (name, source, documentation): (String, String, Option<String>)| {
+                    if source.len() > maximum_script_bytes {
+                        return Err(mlua::Error::RuntimeError(
+                            "script source is too large".into(),
+                        ));
+                    }
+                    let mut staged = lock_lua(&staged_for_save)?;
+                    if staged.len() >= maximum_scripts {
+                        return Err(mlua::Error::RuntimeError(SCRIPT_LIMIT_SENTINEL.into()));
+                    }
+                    staged.push((
+                        name,
+                        Script::new(source).with_documentation(documentation.unwrap_or_default()),
+                    ));
+                    Ok(())
+                },
+            )
+            .map_err(map_lua_error)?,
+        )
+        .map_err(map_lua_error)?;
+    scripts_api.set_readonly(true);
+    environment
+        .set("scripts", scripts_api)
+        .map_err(map_lua_error)?;
+
+    let log_api = lua.create_table().map_err(map_lua_error)?;
+    let logs_for_info = Arc::clone(&logs);
+    let tags_for_log = Arc::clone(&array_tags);
+    let limits_for_log = limits.clone();
+    let maximum_logs = limits.max_logs;
+    log_api
+        .set(
+            "info",
+            lua.create_function(move |_, (message, fields): (String, Option<LuaValue>)| {
+                let mut logs = lock_lua(&logs_for_info)?;
+                if logs.len() >= maximum_logs {
+                    return Err(mlua::Error::RuntimeError(LOG_LIMIT_SENTINEL.into()));
+                }
+                let fields = match fields {
+                    Some(fields) => {
+                        let tags = lock_lua(&tags_for_log)?;
+                        persistent_from_lua(fields, &limits_for_log, &tags)
+                            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?
+                    }
+                    None => Value::Null,
+                };
+                logs.push(LogRecord { message, fields });
+                Ok(())
+            })
+            .map_err(map_lua_error)?,
+        )
+        .map_err(map_lua_error)?;
+    log_api.set_readonly(true);
+    environment.set("log", log_api).map_err(map_lua_error)?;
+
+    let messages_for_send = Arc::clone(&messages);
+    let tags_for_send = Arc::clone(&array_tags);
+    let limits_for_send = limits.clone();
+    let maximum_messages = limits.max_messages;
+    environment
+        .set(
+            "send",
+            lua.create_function(move |_, (to, body): (String, LuaValue)| {
+                let to = ProcessId::new(to)
+                    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+                let mut messages = lock_lua(&messages_for_send)?;
+                if messages.len() >= maximum_messages {
+                    return Err(mlua::Error::RuntimeError(MESSAGE_LIMIT_SENTINEL.into()));
+                }
+                let tags = lock_lua(&tags_for_send)?;
+                let body = persistent_from_lua(body, &limits_for_send, &tags)
+                    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
+                messages.push(StagedMessage { to, body });
+                Ok(())
+            })
+            .map_err(map_lua_error)?,
+        )
+        .map_err(map_lua_error)?;
+
+    Ok(environment)
+}
+
+fn filtered_math(lua: &Lua, globals: &Table) -> Result<Table> {
+    let source: Table = globals.get("math").map_err(map_lua_error)?;
+    let result = lua.create_table().map_err(map_lua_error)?;
+    for pair in source.clone().pairs::<LuaValue, LuaValue>() {
+        let (key, value) = pair.map_err(map_lua_error)?;
+        let denied = matches!(&key, LuaValue::String(key) if matches!(key.to_str().ok().as_deref(), Some("random" | "randomseed")));
+        if !denied {
+            result.raw_set(key, value).map_err(map_lua_error)?;
+        }
+    }
+    result.set_readonly(true);
+    Ok(result)
+}
+
+fn lua_from_persistent(
+    lua: &Lua,
+    value: &Value,
+    readonly: bool,
+    array_tags: &Arc<Mutex<HashSet<usize>>>,
+) -> Result<LuaValue> {
+    match value {
+        Value::Null => Ok(LuaValue::Nil),
+        Value::Bool(value) => Ok(LuaValue::Boolean(*value)),
+        Value::Integer(value) => Ok(LuaValue::Integer(*value)),
+        Value::Number(value) if value.is_finite() => Ok(LuaValue::Number(*value)),
+        Value::Number(_) => Err(Error::InvalidValue("numbers must be finite".into())),
+        Value::String(value) => lua
+            .create_string(value)
+            .map(LuaValue::String)
+            .map_err(map_lua_error),
+        Value::Array(values) => {
+            let table = lua.create_table().map_err(map_lua_error)?;
+            for (index, value) in values.iter().enumerate() {
+                table
+                    .raw_set(
+                        index + 1,
+                        lua_from_persistent(lua, value, readonly, array_tags)?,
+                    )
+                    .map_err(map_lua_error)?;
+            }
+            lock(array_tags)?.insert(table.to_pointer() as usize);
+            if readonly {
+                table.set_readonly(true);
+            }
+            Ok(LuaValue::Table(table))
+        }
+        Value::Map(values) => {
+            let table = lua.create_table().map_err(map_lua_error)?;
+            for (key, value) in values {
+                table
+                    .raw_set(
+                        key.as_str(),
+                        lua_from_persistent(lua, value, readonly, array_tags)?,
+                    )
+                    .map_err(map_lua_error)?;
+            }
+            if readonly {
+                table.set_readonly(true);
+            }
+            Ok(LuaValue::Table(table))
+        }
+        Value::Script(_) => Err(Error::InvalidValue(
+            "script records cannot be passed to Lua as data".into(),
+        )),
+    }
+}
+
+fn persistent_from_lua(
+    value: LuaValue,
+    limits: &Limits,
+    array_tags: &HashSet<usize>,
+) -> Result<Value> {
+    let mut conversion = Conversion {
+        limits,
+        array_tags,
+        active_tables: HashSet::new(),
+        seen_tables: HashSet::new(),
+        entries: 0,
+        text_bytes: 0,
+    };
+    conversion.convert(value, 0)
+}
+
+struct Conversion<'a> {
+    limits: &'a Limits,
+    array_tags: &'a HashSet<usize>,
+    active_tables: HashSet<usize>,
+    seen_tables: HashSet<usize>,
+    entries: usize,
+    text_bytes: usize,
+}
+
+impl Conversion<'_> {
+    fn convert(&mut self, value: LuaValue, depth: usize) -> Result<Value> {
+        if depth > self.limits.max_value_depth {
+            return Err(Error::InvalidValue("maximum nesting depth exceeded".into()));
+        }
+        self.entries = self.entries.saturating_add(1);
+        if self.entries > self.limits.max_value_entries {
+            return Err(Error::InvalidValue("maximum value entries exceeded".into()));
+        }
+
+        match value {
+            LuaValue::Nil => Ok(Value::Null),
+            LuaValue::Boolean(value) => Ok(Value::Bool(value)),
+            LuaValue::Integer(value) => Ok(Value::Integer(value)),
+            LuaValue::Number(value) if value.is_finite() => Ok(Value::Number(value)),
+            LuaValue::Number(_) => Err(Error::InvalidValue("numbers must be finite".into())),
+            LuaValue::String(value) => {
+                let value = value
+                    .to_str()
+                    .map_err(|_| Error::InvalidValue("strings must be UTF-8".into()))?
+                    .to_string();
+                self.add_text(value.len())?;
+                Ok(Value::String(value))
+            }
+            LuaValue::Table(table) => self.convert_table(table, depth),
+            other => Err(Error::InvalidValue(format!(
+                "Lua {} values cannot be persisted",
+                other.type_name()
+            ))),
+        }
+    }
+
+    fn convert_table(&mut self, table: Table, depth: usize) -> Result<Value> {
+        let pointer = table.to_pointer() as usize;
+        if !self.seen_tables.insert(pointer) {
+            let kind = if self.active_tables.contains(&pointer) {
+                "cyclic"
+            } else {
+                "shared"
+            };
+            return Err(Error::InvalidValue(format!(
+                "{kind} table identity cannot be persisted"
+            )));
+        }
+        self.active_tables.insert(pointer);
+
+        let mut integer_values = BTreeMap::<usize, LuaValue>::new();
+        let mut string_values = BTreeMap::<String, LuaValue>::new();
+        for pair in table.pairs::<LuaValue, LuaValue>() {
+            let (key, value) = pair.map_err(map_lua_error)?;
+            match key {
+                LuaValue::Integer(key) if key > 0 => {
+                    integer_values.insert(key as usize, value);
+                }
+                LuaValue::String(key) => {
+                    let key = key
+                        .to_str()
+                        .map_err(|_| Error::InvalidValue("map keys must be UTF-8".into()))?
+                        .to_string();
+                    self.add_text(key.len())?;
+                    string_values.insert(key, value);
+                }
+                _ => {
+                    return Err(Error::InvalidValue(
+                        "table keys must be text or contiguous positive integers".into(),
+                    ));
+                }
+            }
+        }
+
+        let tagged_array = self.array_tags.contains(&pointer);
+        let inferred_array = !integer_values.is_empty() && string_values.is_empty();
+        let result = if tagged_array || inferred_array {
+            if !string_values.is_empty()
+                || integer_values.keys().copied().ne(1..=integer_values.len())
+            {
+                return Err(Error::InvalidValue(
+                    "arrays must use contiguous integer keys starting at one".into(),
+                ));
+            }
+            Value::Array(
+                integer_values
+                    .into_values()
+                    .map(|value| self.convert(value, depth + 1))
+                    .collect::<Result<Vec<_>>>()?,
+            )
+        } else {
+            if !integer_values.is_empty() {
+                return Err(Error::InvalidValue(
+                    "tables cannot mix integer and text keys".into(),
+                ));
+            }
+            Value::Map(
+                string_values
+                    .into_iter()
+                    .map(|(key, value)| Ok((key, self.convert(value, depth + 1)?)))
+                    .collect::<Result<BTreeMap<_, _>>>()?,
+            )
+        };
+        self.active_tables.remove(&pointer);
+        Ok(result)
+    }
+
+    fn add_text(&mut self, bytes: usize) -> Result<()> {
+        self.text_bytes = self.text_bytes.saturating_add(bytes);
+        if self.text_bytes > self.limits.max_text_bytes {
+            return Err(Error::InvalidValue("maximum text bytes exceeded".into()));
+        }
+        Ok(())
+    }
+}
+
+fn map_lua_error(error: mlua::Error) -> Error {
+    match error {
+        mlua::Error::MemoryError(_) => Error::ResourceLimitExceeded("guest heap"),
+        error if error.to_string().contains(EXECUTION_LIMIT_SENTINEL) => {
+            Error::ExecutionLimitExceeded
+        }
+        error if error.to_string().contains(LOG_LIMIT_SENTINEL) => {
+            Error::ResourceLimitExceeded("log records")
+        }
+        error if error.to_string().contains(MESSAGE_LIMIT_SENTINEL) => {
+            Error::ResourceLimitExceeded("message intents")
+        }
+        error if error.to_string().contains(SCRIPT_LIMIT_SENTINEL) => {
+            Error::ResourceLimitExceeded("staged scripts")
+        }
+        error => Error::Script(sanitize_diagnostic(error)),
+    }
+}
+
+fn root_map(value: &Value) -> Result<&BTreeMap<String, Value>> {
+    match value {
+        Value::Map(value) => Ok(value),
+        _ => Err(Error::InvalidSnapshot("process root is not a map".into())),
+    }
+}
+
+fn root_map_mut(value: &mut Value) -> Result<&mut BTreeMap<String, Value>> {
+    match value {
+        Value::Map(value) => Ok(value),
+        _ => Err(Error::InvalidSnapshot("process node is not a map".into())),
+    }
+}
+
+fn script_value(script: &Script) -> Value {
+    Value::Script(script.clone())
+}
+
+fn message_to_value(message: &MessageIntent) -> Value {
+    Value::Map(BTreeMap::from([
+        ("body".into(), message.body.clone()),
+        (
+            "message_id".into(),
+            Value::String(message.message_id.clone()),
+        ),
+        ("to".into(), Value::String(message.to.to_string())),
+    ]))
+}
+
+fn message_from_value(value: &Value) -> Result<MessageIntent> {
+    let value = root_map(value)?;
+    let string = |name: &str| match value.get(name) {
+        Some(Value::String(value)) => Ok(value.clone()),
+        _ => Err(Error::InvalidSnapshot(format!(
+            "message field {name} is not text"
+        ))),
+    };
+    Ok(MessageIntent {
+        message_id: string("message_id")?,
+        to: ProcessId::new(string("to")?)?,
+        body: value
+            .get("body")
+            .cloned()
+            .ok_or_else(|| Error::InvalidSnapshot("message body is missing".into()))?,
+    })
+}
+
+fn root_hash(root: &Value) -> Result<String> {
+    let bytes = serde_json::to_vec(root)
+        .map_err(|error| Error::InvalidSnapshot(sanitize_diagnostic(error)))?;
+    let digest = Sha256::digest(bytes);
+    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
+    value
+        .lock()
+        .map_err(|_| Error::Script("runtime buffer lock poisoned".into()))
+}
+
+fn lock_lua<T>(value: &Mutex<T>) -> mlua::Result<MutexGuard<'_, T>> {
+    value
+        .lock()
+        .map_err(|_| mlua::Error::RuntimeError("runtime buffer lock poisoned".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Mutex;
+
+    use super::*;
+    use crate::value;
+
+    const COUNTER: &str = r#"
+        function main(input)
+            memory.count = (memory.count or 0) + input.by
+            log.info("counted", { count = memory.count })
+            return { count = memory.count }
+        end
+    "#;
+
+    #[test]
+    fn activation_commits_memory_output_logs_and_version() {
+        let mut process = Process::builder("svit://local/test/counter")
+            .unwrap()
+            .memory(value!({"count": 0}))
+            .build()
+            .unwrap();
+        process.save_script("counter", COUNTER).unwrap();
+
+        let activation = process.run("counter", value!({"by": 2})).unwrap();
+
+        assert_eq!(activation.output, value!({"count": 2}));
+        assert_eq!(activation.logs[0].message, "counted");
+        assert_eq!(
+            process.read("/memory/count").unwrap(),
+            Some(&Value::Integer(2))
+        );
+        assert_eq!(activation.version, 2);
+    }
+
+    #[test]
+    // THREAT[TM-EFF-001]
+    fn runtime_error_rolls_back_memory_and_outbox() {
+        let mut process = Process::builder("svit://local/test/rollback")
+            .unwrap()
+            .memory(value!({"balance": 10}))
+            .build()
+            .unwrap();
+        process
+            .save_script(
+                "payment",
+                r#"
+                function main(input)
+                    memory.balance = memory.balance - input.amount
+                    send("svit://local/test/merchant", { amount = input.amount })
+                    error("declined")
+                end
+                "#,
+            )
+            .unwrap();
+        let version = process.version();
+
+        assert!(process.run("payment", value!({"amount": 3})).is_err());
+        assert_eq!(process.version(), version);
+        assert_eq!(
+            process.read("/memory/balance").unwrap(),
+            Some(&Value::Integer(10))
+        );
+        assert!(process.outbox().unwrap().is_empty());
+    }
+
+    #[test]
+    // THREAT[TM-FORK-001]
+    fn snapshot_restore_and_fork_are_independent() {
+        let mut parent = Process::builder("svit://local/test/parent")
+            .unwrap()
+            .memory(value!({"count": 0}))
+            .build()
+            .unwrap();
+        parent.save_script("counter", COUNTER).unwrap();
+        let snapshot = parent.snapshot().unwrap();
+        let restored = Process::restore(&snapshot).unwrap();
+        assert_eq!(
+            restored.read("/memory").unwrap(),
+            parent.read("/memory").unwrap()
+        );
+
+        let mut child = parent.fork("svit://local/test/child").unwrap();
+        child.run("counter", value!({"by": 5})).unwrap();
+        assert_eq!(
+            parent.read("/memory/count").unwrap(),
+            Some(&Value::Integer(0))
+        );
+        assert_eq!(
+            child.read("/memory/count").unwrap(),
+            Some(&Value::Integer(5))
+        );
+    }
+
+    #[test]
+    // THREAT[TM-DOS-001]
+    fn infinite_loop_exhausts_ticks_without_committing() {
+        let limits = Limits {
+            max_interrupt_ticks: 10,
+            ..Limits::default()
+        };
+        let mut process = Process::builder("svit://local/test/limits")
+            .unwrap()
+            .limits(limits)
+            .memory(value!({"started": false}))
+            .build()
+            .unwrap();
+        process
+            .save_script(
+                "loop",
+                "function main() memory.started = true while true do end end",
+            )
+            .unwrap();
+        let version = process.version();
+
+        let error = process.run("loop", Value::Null).unwrap_err();
+        assert!(matches!(error, Error::ExecutionLimitExceeded));
+        assert_eq!(process.version(), version);
+        assert_eq!(
+            process.read("/memory/started").unwrap(),
+            Some(&Value::Bool(false))
+        );
+    }
+
+    #[test]
+    // THREAT[TM-ESC-001]
+    fn denied_ambient_libraries_are_not_in_the_script_environment() {
+        let mut process = Process::new("svit://local/test/sandbox").unwrap();
+        process
+            .save_script(
+                "inspect",
+                r#"
+                function main()
+                    return {
+                        os = type(os), io = type(io), debug = type(debug),
+                        package = type(package), require = type(require),
+                        random = type(math.random)
+                    }
+                end
+                "#,
+            )
+            .unwrap();
+        let activation = process.run("inspect", Value::Null).unwrap();
+        assert_eq!(
+            activation.output,
+            value!({
+                "debug": "nil", "io": "nil", "os": "nil",
+                "package": "nil", "random": "nil", "require": "nil"
+            })
+        );
+    }
+
+    #[test]
+    fn guest_can_stage_a_discoverable_script_atomically() {
+        let mut process = Process::new("svit://local/test/author").unwrap();
+        process
+            .save_script(
+                "teacher",
+                r#"
+                function main()
+                    scripts.save("greeter", [[
+                        function main(input)
+                            return "Hello, " .. input.name
+                        end
+                    ]], "Greets a person")
+                    return scripts.list()
+                end
+                "#,
+            )
+            .unwrap();
+
+        process.run("teacher", Value::Null).unwrap();
+        assert_eq!(
+            process.script("greeter").unwrap().documentation(),
+            "Greets a person"
+        );
+        let greeting = process.run("greeter", value!({"name": "Svit"})).unwrap();
+        assert_eq!(greeting.output, Value::String("Hello, Svit".into()));
+    }
+
+    struct DenyScript {
+        seen: Arc<Mutex<Vec<ActivationEvent>>>,
+    }
+
+    impl ActivationHook for DenyScript {
+        fn before_activation(&self, request: ActivationRequest) -> HookAction<ActivationRequest> {
+            HookAction::Cancel(format!("{} is disabled", request.script))
+        }
+
+        fn after_activation(&self, event: &ActivationEvent) {
+            self.seen.lock().unwrap().push(event.clone());
+        }
+    }
+
+    #[test]
+    fn hooks_can_deny_and_observe_without_running_guest_code() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let mut process = Process::builder("svit://local/test/hooks")
+            .unwrap()
+            .hook(DenyScript {
+                seen: Arc::clone(&seen),
+            })
+            .build()
+            .unwrap();
+        process
+            .save_script("mutate", "function main() memory.changed = true end")
+            .unwrap();
+
+        assert!(matches!(
+            process.run("mutate", Value::Null),
+            Err(Error::HookCancelled(_))
+        ));
+        assert_eq!(process.read("/memory/changed").unwrap(), None);
+        assert!(matches!(
+            seen.lock().unwrap()[0].status,
+            ActivationStatus::Failed { .. }
+        ));
+    }
+}

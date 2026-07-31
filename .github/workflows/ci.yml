@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  quality:
+    name: Format, lint, docs, and knowledge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps --locked
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Install OKF linter
+        run: cargo install okf-lint --version 0.1.1 --locked
+
+      - name: Validate knowledge bundle
+        run: |
+          python3 scripts/check_okf.py knowledge
+          okf-lint knowledge --max-line-length 10000
+
+      - name: Test repository validators
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+
+  test:
+    name: Tests and executable examples
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+
+      - name: Run tests
+        run: cargo test --workspace --locked
+
+      - name: Run durable counter
+        run: cargo run --locked -p svit --example durable_counter
+
+      - name: Run self-authoring library
+        run: cargo run --locked -p svit --example self_authoring_library
+
+      - name: Run atomic outbox
+        run: cargo run --locked -p svit --example atomic_outbox
+
+      - name: Run fork research
+        run: cargo run --locked -p svit --example fork_research
+
+      - name: Run sandbox limits
+        run: cargo run --locked -p svit --example sandbox_limits
+
+      - name: Run CLI smoke test
+        run: cargo run --locked -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
+        with:
+          tool: cargo-audit
+
+      - name: Audit advisories
+        run: cargo audit
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@7572810d7dd469b651bb7793945692cf78da5dd7 # v2
+        with:
+          tool: cargo-deny
+
+      - name: Check licenses and sources
+        run: cargo deny check
