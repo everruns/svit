@@ -1,23 +1,25 @@
 # Svit vision
 
-Agents deserve an execution environment designed around their needs, not an
-operating system inherited by accident.
+Give the agent a space to remember, act, and evolve.
 
-Today, a general agent commonly receives a filesystem for memory, Bash or
-Python for computation, operating-system processes for concurrency, and
-environment credentials for authority. This works, but it also exposes a large
-surface that is difficult to understand, move, inspect, constrain, or secure.
+Svit keeps memory and executable behavior together in one structured,
+self-reflective space. Agents can inspect it, script it, and evolve it through
+bounded transactions.
 
-Svit explores a smaller foundation: an agent process runtime built from durable
-memory, bounded computation, explicit effects, identity, communication, and
-composition.
+That space should persist across activations and compose through snapshots,
+forks, identities, capabilities, and messages.
+
+Svit explores that space as an agent process runtime. The goal is to identify
+the primitives agentic execution requires and design them together from first
+principles.
 
 ## The model
 
 A Svit **runtime** is the Rust host that executes and supervises agent
 processes. A Svit **process** is the isolated unit an agent owns. It contains
-one durable state tree, a library of named scripts, an address, resource limits,
-and eventually a mailbox, identity, capabilities, schedules, and lineage.
+one structured space with a memory tree and named script library, plus an
+address and resource limits. The broader model adds a mailbox, identity,
+capabilities, schedules, projections, and lineage.
 
 An **activation** is one bounded transition. It receives input, runs a named
 script against a working copy, and either commits the resulting state and
@@ -25,45 +27,68 @@ effect intents together or commits nothing.
 
 ```mermaid
 flowchart LR
-    Event["Input event"] --> Process["Agent process"]
-    Process --> Memory["Memory tree"]
-    Process --> Scripts["Script library"]
-    Process --> Effects["Explicit effect intents"]
-    Process --> Snapshot["Snapshot or fork"]
+    Event["Input event"] --> Activation["Bounded activation"]
+    subgraph Process["Agent process"]
+        Activation --> Space["Structured agent space"]
+        Space --> Memory["Memory tree"]
+        Space --> Scripts["Script library"]
+        Space --> Effects["Explicit effect intents"]
+    end
+    Space --> Snapshot["Snapshot or fork"]
 ```
 
-The process is portable data plus explicit semantics, not a directory with an
-unbounded shell attached.
+The process is portable data plus explicit transition semantics. The agent can
+reason about the same space that the runtime validates, commits, snapshots,
+and forks.
 
-## One place to remember and act
+## One structured space
 
-All guest-observable durable state should be reachable through one structured
-namespace. Agent memory and scripts live there. External resources can appear
-there as projections, but a projection must state its authority, freshness,
-cost, and consistency rather than pretending that remote state is an ordinary
-local value.
+All guest-observable persistent state should be reachable through one
+structured namespace. Memory and executable behavior live in the same value
+model, giving the agent one variable space in which to remember and act.
 
-Scripts are part of memory. An agent can discover, inspect, create, test, and
-reuse its own functional library. This makes reflection a normal operation:
-the agent can understand its state, available functions, limits, and granted
-capabilities without inspecting interpreter internals.
+A filesystem, network service, model, database, or other external resource may
+be mounted into that space as a typed projection. A projection states its
+authority, freshness, cost, and consistency explicitly. This lets the agent
+work through one coherent interface while the runtime preserves the real
+semantics of external state.
+
+The initial implementation keeps processes in memory and lets callers persist
+them through deterministic snapshots. Durable storage adapters and live
+projections remain part of the research direction.
+
+## Scriptable and self-reflective
+
+Scripts are process state. An agent can discover, inspect, create, validate,
+and reuse its own functional library. Reflection is therefore a normal runtime
+operation: the agent can understand its memory, available functions, limits,
+and granted capabilities through the same structured space.
 
 Svit Lua is intended to be approachable and sufficiently general for agent
-automation: math, text, collections, structured data, reusable functions, and
-durable workflows. It is deliberately smaller than a general operating-system
-environment.
+automation: math, text, collections, structured data, and reusable functions.
+Its surface should grow from demonstrated agent tasks while remaining bounded,
+versioned, and legible to both the agent and the host.
+
+Memory and scripts evolve transactionally. A successful activation commits
+validated memory, staged script changes, and buffered effect intents once. Any
+failure preserves the previous committed space in full.
 
 ## Processes compose
 
 A committed process can be snapshotted, restored, moved, or forked. A fork
 starts a new process from the same committed state and then evolves
-independently. Sub-agents are therefore processes with an explicit lineage and
-policy relationship, not hidden threads sharing mutable memory.
+independently. This makes a sub-agent another process with explicit lineage,
+state, limits, and policy relationships.
 
 Processes communicate by addressed messages. An address identifies where a
-message is intended to go; it does not grant permission. Identity,
-authentication, and authorization remain separate concepts, with authority
-represented by explicit, attenuable capabilities rather than ambient secrets.
+message is intended to go. Identity, authentication, authorization, and
+reachability remain separate concepts. Authority is represented by explicit,
+attenuable capabilities that can govern projections, messages, and other
+effects.
+
+The current implementation commits deterministic message intents but does not
+deliver them. Routing, delivery, global addressing, identity, and capabilities
+remain future work.
 
 ## Security is part of the semantics
 
@@ -91,16 +116,15 @@ The current implementation tests the smallest useful part of the idea:
 
 The broader direction adds durable message delivery, schedules, globally
 resolved process addresses, authenticated identity, capability-controlled
-projections, migration, structural sharing, and stronger verification. Each
-addition must preserve the small process model rather than recreate an
-operating system inside the runtime.
+projections, durable storage, migration, structural sharing, and stronger
+verification. Each addition must preserve a space the agent can inspect,
+script, and evolve through explicit semantics.
 
 ## What success looks like
 
-Svit succeeds if agents can perform long-lived work with a smaller and more
-legible substrate than shell plus filesystem, while hosts can bound, audit,
-snapshot, fork, and move that work without recovering hidden operating-system
-state.
+Svit succeeds if agents can perform long-lived work in a coherent space they
+can understand and evolve, while hosts can bound, audit, persist, snapshot,
+fork, and move that work through explicit semantics.
 
 The research should also be allowed to fail. If restricted scripting is too
 weak, reflection does not improve agent behavior, forks are not economical, or
