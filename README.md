@@ -147,9 +147,8 @@ database storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
 
-The broader direction and alternatives are in the
-[agent process runtime research proposal](docs/research-proposal.md). Research
-goals are not current API promises.
+The broader direction is described in the public [Svit vision](docs/vision.md).
+Research goals are not current API promises.
 
 ## Development
 

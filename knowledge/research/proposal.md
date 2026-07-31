@@ -1,3 +1,14 @@
+---
+type: Research Proposal
+title: Svit Agent Process Runtime Research Proposal
+description: Research hypothesis, architecture options, assurance targets, experiments, and open decisions for Svit.
+tags:
+  - svit
+  - research
+  - architecture
+  - security
+---
+
 # Svit: an agent process runtime
 
 Status: working research proposal

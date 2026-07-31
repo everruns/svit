@@ -21,8 +21,9 @@ persistent engineering memory.
 - Record decisions that cannot be recovered reliably from code. Link to code
   and tests rather than copying volatile implementation detail.
 - Stable identifiers such as `TM-*` and `L-*` are never renumbered or reused.
-- User instructions belong in `docs/`; agent usage guidance belongs in
-  `skills/svit/`; durable engineering facts belong here.
+- Public vision, concepts, and user instructions belong in `docs/`; agent usage
+  guidance belongs in `skills/svit/`; internal research, decisions,
+  specifications, and operational facts belong here.
 - An unimplemented target must say `Under implementation`, `Required`, or
   `Open`. Do not write about planned behavior in the present tense.
 
@@ -41,7 +42,8 @@ The bundle declares `okf_version: "0.2"` in the root `index.md`.
 - Concept links are relative and must resolve.
 
 Current concept types are `Architecture`, `Process Model`, `Language Contract`,
-`Threat Model`, `Test Strategy`, `Limitations`, and `Playbook`.
+`Threat Model`, `Test Strategy`, `Limitations`, `Research Proposal`, and
+`Playbook`.
 
 ## Enforcement
 

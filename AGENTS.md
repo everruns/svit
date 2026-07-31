@@ -70,13 +70,15 @@ operational fact changes. Follow `knowledge/knowledge-contract.md` and run
 | `security/security-testing.md` | Adversarial and invariant test requirements |
 | `operations/testing.md` | Test and example organization |
 | `operations/limitations.md` | Honest negative specification |
+| `research/proposal.md` | Research hypotheses, alternatives, experiments, and open decisions |
 
 ### Documentation
 
 - `README.md`: product orientation and the shortest runnable path.
-- `docs/`: public guides and research documents.
+- `docs/`: public vision, concepts, and user guides.
 - `crates/svit/docs/`: guides embedded in Rustdoc, when needed.
-- `knowledge/`: durable engineering decisions, not marketing material.
+- `knowledge/`: internal research, decisions, specifications, and operational
+  memory; not product narrative or marketing material.
 - `skills/svit/`: public agent-facing usage guidance.
 
 Examples are a first-class API surface. Every example must contain assertions,
