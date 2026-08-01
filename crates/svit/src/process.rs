@@ -26,6 +26,7 @@ const SCRIPT_LIMIT_SENTINEL: &str = "__svit_script_limit__";
 
 /// Stable logical address of one agent process.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct ProcessId(String);
 
 impl ProcessId {
@@ -42,6 +43,20 @@ impl ProcessId {
     }
 }
 
+impl TryFrom<String> for ProcessId {
+    type Error = Error;
+
+    fn try_from(value: String) -> Result<Self> {
+        Self::new(value)
+    }
+}
+
+impl From<ProcessId> for String {
+    fn from(value: ProcessId) -> Self {
+        value.0
+    }
+}
+
 impl fmt::Display for ProcessId {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(&self.0)
@@ -49,7 +64,7 @@ impl fmt::Display for ProcessId {
 }
 
 /// One structured log record emitted during an activation.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct LogRecord {
     /// Human-readable message.
     pub message: String,
@@ -58,7 +73,7 @@ pub struct LogRecord {
 }
 
 /// A committed intent to deliver a message to another process.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MessageIntent {
     /// Deterministic identifier derived from sender, commit version, and index.
     pub message_id: String,
@@ -69,7 +84,10 @@ pub struct MessageIntent {
 }
 
 /// Result of a successfully committed activation.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// This is also a control-protocol wire value. Unknown fields are deliberately
+/// ignored so a known protocol major can evolve additively.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
     /// Value returned by the script's `main(input)` function.
     pub output: Value,
@@ -593,7 +611,7 @@ fn validate_process_id(value: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_script_name(name: &str) -> Result<()> {
+pub(crate) fn validate_script_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name.len() > 64
         || !name

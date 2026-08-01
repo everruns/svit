@@ -34,7 +34,8 @@ The following scenarios execute with assertions and deterministic output under
 - a script that saves another named script and discovers it later;
 - atomic memory and outbox rollback after a deliberate error;
 - parent and two forks diverging without shared mutation;
-- denied host libraries and bounded infinite-loop termination.
+- denied host libraries and bounded infinite-loop termination;
+- two control clients contending on one version, then resolving the conflict.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
 Examples requiring an API
@@ -53,6 +54,13 @@ Every staged resource is checked against every terminal result:
 | Invalid value | Unchanged | Unchanged | Unchanged | Unchanged |
 | Invalid staged script | Unchanged | Unchanged | Unchanged | Unchanged |
 | Any limit exceeded | Unchanged | Unchanged | Unchanged | Unchanged |
+| Stale control version | Unchanged | Unchanged | Unchanged | Unchanged |
+
+Multi-client tests run simultaneous requests against one controller and assert
+that only one commits the contested version. Retry tests cover exact receipt
+replay, request-id content mismatch, rejected requests, and receipt eviction.
+Wire tests pin exact request shapes, prove that known structures ignore additive
+fields within a major, and prove that unknown operations fail closed.
 
 ## Determinism checks
 

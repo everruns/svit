@@ -44,6 +44,18 @@ pub enum Error {
     /// A snapshot is malformed or violates process invariants.
     #[error("invalid snapshot: {0}")]
     InvalidSnapshot(String),
+
+    /// A client or request identifier is invalid for the control protocol.
+    #[error("invalid control identifier: {0}")]
+    InvalidControlId(String),
+
+    /// Host configuration for the control protocol is outside hard bounds.
+    #[error("invalid control configuration: {0}")]
+    InvalidControlConfiguration(&'static str),
+
+    /// The in-memory process controller cannot access its serialized state.
+    #[error("process controller unavailable")]
+    ControlUnavailable,
 }
 
 /// Convenient result alias for the Svit API.

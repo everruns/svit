@@ -81,17 +81,22 @@ The same ID appears in at least one focused test before status changes to
 | `TM-DOS-001` | Infinite or expensive guest computation monopolizes a worker | Per-activation interrupt budget plus independent wall-time containment | PARTIAL — interrupt test passes; outer wall time is caller-owned |
 | `TM-DOS-002` | Guest allocations exhaust host memory | VM memory cap and bounded conversion before allocation/commit | PARTIAL — heap and conversion tests pass; native defense in depth remains |
 | `TM-DOS-003` | State, output, logs, scripts, or outbox grow without bound | Independent byte/count/depth limits with fail-closed accounting | PARTIAL — configured limits exist; aggregate output cases remain |
+| `TM-DOS-004` | Client request ids grow the control receipt cache without bound | Independent hard receipt-count maximum and eviction | MITIGATED for the in-memory controller |
+| `TM-DOS-005` | Oversized encoded control requests exhaust memory before value validation | Transport byte cap before deserialization plus decoded value limits | REQUIRED — no transport adapter exists |
 | `TM-ESC-001` | Guest reaches filesystem, network, environment, modules, FFI, or host processes | Fresh VM, explicit standard-library allowlist, sandbox mode, denied-entry-point tests | MITIGATED for the Svit Lua API |
 | `TM-ESC-002` | Malformed guest value exploits interpreter/Rust conversion | Total conversion over supported types, cycle detection, checked sizes, fuzzing | PARTIAL — adversarial tests pass; fuzzing remains |
 | `TM-INF-001` | Diagnostics reveal host paths, backtraces, pointers, or dependency internals | Domain errors, source-level sanitization, and diagnostic byte cap | PARTIAL — focused test passes; broader fuzzing remains |
 | `TM-ISO-001` | State or globals leak between processes or activations | Fresh VM and process-owned committed root; cross-process invariant tests | MITIGATED for the in-memory process API |
 | `TM-EFF-001` | Failed activation leaves memory, scripts, or messages partially committed | One validation and commit point; rollback tests for every failure class | PARTIAL — runtime, conversion, script, tick, and heap rollback tests pass; panic containment remains |
+| `TM-EFF-002` | Concurrent clients overwrite state derived from the same process version | Mandatory version CAS at the process serialization point | MITIGATED for the in-memory controller |
+| `TM-EFF-003` | Retrying after a lost response commits an activation twice | Scoped request id, bounded terminal receipts, and version CAS after eviction | MITIGATED for the in-memory controller; durable result replay is not implemented |
+| `TM-EFF-004` | Two hosts concurrently commit the same logical process version | Durable ownership lease and fencing token checked by storage | REQUIRED — the reference controller is single-host only |
 | `TM-MSG-001` | Guest forges sender identity or nondeterministic message IDs | Host-derived sender and deterministic IDs; delivery remains out of scope | MITIGATED for buffered intents |
 | `TM-SNAP-001` | Malformed snapshot bypasses state invariants | Versioned decoder, complete revalidation, size cap, and fuzzing | PARTIAL — format, hash, limit, trailing-data, and size controls exist; fuzzing remains |
 | `TM-SNAP-002` | Snapshot hash is mistaken for authenticity | Document hash as integrity only; future authenticity requires host signatures | OPEN |
 | `TM-FORK-001` | Child writes mutate parent or sibling | Isolated committed roots, empty child outbox, and fork tests | MITIGATED for the in-memory process API |
 | `TM-CAP-001` | A string or reflected value forges authority | No external capabilities in the slice; future references use unforgeable host handles | NOT APPLICABLE to the current slice |
-| `TM-AUTH-001` | Local address is mistaken for authenticated global identity | API and docs distinguish address validation from identity/authentication | REQUIRED |
+| `TM-AUTH-001` | Client-controlled identifiers are mistaken for authenticated identity or a tenant boundary | API and docs distinguish identifiers from identity; a future transport authenticates and authorizes before tenant-scoped receipt lookup | REQUIRED |
 | `TM-INT-001` | Panic crosses the activation boundary or poisons committed state | Panic containment outside guest transaction and unchanged-state tests | REQUIRED |
 | `TM-SUP-001` | Vulnerable interpreter or dependency compromises the boundary | Lockfile, pinned toolchain, audit/deny/vet gates, and defense-in-depth isolation plan | REQUIRED |
 

@@ -39,6 +39,18 @@ Required for the initial vertical slice.
   lengths, invalid floats, and trailing data are rejected.
 - `TM-DOS-001` through `TM-DOS-003`: every budget is tested exactly at, below,
   and above its boundary.
+- `TM-DOS-004`: receipt retention rejects zero and values above its hard host
+  maximum.
+- `TM-DOS-005`: decoded oversized values are rejected before receipt retention;
+  the transport byte cap remains required.
+- `TM-EFF-002`: concurrent clients cannot both commit from one process version.
+- `TM-EFF-003`: exact retry replays a receipt, and retry after eviction cannot
+  duplicate a committed activation.
+- `TM-EFF-004`: the negative test demonstrates that independent controllers do
+  not provide distributed ownership; this remains required until leases exist.
+- `TM-AUTH-001`: remote transport tests must prove authorization precedes
+  receipt lookup and that two tenant scopes cannot observe each other's
+  receipts; no remote transport exists yet.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
 

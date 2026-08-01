@@ -55,6 +55,22 @@ unchanged.
 The initial implementation may clone values during activation. Persistent
 structural sharing is an optimization, not part of the public contract.
 
+## Multi-client control
+
+Svit Control Protocol 1 serializes all client requests for one process. A
+mutating request includes a mandatory `expected_version`. The controller checks
+that precondition under the same lock that contains activation commit. If two
+clients race the same version, at most one successful activation can commit the
+next version; stale requests return a conflict without executing guest code.
+
+An exact `(client_id, request_id)` retry returns its bounded cached receipt.
+After receipt eviction, the stale version precondition still prevents a second
+commit. These guarantees are implemented by the in-memory reference controller.
+Durable replay across a host crash requires a storage adapter that atomically
+persists the process commit and receipt.
+
+See [Svit Control Protocol 1](../protocols/control-protocol.md).
+
 ## Scripts
 
 A named script is source plus bounded metadata. Source, not VM bytecode or a

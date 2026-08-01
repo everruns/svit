@@ -42,8 +42,8 @@ The bundle declares `okf_version: "0.2"` in the root `index.md`.
 - Concept links are relative and must resolve.
 
 Current concept types are `Architecture`, `Process Model`, `Language Contract`,
-`Threat Model`, `Test Strategy`, `Limitations`, `Research Proposal`, and
-`Playbook`.
+`Protocol`, `Threat Model`, `Test Strategy`, `Limitations`, `Research Proposal`,
+and `Playbook`.
 
 ## Enforcement
 

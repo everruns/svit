@@ -22,12 +22,17 @@
 //! # Ok::<(), svit::Error>(())
 //! ```
 
+pub mod control;
 mod error;
 pub mod hooks;
 mod limits;
 mod process;
 pub mod value;
 
+pub use control::{
+    ControlClientId, ControlCommand, ControlFailure, ControlOutcome, ControlProtocol,
+    ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
+};
 pub use error::{Error, Result};
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;

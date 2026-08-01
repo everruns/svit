@@ -70,6 +70,8 @@ operational fact changes. Follow `knowledge/knowledge-contract.md` and run
 | `security/security-testing.md` | Adversarial and invariant test requirements |
 | `operations/testing.md` | Test and example organization |
 | `operations/limitations.md` | Honest negative specification |
+| `protocols/control-protocol.md` | Multi-client control and transaction semantics |
+| `protocols/maintenance.md` | Wire compatibility, schema, conformance, and release rules |
 | `research/proposal.md` | Research hypotheses, alternatives, experiments, and open decisions |
 
 ### Documentation

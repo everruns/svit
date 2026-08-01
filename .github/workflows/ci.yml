@@ -77,6 +77,9 @@ jobs:
       - name: Run sandbox limits
         run: cargo run --locked -p svit --example sandbox_limits
 
+      - name: Run multi-client control
+        run: cargo run --locked -p svit --example multi_client_control
+
       - name: Run CLI smoke test
         run: cargo run --locked -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
 

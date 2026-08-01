@@ -5,6 +5,8 @@
   outbox, and limits.
 - **Activation**: one bounded named-script invocation against a transactional
   working copy.
+- **Control request**: a client command with a mandatory process-version
+  precondition and scoped idempotency key.
 - **Commit**: atomic replacement of memory, scripts, and buffered message
   intents after complete validation.
 - **Snapshot**: versioned canonical encoding of committed state only.

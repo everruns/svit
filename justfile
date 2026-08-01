@@ -20,6 +20,7 @@ examples:
     cargo run --locked -p svit --example atomic_outbox
     cargo run --locked -p svit --example fork_research
     cargo run --locked -p svit --example sandbox_limits
+    cargo run --locked -p svit --example multi_client_control
     cargo run --locked -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
 
 # Validate the OKF v0.2 knowledge bundle.

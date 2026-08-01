@@ -75,6 +75,13 @@ smoke-test tool, not a persistent process supervisor.
   script limits.
 - Typed host activation hooks that may rewrite, deny, or observe activations.
 - Reflection over committed memory and the named script library.
+- Versioned multi-client control requests with mandatory process-version
+  preconditions, conflict responses, and bounded idempotency receipts.
+- Additive-field compatibility and exact wire-shape tests, with generated schema
+  and remote version negotiation required before protocol stabilization.
+
+See [Controlling a Svit process](docs/control-protocol.md) for the protocol and
+its exact transaction boundary.
 
 ## Svit Lua 1
 
@@ -111,12 +118,14 @@ cargo run -p svit --example self_authoring_library
 cargo run -p svit --example atomic_outbox
 cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
+cargo run -p svit --example multi_client_control
 ```
 
 They cover persistence and restore, functional self-reflection, rollback of a
 state-plus-message transaction, isolated forks, denied ambient APIs, and a
-bounded infinite loop. See [examples/README.md](examples/README.md), or run all
-of them with `just examples`.
+bounded infinite loop, plus two clients resolving an optimistic concurrency
+conflict. See [examples/README.md](examples/README.md), or run all of them with
+`just examples`.
 
 ## Current security status
 
@@ -146,6 +155,11 @@ external capabilities, filesystem or network projections, secrets, durable
 database storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
+
+The control protocol currently has an in-memory reference adapter, not a
+network listener, authenticated transport, durable receipt store, or
+distributed ownership lease. Its atomic commit covers one process root and
+outbox, not an external system or another process.
 
 The broader direction is described in the public [Svit vision](docs/vision.md).
 Research goals are not current API promises.

@@ -51,6 +51,7 @@ the boundary.
 | Script library | Named source records stored with committed process state |
 | Lua adapter | Converts values and exposes only the versioned Svit Lua surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
+| Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 
 The current workspace implements these responsibilities in the `svit` crate
 and provides a thin `svit-cli` crate. Module names may evolve; the boundaries
@@ -67,6 +68,8 @@ are the decision.
    activations or tenants.
 6. Snapshot bytes are untrusted on restore and pass the same invariant checks
    as newly created state.
+7. Every mutating control request carries an expected process version and is
+   checked at the same serialization point as commit.
 
 ## Deferred architecture
 

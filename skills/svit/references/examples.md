@@ -7,6 +7,8 @@ Prefer repository examples in this order:
 3. Atomic outbox: a failed debit-and-send activation rolls back both changes.
 4. Fork research: children diverge while parent and sibling remain unchanged.
 5. Sandbox limits: denied libraries and bounded infinite-loop termination.
+6. Multi-client control: one client commits while a stale client conflicts and
+   retries against the observed version.
 
 Run the example before presenting it. Use the command documented beside the
 example or `just examples` for the complete deterministic suite. If an example

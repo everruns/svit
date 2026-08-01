@@ -15,8 +15,11 @@ All notable changes to Svit will be documented here.
   forks.
 - Execution, heap, persistent-value, script, log, and message limits.
 - Typed activation interceptor hooks.
+- Transport-neutral Svit Control Protocol 1 with optimistic version checks,
+  explicit conflicts, bounded retry receipts, additive-field compatibility,
+  and an in-memory controller.
 - Deterministic executable examples for persistence, self-reflection, atomic
-  rollback, forks, and sandbox limits.
+  rollback, forks, sandbox limits, and multi-client control.
 - OKF v0.2 knowledge bundle, threat model, public Svit skill, and repository
   validation tooling.
 

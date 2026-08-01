@@ -34,6 +34,12 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-015` | Snapshots use a versioned deterministic JSON codec, not deterministic CBOR | The research format is inspectable but larger and not the proposed long-term wire format |
 | `L-016` | Persistent byte-string values are not implemented | Binary data must be encoded as text by the caller |
 | `L-017` | Runtime hooks are host configuration and are not serialized | Restored processes require the host to attach policy hooks again |
+| `L-018` | The control adapter is in-memory and transport-neutral | No network listener, routing, durable receipts, or crash recovery is provided |
+| `L-019` | Transactions cover one process root and its outbox only | External systems and other processes cannot join the same atomic commit |
+| `L-020` | Control identifiers are not authenticated identities | A transport host must authenticate and authorize clients outside the envelope |
+| `L-021` | The controller is not a distributed process lease | Two hosts restored from one snapshot can diverge unless a durable owner and fencing token serialize commits |
+| `L-022` | No bounded control-protocol wire decoder or network adapter | Hosts must cap request bytes before deserialization and supply transport security |
+| `L-023` | No generated control schema, initialization exchange, or cross-version SDK suite | The current JSON shape is a tested research interface, not a stable remote wire release |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

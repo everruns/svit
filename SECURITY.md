@@ -31,6 +31,16 @@ and rollback protect previously committed state from failed activations.
 The CLI reading a script path is a host operation performed before guest
 execution. It does not mount that path or host filesystem into the guest.
 
+The in-memory control adapter serializes requests for one process and requires
+an expected version for every activation. Client ids and process addresses are
+not credentials. A future transport must authenticate and authorize callers
+outside the client-controlled envelope, before receipt lookup, and partition
+receipts and quotas by its trusted tenant boundary.
+
+The typed control API receives an already-decoded request. Any network or IPC
+adapter must cap request bytes before deserialization, then apply the same
+decoded value limits enforced by the controller.
+
 ## Important limitations
 
 Svit is not yet a proven or production-grade hostile multi-tenant boundary.
@@ -44,6 +54,11 @@ authorization, secrets, snapshot signatures, and distributed execution are
 not implemented. Message intents are inert committed data. Process addresses
 are not authenticated principals. Snapshot hashes detect state changes but do
 not prove provenance.
+
+Control receipts are bounded and in memory. They are not durable across restart,
+and the controller is not a distributed ownership lease. External effects and
+other processes cannot participate in the process transaction; adapters need
+their own authorization, idempotency, reconciliation, and fencing policies.
 
 The living security specification is:
 
