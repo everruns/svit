@@ -17,7 +17,7 @@ const model = [
   {
     number: "03",
     title: "Commit as one change",
-    copy: "Memory, staged scripts, and buffered message intents commit together. Any failure leaves the prior state untouched.",
+    copy: "Memory, staged scripts, and buffered message intents commit together. A rejected activation leaves the prior state untouched.",
     tag: "v → v + 1",
   },
   {
@@ -33,7 +33,8 @@ const works = [
   "Deterministic JSON snapshots with integrity hashes",
   "Restore and fork with isolated future mutations",
   "Fresh restricted-Lua VM for every activation",
-  "Configurable execution, heap, value, and output limits",
+  "Configurable execution, heap, value, script, log, and message limits",
+  "In-memory multi-client control with version checks and bounded retry receipts",
 ];
 
 const later = [
@@ -41,6 +42,7 @@ const later = [
   "Addressable communication between runtimes",
   "Runtime-native identity, authentication, and capabilities",
   "Durable storage, scheduling, and message delivery",
+  "Authenticated network control, durable receipts, and distributed process ownership",
   "Stronger isolation through Wasm or OS process boundaries",
 ];
 
@@ -111,7 +113,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           <svg class="space-map" viewBox="0 0 560 500" role="img" aria-labelledby="space-map-title space-map-description">
             <title id="space-map-title">One evolving agent space</title>
             <desc id="space-map-description">
-              An agent activates a Svit process containing memory, behaviors, and a projected view of the world. The process changes transactionally and can be snapshotted, restored, or forked.
+              An agent activates a Svit process containing memory and behaviors. A projected view of the world is a research direction. The process changes transactionally and can be snapshotted, restored, or forked.
             </desc>
             <defs>
               <marker id="space-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
@@ -154,6 +156,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
                 <circle cx="402" cy="302" r="42"></circle>
                 <text x="402" y="298" text-anchor="middle">WORLD</text>
                 <text x="402" y="321" text-anchor="middle" class="space-map-note">REACH</text>
+                <text x="402" y="358" text-anchor="middle" class="space-map-direction">RESEARCH DIRECTION</text>
               </g>
             </g>
 
@@ -217,13 +220,13 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
       <section class="transaction page-shell section-rule">
         <div class="transaction-copy">
           <p class="section-label">02 / Transaction boundary</p>
-          <h2>Success commits once. Failure commits nothing.</h2>
+          <h2>Success commits once. Rejection commits nothing.</h2>
           <p>
             Each activation works on a private copy. Syntax, runtime, conversion, validation, and limit failures all roll back memory, scripts, outbox, and version together.
           </p>
           <div class="invariant">
             <span class="invariant-mark">✓</span>
-            <p><strong>The invariant</strong><br />No partial process state escapes an activation.</p>
+            <p><strong>The invariant</strong><br />A rejected activation exposes no partial process state.</p>
           </div>
         </div>
 
@@ -251,8 +254,51 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
               <strong>commit · v13</strong>
             </div>
             <div>
-              <span>ANY FAILURE</span>
+              <span>REJECTED</span>
               <strong>rollback · v12</strong>
+            </div>
+          </div>
+        </div>
+
+        <div class="control-block">
+          <div class="control-copy">
+            <p class="section-label">02B / Multi-client control</p>
+            <h3>Many clients. One commit point.</h3>
+            <p>
+              Each request names the process version it observed. If two clients activate the same version, at most one commits the next version. The other receives a conflict and must reconsider its input against current state.
+            </p>
+            <p>An exact retry returns its retained result instead of running the activation again.</p>
+            <aside class="control-scope">
+              <strong>Current scope</strong>
+              <span>Transport-neutral and in memory. Network transport, authentication, durable receipts, and distributed process ownership remain research directions.</span>
+            </aside>
+          </div>
+
+          <div
+            class="control-flow"
+            role="img"
+            aria-label="Client A expects version 12 and commits version 13. Client B also expects version 12 and receives a version conflict. An exact retry by Client A replays the retained receipt."
+          >
+            <div class="control-row">
+              <div class="control-step"><small>CLIENT A</small><strong>expects v12</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step"><small>PROCESS</small><strong>version check</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step control-committed"><small>COMMITTED</small><strong>v13</strong></div>
+            </div>
+            <div class="control-row">
+              <div class="control-step"><small>CLIENT B</small><strong>expects v12</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step"><small>PROCESS</small><strong>current v13</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step control-conflict"><small>CONFLICT</small><strong>reconsider input</strong></div>
+            </div>
+            <div class="control-row">
+              <div class="control-step"><small>EXACT RETRY</small><strong>Client A</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step"><small>RECEIPT</small><strong>retained result</strong></div>
+              <span class="control-arrow" aria-hidden="true">→</span>
+              <div class="control-step control-replayed"><small>REPLAYED</small><strong>no activation</strong></div>
             </div>
           </div>
         </div>
@@ -303,16 +349,11 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
             <span>SVIT LUA 1</span>
           </div>
           <pre><code><span class="code-dim">01</span>  <span class="code-keyword">function</span> <span class="code-call">main</span>(input)
-<span class="code-dim">02</span>    memory.count = memory.count + input.by
-<span class="code-dim">03</span>
-<span class="code-dim">04</span>    log.info(<span class="code-string">"counter updated"</span>, &#123;
-<span class="code-dim">05</span>      count = memory.count
-<span class="code-dim">06</span>    &#125;)
-<span class="code-dim">07</span>
-<span class="code-dim">08</span>    <span class="code-keyword">return</span> &#123; count = memory.count &#125;
-<span class="code-dim">09</span>  <span class="code-keyword">end</span></code></pre>
+<span class="code-dim">02</span>    memory.count = (memory.count or 0) + input.by
+<span class="code-dim">03</span>    <span class="code-keyword">return</span> &#123; count = memory.count &#125;
+<span class="code-dim">04</span>  <span class="code-keyword">end</span></code></pre>
           <div class="code-result">
-            <span>INPUT</span><code>&#123; by: 3 &#125;</code>
+            <span>INPUT</span><code>&#123; by: 4 &#125;</code>
             <span>OUTPUT</span><code>&#123; count: 9 &#125;</code>
             <span>VERSION</span><code>3 → 4</code>
           </div>
