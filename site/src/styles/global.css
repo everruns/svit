@@ -97,7 +97,7 @@
     display: grid;
     grid-template-columns: 1.02fr 0.98fr;
     gap: clamp(40px, 7vw, 110px);
-    padding-top: clamp(72px, 10vw, 138px);
+    padding-top: clamp(64px, 7vw, 96px);
     padding-bottom: 30px;
   }
   .hero-copy { align-self: center; }
@@ -151,7 +151,7 @@
   .text-link:hover { color: var(--orange); }
 
   .space-card {
-    align-self: end;
+    align-self: start;
     min-width: 0;
     border: 2px solid var(--ink);
     background: var(--white);
