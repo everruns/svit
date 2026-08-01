@@ -103,41 +103,79 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           </div>
         </div>
 
-        <div class="runtime-card" aria-label="Example Svit activation">
-          <div class="runtime-bar">
-            <span>process / counter</span>
-            <span class="runtime-state"><i></i> COMMITTED · v4</span>
+        <figure class="space-card">
+          <div class="space-card-title">
+            <span>ONE EVOLVING AGENT SPACE</span>
+            <span>PROCESS / 001</span>
           </div>
-          <div class="runtime-body">
-            <div class="trace-label">ACTIVATION TRACE</div>
-            <div class="trace-row">
-              <div class="trace-step">
-                <span class="trace-number">01</span>
-                <p>LOAD</p>
-                <code>memory.count = 6</code>
-              </div>
-              <span class="trace-arrow" aria-hidden="true">→</span>
-              <div class="trace-step trace-hot">
-                <span class="trace-number">02</span>
-                <p>RUN</p>
-                <code>input.by = 3</code>
-              </div>
-              <span class="trace-arrow" aria-hidden="true">→</span>
-              <div class="trace-step trace-commit">
-                <span class="trace-number">03</span>
-                <p>COMMIT</p>
-                <code>memory.count = 9</code>
-              </div>
-            </div>
-            <pre class="runtime-output"><span>output</span> &#123; count: 9 &#125;
-<span>root</span>   sha256:91e5…87a1
-<span>outbox</span> 0 intents</pre>
-          </div>
-          <div class="runtime-foot">
-            <span>ATOMIC TRANSITION</span>
-            <span>18.2K / 100K TICKS</span>
-          </div>
-        </div>
+          <svg class="space-map" viewBox="0 0 560 500" role="img" aria-labelledby="space-map-title space-map-description">
+            <title id="space-map-title">One evolving agent space</title>
+            <desc id="space-map-description">
+              An agent activates a Svit process containing memory, behaviors, and a projected view of the world. The process changes transactionally and can be snapshotted, restored, or forked.
+            </desc>
+            <defs>
+              <marker id="space-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0 0 L0 6 L8 3 Z" class="space-arrow-head"></path>
+              </marker>
+              <marker id="projection-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+                <path d="M0 0 L0 6 L8 3 Z" class="projection-arrow-head"></path>
+              </marker>
+            </defs>
+
+            <text x="28" y="42" class="space-map-kicker">ONE AGENT PROCESS</text>
+            <text x="28" y="72" class="space-map-heading">REMEMBER · ACT · REACH</text>
+
+            <g class="agent-node">
+              <circle cx="56" cy="242" r="34"></circle>
+              <circle cx="56" cy="234" r="7" class="agent-head"></circle>
+              <path d="M40 258 Q56 241 72 258" class="agent-body"></path>
+              <text x="56" y="294" text-anchor="middle">AGENT</text>
+            </g>
+            <path d="M96 242 H144" class="space-line" marker-end="url(#space-arrow)"></path>
+            <text x="119" y="227" text-anchor="middle" class="space-map-note">ACTIVATE</text>
+
+            <g class="agent-space">
+              <circle cx="300" cy="242" r="148" class="space-boundary"></circle>
+              <circle cx="300" cy="242" r="51" class="space-core"></circle>
+              <text x="300" y="237" text-anchor="middle" class="space-core-label">AGENT</text>
+              <text x="300" y="261" text-anchor="middle" class="space-core-label">SPACE</text>
+
+              <g class="space-node memory-node">
+                <circle cx="300" cy="122" r="42"></circle>
+                <text x="300" y="118" text-anchor="middle">MEMORY</text>
+                <text x="300" y="141" text-anchor="middle" class="space-map-note">REMEMBER</text>
+              </g>
+              <g class="space-node behavior-node">
+                <circle cx="198" cy="302" r="42"></circle>
+                <text x="198" y="298" text-anchor="middle">BEHAVIORS</text>
+                <text x="198" y="321" text-anchor="middle" class="space-map-note">ACT</text>
+              </g>
+              <g class="space-node world-node">
+                <circle cx="402" cy="302" r="42"></circle>
+                <text x="402" y="298" text-anchor="middle">WORLD</text>
+                <text x="402" y="321" text-anchor="middle" class="space-map-note">REACH</text>
+              </g>
+            </g>
+
+            <path d="M445 292 C466 284 473 266 488 249" class="projection-line" marker-end="url(#projection-arrow)"></path>
+            <text x="475" y="278" text-anchor="middle" class="space-map-note">TYPED</text>
+            <text x="475" y="290" text-anchor="middle" class="space-map-note">PROJECTION</text>
+            <g class="external-node">
+              <rect x="492" y="202" width="58" height="78"></rect>
+              <text x="521" y="235" text-anchor="middle">EXTERNAL</text>
+              <text x="521" y="253" text-anchor="middle">SYSTEMS</text>
+            </g>
+
+            <path d="M300 390 V418" class="space-line" marker-end="url(#space-arrow)"></path>
+            <text x="318" y="410" class="space-map-note">COMMIT</text>
+            <path d="M200 430 Q300 408 400 430 V465 Q300 486 200 465 Z" class="snapshot-node"></path>
+            <text x="300" y="450" text-anchor="middle" class="snapshot-label">SNAPSHOT · RESTORE · FORK</text>
+          </svg>
+          <figcaption class="space-card-foot">
+            <span>UNIFIED INSIDE</span>
+            <span>EXPLICIT AT THE BOUNDARY</span>
+          </figcaption>
+        </figure>
 
         <div class="hero-index" aria-hidden="true">
           <span>SVIT / 001</span>
