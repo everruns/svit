@@ -21,6 +21,12 @@ Svit Lisp 1 is a small versioned Lisp surface implemented with the pure-Rust
 Ketos bytecode interpreter. It is not a compatibility promise for Scheme,
 Common Lisp, or unrestricted Ketos.
 
+Standalone Svit Lisp source uses the `.svit-script` extension. Virtual source
+paths inside the process script library use `/lib/<name>.svit-script`. The
+extension and diagnostic identity belong to Svit; Ketos remains an interpreter
+implementation detail. The `.svit` extension is reserved for a future Svit
+manifest format; manifests are not implemented.
+
 A named script defines `(main input)`. Each activation creates a fresh Ketos
 interpreter, installs null I/O and a module loader that rejects every module,
 exposes explicit Svit functions, executes against a transactional memory copy,

@@ -259,7 +259,7 @@ interpreter namespace separate from durable memory and makes each mutation or
 message intent visible at the implementation boundary.
 
 ```lisp
-;; /lib/counter.ket
+;; /lib/counter.svit-script
 (define (main input)
   (let ((count (+ (memory-get "/count")
                   (value-get input "/by"))))

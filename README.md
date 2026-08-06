@@ -53,7 +53,7 @@ fn main() -> svit::Result<()> {
 Run one standalone script through the CLI:
 
 ```console
-cargo run -p svit-cli -- run examples/cli_counter.ket '{"by": 3}'
+cargo run -p svit-cli -- run examples/cli_counter.svit-script '{"by": 3}'
 ```
 
 The CLI creates a fresh process, installs the script as `main`, executes one

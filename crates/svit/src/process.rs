@@ -416,7 +416,9 @@ impl Process {
         let state = RuntimeState::new(memory);
         let interpreter =
             secure_lisp(&state, &request.input, &self.script_records(), &self.limits)?;
-        let source_path = format!("/lib/{}.ket", request.script);
+        // Svit owns the language contract and virtual source identity; Ketos is
+        // an interpreter implementation detail.
+        let source_path = format!("/lib/{}.svit-script", request.script);
         let output_lisp = catch_unwind(AssertUnwindSafe(|| {
             let execution = (|| {
                 interpreter
@@ -618,9 +620,9 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
         .map(|_| ())
         .map_err(|error| map_ketos_error(&interpreter, error))
         .map_err(|error| match error {
-            Error::Script(message) => {
-                Error::Script(sanitize_diagnostic(format!("/lib/{name}.ket: {message}")))
-            }
+            Error::Script(message) => Error::Script(sanitize_diagnostic(format!(
+                "/lib/{name}.svit-script: {message}"
+            ))),
             other => other,
         })
 }

@@ -2,6 +2,7 @@
 
 ## 2026-08-05
 
+* **Language identity**: Adopted `.svit-script` for standalone Svit Lisp source and virtual script-library diagnostics, reserved `.svit` for an unimplemented future manifest format, and kept Ketos as an interpreter implementation detail.
 * **Runtime replacement**: Replaced Luau through `mlua` with the pure-Rust Ketos interpreter and defined the versioned [Svit Lisp Runtime](runtimes/lisp-runtime.md).
 * **Guest contract**: Separated lexical variables from durable memory through explicit `memory-get`, `memory-set!`, and `memory-remove!` operations; added immutable typed maps and arrays plus bounded script, log, and message functions.
 * **Security boundary**: Installed null I/O and a module loader that rejects every Ketos module, created a fresh interpreter for every activation, and retained one post-validation commit point.

@@ -286,7 +286,7 @@ fn diagnostics_are_capped_and_use_virtual_source_paths() {
 
     let diagnostic = process.run("fail", Value::Null).unwrap_err().to_string();
     assert!(diagnostic.len() <= 1100);
-    assert!(diagnostic.contains("/lib/fail.ket"));
+    assert!(diagnostic.contains("/lib/fail.svit-script"));
     assert!(!diagnostic.contains(env!("CARGO_MANIFEST_DIR")));
     assert!(!diagnostic.contains("backtrace"));
 }
