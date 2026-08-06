@@ -38,9 +38,10 @@ The following scenarios execute with assertions and deterministic output under
 - two control clients contending on one version, then resolving the conflict.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
-Examples requiring an API
-key or external service must be separated from the deterministic core suite and
-must never receive secrets on pull-request-controlled code.
+CLI smoke inputs live under `crates/svit-cli/tests/fixtures/`; they are internal
+test data, not public examples. Examples requiring an API key or external
+service must be separated from the deterministic core suite and must never
+receive secrets on pull-request-controlled code.
 
 ## Transaction matrix
 

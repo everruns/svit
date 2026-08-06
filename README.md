@@ -52,7 +52,7 @@ fn main() -> svit::Result<()> {
 Run one standalone script through the CLI:
 
 ```console
-cargo run -p svit-cli -- exec examples/cli_counter.svit-script '{"by": 3}'
+cargo run -p svit-cli -- exec path/to/script.svit-script '{"input": "value"}'
 ```
 
 The CLI creates a fresh process, installs the script as `main`, executes one
