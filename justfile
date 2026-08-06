@@ -21,7 +21,7 @@ examples:
     cargo run --locked -p svit --example fork_research
     cargo run --locked -p svit --example sandbox_limits
     cargo run --locked -p svit --example multi_client_control
-    cargo run --locked -p svit-cli -- exec examples/cli_counter.svit-script '{"by": 3}'
+    cargo run --locked -p svit-cli -- exec crates/svit-cli/tests/fixtures/counter.svit-script '{"by": 3}'
 
 # Validate the OKF v0.2 knowledge bundle.
 check-okf:
@@ -52,7 +52,6 @@ audit:
 pre-pr: check examples audit
     @echo "Pre-PR checks passed"
 
-# Run a Lisp file in a fresh CLI process. Example:
-# just exec examples/cli_counter.svit-script '{"by": 3}'
+# Run a Lisp file in a fresh CLI process.
 exec *args:
     cargo run --locked -p svit-cli -- exec {{args}}
