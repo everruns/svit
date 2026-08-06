@@ -6,13 +6,20 @@ use crate::{Error, Result};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Limits {
-    /// Maximum Luau interrupt callbacks before an activation is stopped.
-    ///
-    /// This is a versioned VM tick budget, not an exact source-instruction
-    /// count.
-    pub max_interrupt_ticks: u64,
-    /// Maximum guest heap growth above the fresh VM baseline.
-    pub max_heap_bytes: usize,
+    /// Maximum wall-clock milliseconds spent in one Ketos VM entry.
+    pub max_execution_millis: u64,
+    /// Maximum abstract guest-memory units tracked by Ketos.
+    pub max_guest_memory: usize,
+    /// Maximum nested guest function calls.
+    pub max_call_stack: usize,
+    /// Maximum guest values held on the Ketos VM stack.
+    pub max_value_stack: usize,
+    /// Maximum guest-defined names in one activation.
+    pub max_namespace_entries: usize,
+    /// Maximum nested Lisp syntax depth.
+    pub max_syntax_depth: usize,
+    /// Maximum size of guest integer and ratio values in bits.
+    pub max_integer_bits: usize,
     /// Maximum nesting depth of a persistent value.
     pub max_value_depth: usize,
     /// Maximum number of entries visited in one persistent value.
@@ -32,8 +39,13 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_interrupt_ticks: 100_000,
-            max_heap_bytes: 8 * 1024 * 1024,
+            max_execution_millis: 100,
+            max_guest_memory: 8 * 1024 * 1024,
+            max_call_stack: 64,
+            max_value_stack: 4096,
+            max_namespace_entries: 256,
+            max_syntax_depth: 64,
+            max_integer_bits: 64,
             max_value_depth: 32,
             max_value_entries: 10_000,
             max_text_bytes: 1024 * 1024,
@@ -49,8 +61,13 @@ impl Limits {
     pub(crate) fn validate(&self) -> Result<()> {
         // THREAT[TM-DOS-003]: Snapshot limits are untrusted and cannot enlarge
         // the host's hard safety envelope during restore.
-        let valid = self.max_interrupt_ticks <= 10_000_000
-            && self.max_heap_bytes <= 64 * 1024 * 1024
+        let valid = self.max_execution_millis <= 60_000
+            && self.max_guest_memory <= 64 * 1024 * 1024
+            && self.max_call_stack <= 4096
+            && self.max_value_stack <= 1_000_000
+            && self.max_namespace_entries <= 10_000
+            && self.max_syntax_depth <= 1024
+            && self.max_integer_bits <= 4096
             && self.max_value_depth <= 128
             && self.max_value_entries <= 1_000_000
             && self.max_text_bytes <= 64 * 1024 * 1024

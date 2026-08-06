@@ -1,10 +1,11 @@
 use svit::{Process, Value, value};
 
 const COUNTER: &str = r#"
-function main(input)
-    memory.count = (memory.count or 0) + input.by
-    return { count = memory.count }
-end
+(define (main input)
+  (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+    (do
+      (memory-set! "/count" count)
+      (value-map "count" count))))
 "#;
 
 fn main() -> svit::Result<()> {

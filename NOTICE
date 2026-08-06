@@ -5,8 +5,7 @@ Svit is an independent research implementation of an agent process runtime.
 
 Notable dependencies include:
 
-- mlua (MIT), Rust bindings used to embed Luau.
-- Luau (MIT), the guest-language implementation developed by Roblox.
+- Ketos (MIT OR Apache-2.0), the pure-Rust Lisp guest-language implementation.
 - serde and serde_json (MIT OR Apache-2.0), serialization libraries.
 - sha2 (MIT OR Apache-2.0), SHA-256 implementation from RustCrypto.
 - thiserror (MIT OR Apache-2.0), typed error derive support.

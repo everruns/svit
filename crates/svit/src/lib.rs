@@ -1,6 +1,6 @@
 //! Svit is a research runtime for isolated, serializable agent processes.
 //!
-//! The current vertical slice runs named, untrusted Svit Lua scripts against a
+//! The current vertical slice runs named, untrusted Svit Lisp scripts against a
 //! transactional memory tree. Successful activations commit memory, staged
 //! scripts, and message intents together. Failures commit nothing.
 //! Multi-client control implements Versioned Atomic State Transitions (VAST):
@@ -14,10 +14,9 @@
 //!     .memory(value!({"count": 0}))
 //!     .build()?;
 //! process.save_script("counter", r#"
-//!     function main(input)
-//!         memory.count = memory.count + input.by
-//!         return memory.count
-//!     end
+//!     (define (main input)
+//!       (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+//!         (do (memory-set! "/count" count) count)))
 //! "#)?;
 //!
 //! let activation = process.run("counter", value!({"by": 2}))?;

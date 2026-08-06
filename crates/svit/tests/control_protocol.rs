@@ -7,10 +7,11 @@ use svit::{
 };
 
 const COUNTER: &str = r#"
-function main(input)
-    memory.count = memory.count + input.by
-    return { count = memory.count }
-end
+(define (main input)
+  (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+    (do
+      (memory-set! "/count" count)
+      (value-map "count" count))))
 "#;
 
 fn counter_controller(receipt_limit: usize) -> ProcessController {

@@ -58,7 +58,7 @@ limitations until implementation and evidence land.
 ## Testing security-sensitive changes
 
 Guest scripts, values, snapshots, addresses, and message bodies are untrusted.
-Changes to parsing, conversion, Lua exposure, limits, transactions, snapshots,
+Changes to parsing, conversion, Lisp exposure, limits, transactions, snapshots,
 forks, hooks, or errors require review against
 `knowledge/security/threat-model.md` and tests following
 `knowledge/security/security-testing.md`.

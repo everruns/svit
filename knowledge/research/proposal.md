@@ -13,6 +13,7 @@ tags:
 
 Status: working research proposal
 Date: 2026-07-31
+Updated: 2026-08-05
 
 ## Executive summary
 
@@ -20,7 +21,7 @@ Svit should be a **capability-oriented agent process runtime** implemented in
 Rust. A Svit host runs many isolated **agent processes**. Each process has:
 
 - one guest-visible, serializable state tree;
-- named Lua-like scripts stored in that same tree;
+- named Lisp scripts stored in that same tree;
 - a mailbox, timers, identity, resource budget, and capability grants;
 - transactional execution with no ambient filesystem, network, environment,
   clock, randomness, or process access;
@@ -49,13 +50,13 @@ language-specific, `sandbox` describes only one property, and names such as
 Internally, `kernel` is a useful name for the small trusted transition layer.
 
 The strongest recommendation is to separate the **language** from the
-**interpreter implementation**. Define a small, versioned "Svit Lua" subset.
-Use Luau through `mlua` to learn quickly, but keep it behind an interpreter
-trait and do not claim that an in-process C/C++ VM is a formally proven tenant
-boundary. If same-native-process hostile multi-tenancy is a hard requirement,
-the end state should be either a small safe-Rust interpreter suitable for
-verification or an interpreter contained by WebAssembly, with an OS boundary
-as defense in depth.
+**interpreter implementation**. Define a small, versioned "Svit Lisp" contract
+and initially implement it with the pure-Rust Ketos interpreter. Ketos provides
+a compact embeddable language and useful restrictions, but its deadline is
+wall-clock based and its memory accounting is an abstract estimate rather than
+an allocator byte cap. If same-native-process hostile multi-tenancy is a hard
+requirement, Svit still needs stronger executable evidence and likely a
+purpose-built, Wasm, or OS process boundary.
 
 ## 1. The hypothesis
 
@@ -95,8 +96,8 @@ events and snapshots can be persisted, moved, or replicated by the host.
 
 ### Initial non-goals
 
-- POSIX, arbitrary executables, native Lua modules, or compatibility with the
-  full Lua package ecosystem.
+- POSIX, arbitrary executables, unrestricted Ketos modules, or compatibility
+  with Scheme or Common Lisp ecosystems.
 - Transparent serialization of an executing stack, arbitrary coroutine,
   closure with captured upvalues, userdata, or host pointer.
 - Shared-memory concurrency between processes.
@@ -134,7 +135,7 @@ The architecture should be judged against these invariants:
 10. **Secrets are handles.** Private keys and provider credentials are never
     values available to script reflection.
 
-"One namespace" must not mean one undifferentiated mutable Lua table. Putting
+"One namespace" must not mean one undifferentiated mutable guest namespace. Putting
 authorization policy or private keys into a table that guest code can rewrite
 would destroy the security model. Svit instead presents one tree containing
 mutable values, immutable metadata, capability handles, and lazy projections.
@@ -149,7 +150,7 @@ flowchart TB
         Supervisor["Supervisor + fair scheduler"]
         Kernel["Process kernel\ntransaction · mailbox · timers · fork"]
         State["Persistent state tree\npatches · snapshots · hashes"]
-        VM["Svit Lua interpreter\nfuel · heap limit · safe library"]
+        VM["Svit Lisp interpreter\ndeadline · memory estimate · restricted library"]
         Broker["Capability broker\nidentity · authz · effects"]
         Supervisor --> Kernel
         Kernel <--> State
@@ -216,7 +217,7 @@ host.
 
 ### 5.2 Persistent value model
 
-Do not persist arbitrary Lua values. Define a smaller canonical data model:
+Do not persist arbitrary interpreter values. Define a smaller canonical data model:
 
 ```text
 Value = null | bool | i64 | finite-f64 | text | bytes
@@ -237,8 +238,9 @@ Recommended restrictions:
 - references are typed values, not forgeable strings.
 
 These restrictions make validation, canonical serialization, hashing,
-querying, diffing, migration, and proofs tractable. Lua tables remain useful
-during an activation, but a value must convert to this model before commit.
+querying, diffing, migration, and proofs tractable. Guest collections are
+explicit immutable values during an activation, and every returned or staged
+value must convert to this model before commit.
 
 Use a structurally shared immutable tree internally. Each activation works
 against a root version and builds a patch. Commit uses compare-and-swap on that
@@ -250,33 +252,27 @@ keys and a single encoding suitable for content addressing, but Svit should
 only claim DAG-CBOR compatibility if it implements the complete required
 profile. A root hash is an integrity and deduplication tool, not authorization.
 
-### 5.3 Lua view
+### 5.3 Lisp view
 
-Lua's environment mechanism makes a natural user experience possible. Free
-names are resolved through `_ENV`; Svit can bind selected namespaces and safe
-functions there while buffering durable writes in the current transaction.
+Svit Lisp exposes state and effects through explicit functions. This keeps the
+interpreter namespace separate from durable memory and makes each mutation or
+message intent visible at the implementation boundary.
 
-```lua
--- /lib/daily_digest.lua
-local pending = memory.tasks.pending
-local digest = summarize(pending)
-
-memory.digests.latest = {
-    created_at = clock.now(),
-    count = #pending,
-    text = digest,
-}
-
-send(processes.owner, {
-    type = "daily_digest.ready",
-    digest = memory.digests.latest,
-})
+```lisp
+;; /lib/counter.svit-script
+(define (main input)
+  (let ((count (+ (memory-get "/count")
+                  (value-get input "/by"))))
+    (memory-set! "/count" count)
+    (send! "process://owner" (value-map "type" "counter.changed"
+                                         "count" count))
+    (value-map "count" count)))
 ```
 
-The apparent clock read, model-backed `summarize`, and message send are
-capability calls. Their inputs, results, cost, and authorization decisions are
-recorded. `send` creates a transactional outbox intent; it does not perform
-network I/O in the middle of the state mutation.
+`memory-set!` changes only the activation's working copy. `send!` creates a
+transactional outbox intent; it does not perform network I/O in the middle of
+the state mutation. Future capability calls must likewise record their inputs,
+results, cost, and authorization decisions.
 
 ### 5.4 External projections
 
@@ -294,34 +290,28 @@ tree metaphor from hiding nondeterministic or irreversible behavior.
 
 ## 6. Scripting model
 
-### 6.1 Recommendation: Svit Lua, initially backed by Luau
+### 6.1 Recommendation: Svit Lisp, initially backed by Ketos
 
-Lua is a strong fit for the surface language: it is small, designed for
-embedding, has familiar tables and functions, and its `_ENV` model maps well
-to a state namespace. For the first implementation, prefer **Luau through
-`mlua`** over stock Lua 5.4:
+Lisp is a strong fit for the surface language: its syntax is small, code is
+easy to generate structurally, and explicit functions make the state and effect
+boundary clear. The first implementation uses **Ketos**, a pure-Rust embedded
+Lisp, behind the Svit process boundary.
 
-- Luau was built for executing untrusted scripts and documents its sandboxing
-  model, immutable standard libraries, isolated environments, interrupts, and
-  memory accounting;
-- `mlua` provides a safe Rust-facing API, memory limits, and instruction hooks
-  or Luau interrupts;
-- Luau remains broadly Lua 5.1-compatible while adding useful tooling.
-
-This is a prototype and product-language choice, not a proof claim. Luau is
-implemented in C++ and its maintainers explicitly state that its sandbox is
-not formally proven. `mlua` being a safe Rust binding does not prove the VM
-underneath it.
+Ketos supports null host I/O, a denied module loader, execution deadlines, and
+limits for call/value stacks, namespaces, syntax depth, integer size, and an
+abstract guest-memory measure. Those controls are useful executable evidence,
+not proof of hostile same-process isolation. In particular, the current crate
+does not expose deterministic instruction fuel or an allocator-level byte cap.
 
 Define the language contract independently:
 
-- versioned Lua/Luau-compatible syntax subset;
+- versioned Svit Lisp syntax and host API;
 - deterministic persistent value semantics;
 - no native modules or bytecode supplied by the guest;
-- no `io`, `package`, filesystem/process APIs, unrestricted `os`, `debug`,
-  `loadfile`, `dofile`, or environment-variable access;
-- immutable built-ins and per-process environments;
-- bounded strings, tables, recursion, and outputs;
+- no guest module loader, filesystem/process APIs, host I/O, environment,
+  clock, randomness, FFI, or native extensions;
+- a fresh interpreter namespace for every activation;
+- bounded syntax, integers, stacks, namespace, guest memory, and outputs;
 - explicit clock, random, identity, messaging, model, and projection APIs;
 - named modules loaded only from `/lib`;
 - source is compiled by the trusted host and associated with its source hash.
@@ -336,7 +326,7 @@ A script record under `/lib/<name>` should contain:
 
 ```text
 {
-  language: "svit-lua@1",
+  language: "svit-lisp@1",
   source: "...",
   source_hash: "...",
   entrypoints: ["main"],
@@ -359,7 +349,7 @@ artifact may be cached by `(runtime_version, source_hash)` and safely discarded.
 ### 6.3 Durable automation without serializing VM stacks
 
 V1 should only snapshot at a **quiescent committed boundary**. An activation
-runs to completion, fails, or is cancelled. It does not persist a live Lua
+runs to completion, fails, or is cancelled. It does not persist a live Lisp
 coroutine. Long-running behavior is expressed as a small durable state machine:
 
 1. store workflow state under `/tasks`;
@@ -369,7 +359,7 @@ coroutine. Long-running behavior is expressed as a small durable state machine:
 5. invoke the named handler again.
 
 This resembles durable workflows but avoids trying to serialize implementation
-details of a Lua VM. Arbitrary continuation serialization can be researched
+details of a Lisp interpreter. Arbitrary continuation serialization can be researched
 later through a CPS transformation or a purpose-built bytecode interpreter.
 
 ### 6.4 Reflection and discovery
@@ -582,19 +572,19 @@ and scripts written by the agent are malicious. Relevant threats include:
 
 | Tier | Intended use | Boundary |
 | --- | --- | --- |
-| **Research** | Local experiments and trusted scripts | Luau via `mlua` in the host process |
-| **Hardened** | Hostile scripts, limited pilot | Luau isolate plus OS process/container or a Wasm-contained interpreter |
-| **Proof-oriented** | Same-process multi-tenant target | Small safe-Rust Svit Lua VM, minimal unsafe code, verified core invariants, plus defense in depth |
+| **Research** | Local experiments and trusted scripts | Ketos in the host process with explicit restrictions |
+| **Hardened** | Hostile scripts, limited pilot | Restricted interpreter plus an OS process/container or Wasm boundary |
+| **Proof-oriented** | Same-process multi-tenant target | Purpose-built or hardened safe-Rust interpreter with deterministic fuel and verified core invariants |
 
-Luau provides meaningful sandbox features, but separate VMs are still required
-for isolation and its C++ implementation remains in the trusted computing base.
-WebAssembly is attractive because guest code has no ambient system calls and
-all host interaction is imported explicitly. Wasmtime adds fuel, epoch
-interruption, and resource limiting, although host calls still require their
-own cancellation and limits. An OS boundary remains valuable because Wasmtime,
-the compiler, and host adapters can also contain defects.
+Ketos provides meaningful restrictions, but a fresh interpreter is only one
+isolation layer and remains in the trusted computing base. WebAssembly is
+attractive because guest code has no ambient system calls and all host
+interaction is imported explicitly. Wasmtime adds fuel, epoch interruption,
+and resource limiting, although host calls still require their own cancellation
+and limits. An OS boundary remains valuable because Wasmtime, the interpreter,
+and host adapters can also contain defects.
 
-Never pool mutable Lua globals, userdata, or capability objects between tenants.
+Never pool mutable interpreter namespaces, foreign values, or capability objects between tenants.
 Compiled immutable source artifacts may be cached by hash if their provenance
 and runtime version are validated.
 
@@ -641,8 +631,8 @@ A useful initial workspace shape is:
 ```text
 svit-core       values, paths, patches, process model, pure transitions
 svit-codec      canonical encoding, hashes, schema migration
-svit-script     interpreter trait and Svit Lua language contract
-svit-luau       prototype Luau/mlua implementation
+svit-script     interpreter boundary and Svit Lisp language contract
+svit-ketos      prototype Ketos implementation
 svit-host       supervisor, activation loop, quotas, capability broker
 svit-store      event/snapshot traits and in-memory implementation
 svit-protocol   addresses, messages, snapshots, effect envelopes
@@ -651,7 +641,7 @@ svit-cli        local REPL, inspection, replay, and hostile-script runner
 ```
 
 Keep `svit-core` synchronous, deterministic, and free of network, filesystem,
-database, async-runtime, Lua, and agent-framework dependencies. Interpreter,
+database, async-runtime, Lisp, and agent-framework dependencies. Interpreter,
 storage, transport, identity, and capability implementations point inward to
 core contracts.
 
@@ -719,7 +709,8 @@ Deliverables:
 
 - threat model and assurance-level document;
 - version 1 value model, path/patch semantics, and process transition spec;
-- Luau/`mlua` spike with hostile CPU, heap, stack, and API tests;
+- Ketos spike with hostile deadline, memory, stack, namespace, syntax, integer,
+  and API tests, including explicit measurement of the deterministic-fuel gap;
 - Wasmtime-contained interpreter feasibility spike;
 - canonical encoding and copy-on-write tree benchmark;
 - TLA+/Stateright model of commit, outbox, retry, and fork.
@@ -729,14 +720,14 @@ performance, snapshot cost, preemption latency, and containment complexity.
 
 ### Phase 1: single-process kernel
 
-Build `svit-core`, in-memory persistence, the Svit Lua subset, transactional
-state, named scripts, reflection, deterministic fuel, and a CLI.
+Build `svit-core`, in-memory persistence, the Svit Lisp contract, transactional
+state, named scripts, reflection, bounded execution, and a CLI.
 
 Exit criteria:
 
 - deterministic replay across restart;
 - no partial state after any injected activation failure;
-- hard state/heap/fuel/output limits;
+- hard state/output limits and documented interpreter limit semantics;
 - scripts can create, inspect, modify, and invoke scripts;
 - fuzzed decoding and persistent-value conversion.
 
@@ -786,14 +777,14 @@ This is research, so the plan should try to disprove its central assumptions:
 1. **Namespace usability:** Can an agent reliably use and rediscover a tree and
    script library without a filesystem metaphor?
 2. **Language sufficiency:** What percentage of useful agent automation fits
-   the restricted Svit Lua subset without smuggling in Python or Bash?
+   the restricted Svit Lisp contract without smuggling in Python or Bash?
 3. **State discipline:** Do restrictions on cycles, closures, and persistent
    coroutines make authoring awkward enough to erase the benefit?
 4. **Effect ergonomics:** Can projections feel simple while keeping remote
    reads, writes, cost, and nondeterminism explicit?
 5. **Fork economics:** Does structural sharing make real agent forks cheaper
    and easier to reason about than copying session workspaces?
-6. **Security cost:** Is a safe-Rust or Wasm-contained Lua implementation fast
+6. **Security cost:** Is a hardened safe-Rust or Wasm-contained Lisp implementation fast
    enough for many activations per host?
 7. **Formal value:** Can the implementation preserve a small enough semantic
    core that model/code conformance is credible?
@@ -809,10 +800,10 @@ for an agent sandbox.
 
 The following should remain deliberately unsettled until Phase 0 evidence:
 
-1. Luau in an OS isolate, Luau inside Wasm, or a purpose-built safe-Rust Svit
-   Lua interpreter for the hardened tier.
-2. Exact Lua/Luau syntax version and whether optional type annotations are
-   accepted.
+1. Ketos in an OS isolate, a Wasm-contained interpreter, or a purpose-built
+   safe-Rust Svit Lisp interpreter with deterministic fuel for the hardened tier.
+2. Exact Svit Lisp syntax and standard-library surface, including whether
+   macros remain available.
 3. Deterministic math requirements across CPU architectures, especially
    transcendental functions and floating-point edge cases.
 4. Deterministic CBOR profile versus full DAG-CBOR compatibility.
@@ -832,10 +823,10 @@ Build the smallest artifact that tests the hypothesis:
 
 - one Rust process hosting one Svit process;
 - a persistent immutable value tree and deterministic patch codec;
-- Svit Lua via sandboxed Luau/`mlua`, behind an interpreter trait;
+- Svit Lisp via restricted Ketos, behind the process transition boundary;
 - only safe math, text, table, state, script, reflection, log, and message APIs;
-- fresh VM activation for each call, with fuel, heap, stack, output, and state
-  limits;
+- fresh interpreter activation for each call, with deadline, abstract memory,
+  stack, output, and state limits;
 - scripts persisted as source records under `/lib`;
 - atomic activation commit and in-memory event log;
 - snapshot, restore, and copy-on-write fork at committed boundaries;
@@ -852,11 +843,8 @@ without changing the semantic contract.
 
 Primary and project sources that informed the proposal:
 
-- [Lua 5.4 Reference Manual](https://www.lua.org/manual/5.4/), especially
-  environments, allocators, hooks, coroutines, and standard libraries.
-- [Luau sandboxing guide](https://luau.org/sandbox/) and
-  [Luau embedding API](https://luau.org/api/).
-- [`mlua` documentation](https://docs.rs/mlua/latest/mlua/struct.Lua.html).
+- [Ketos repository and language documentation](https://github.com/murarth/ketos).
+- [`ketos` crate documentation](https://docs.rs/ketos/0.12.0/ketos/).
 - [WebAssembly security model](https://webassembly.org/docs/security/) and
   [Wasmtime security](https://docs.wasmtime.dev/security.html).
 - [Wasmtime `Store` resource controls](https://docs.rs/wasmtime/latest/wasmtime/struct.Store.html).

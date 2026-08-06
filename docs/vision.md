@@ -70,7 +70,7 @@ and reuse its own functional library. Reflection is therefore a normal runtime
 operation: the agent can understand its memory, available functions, limits,
 and granted capabilities through the same structured space.
 
-Svit Lua is intended to be approachable and sufficiently general for agent
+Svit Lisp is intended to be approachable and sufficiently general for agent
 automation: math, text, collections, structured data, and reusable functions.
 Its surface should grow from demonstrated agent tasks while remaining bounded,
 versioned, and legible to both the agent and the host.
@@ -113,7 +113,7 @@ operating-system boundary.
 The current implementation tests the smallest useful part of the idea:
 
 - one serializable memory tree;
-- named, self-authored Svit Lua scripts;
+- named, self-authored Svit Lisp scripts;
 - bounded transactional activations;
 - atomic state, script, and outbox changes;
 - deterministic snapshots and isolated forks;

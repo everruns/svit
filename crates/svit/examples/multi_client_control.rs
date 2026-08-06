@@ -8,10 +8,11 @@ fn main() -> svit::Result<()> {
     process.save_script(
         "counter",
         r#"
-        function main(input)
-            memory.count = memory.count + input.by
-            return { count = memory.count }
-        end
+        (define (main input)
+          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+            (do
+              (memory-set! "/count" count)
+              (value-map "count" count))))
         "#,
     )?;
     let controller = ProcessController::new(process);

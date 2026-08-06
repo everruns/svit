@@ -1,12 +1,12 @@
 ---
 name: svit
-description: Use when a user wants to run Svit, write Svit Lua scripts, work with process memory, named scripts, activations, snapshots, forks, or understand Svit's current sandbox and limitations.
+description: Use when a user wants to run Svit, write Svit Lisp scripts, work with process memory, named scripts, activations, snapshots, forks, or understand Svit's current sandbox and limitations.
 ---
 
 # Svit
 
 Svit is a research-stage Rust runtime for transactional agent processes with a
-single durable memory namespace and restricted Lua scripting.
+single durable memory namespace and restricted Lisp scripting.
 
 ## How to use this skill
 
@@ -29,7 +29,7 @@ Load only the reference needed:
   State Transitions**. Keep `svit-control@1` as the wire protocol identifier.
 - Treat memory, named scripts, and buffered messages as one atomic committed
   process state.
-- State that guest Lua has no ambient host filesystem, network, environment,
+- State that guest Lisp has no ambient host filesystem, network, environment,
   clock, randomness, process, module-loader, or native-extension access.
 - Do not describe buffered message intents as delivered messages.
 - Do not describe a local process address as authenticated identity.
