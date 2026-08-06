@@ -81,7 +81,8 @@ jobs:
         run: cargo run --locked -p svit --example multi_client_control
 
       - name: Run CLI smoke test
-        run: cargo run --locked -p svit-cli -- run examples/cli_counter.svit-script '{"by": 3}'
+        run: >-
+          cargo run --locked -p svit-cli -- run examples/cli_counter.svit-script '{"by": 3}'
 
   audit:
     name: Dependency audit
