@@ -8,9 +8,9 @@ use svit::{
 
 const COUNTER: &str = r#"
 (define (main input)
-  (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+  (let ((count (+ (read "/memory/count") (value-get input "/by"))))
     (do
-      (memory-set! "/count" count)
+      (write "/memory/count" count)
       (value-map "count" count))))
 "#;
 
@@ -20,7 +20,9 @@ fn counter_controller(receipt_limit: usize) -> ProcessController {
         .memory("count", value!(0))
         .build()
         .unwrap();
-    process.save_script("counter", COUNTER).unwrap();
+    process
+        .write("/lib/counter", value!({"source": COUNTER}))
+        .unwrap();
     ProcessController::with_receipt_limit(process, receipt_limit).unwrap()
 }
 
@@ -76,7 +78,7 @@ fn concurrent_clients_cannot_commit_the_same_process_version() {
     assert_eq!(controller.observe().unwrap().version, 2);
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
-        restored.get("/memory/count").unwrap(),
+        restored.read("/memory/count").unwrap(),
         Some(&Value::Integer(1))
     );
 }
@@ -112,7 +114,7 @@ fn version_cas_prevents_duplicate_commit_after_receipt_eviction() {
     assert_eq!(controller.observe().unwrap().version, 3);
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
-        restored.get("/memory/count").unwrap(),
+        restored.read("/memory/count").unwrap(),
         Some(&Value::Integer(3))
     );
 }

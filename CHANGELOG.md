@@ -23,6 +23,14 @@ All notable changes to Svit will be documented here.
   rollback, forks, sandbox limits, and multi-client control.
 - OKF v0.2 knowledge bundle, threat model, public Svit skill, and repository
   validation tooling.
+- Conventional discoverable process hierarchy with reserved future nodes and
+  validated system identity, API, limits, lineage, runtime, capabilities, and
+  outbox metadata. Snapshot format 3 records this root schema.
+- Schema-aligned `ProcessBuilder::library` construction for initial `/lib`
+  entries, replacing the pre-release `script` builder method.
+- One absolute-path `discover`, `read`, `write`, `remove`, and `exec` contract
+  shared by Rust, agent tools, and Svit Lisp 2, including transactional,
+  deadline-sharing, depth-bounded nested script execution.
 
 ### Security
 

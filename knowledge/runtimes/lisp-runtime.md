@@ -17,7 +17,7 @@ dependency hardening, and broader adversarial testing remain open.
 
 ## Decision
 
-Svit Lisp 1 is a small versioned Lisp surface implemented with the pure-Rust
+Svit Lisp 2 is a small versioned Lisp surface implemented with the pure-Rust
 Ketos bytecode interpreter. It is not a compatibility promise for Scheme,
 Common Lisp, or unrestricted Ketos.
 
@@ -34,9 +34,9 @@ and converts all results to bounded Svit values before commit.
 
 ```lisp
 (define (main input)
-  (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+  (let ((count (+ (read "/memory/count") (value-get input "/by"))))
     (do
-      (memory-set! "/count" count)
+      (write "/memory/count" count)
       (log-info! "counter updated" (value-map "count" count))
       (value-map "count" count))))
 ```
@@ -50,15 +50,14 @@ and converts all results to bounded Svit values before commit.
 | `(value-map key value ...)` | Construct a text-keyed persistent map |
 | `(value-array value ...)` | Construct a persistent array, including an empty array |
 | `(value-null? value)` | Test whether a value is the persistent null value |
-| `(memory-get path)` | Read transactional process memory |
-| `(memory-set! path value)` | Stage a memory replacement or map insertion |
-| `(memory-remove! path)` | Stage removal from a map or array |
-| `(scripts-list)` | Discover committed named scripts |
-| `(scripts-read name)` | Inspect committed script source and documentation |
-| `(scripts-save! name source documentation?)` | Stage a named script for commit |
+| `(discover path)` | List immediate children at an absolute process path |
+| `(read path)` | Read from the transactional process hierarchy |
+| `(write path value)` | Stage a `/memory` or typed `/lib/<name>` update |
+| `(remove path)` | Stage a `/memory` or `/lib/<name>` removal |
+| `(exec script input)` | Execute a named script inside the same activation transaction |
 | `(log-info! message fields?)` | Append a bounded activation log record |
 | `(send! address message)` | Buffer a message intent for atomic commit |
-| `*svit-version*` | The string `Svit Lisp 1` |
+| `*svit-version*` | The string `Svit Lisp 2` |
 
 Ketos core arithmetic, comparison, immutable list, string, lexical binding,
 function, and conditional forms remain available. Output from `print` and
@@ -78,13 +77,20 @@ The boundary rejects ratios, oversized integers, names, characters, paths,
 bytes, structs, functions, lambdas, quotations, and foreign values not created
 by Svit. Script records never enter the guest data model.
 
-## Memory semantics
+## Process operation semantics
 
-Lexical variables are activation-local. Durable memory changes only through
-`memory-set!` and `memory-remove!`, which mutate the transactional working copy.
-Each supplied value is converted and validated before the mutation. Any later
-syntax, runtime, conversion, limit, or staged-script failure discards the
-working copy and every buffered intent.
+All process operations use absolute paths. `discover` and `read` traverse the
+transactional hierarchy. `write` and `remove` mutate `/memory` values or one
+typed `/lib/<name>` entry; `/system` and reserved nodes are read-only. A
+library write is a map with required text `source` and optional text
+`documentation`.
+
+Nested `exec` uses the same working memory, staged library changes, logs,
+message intents, and activation deadline. It has an independent maximum depth
+because each call creates a fresh interpreter. A nested failure restores its
+call checkpoint and, unless handled by a future language construct, rejects
+the outer activation. Any syntax, runtime, conversion, limit, or validation
+failure before commit discards the complete activation working copy.
 
 ## Isolation and authority
 
@@ -102,8 +108,8 @@ isolation. Production use still requires an outer Wasm or OS boundary.
 
 Ketos enforces wall-clock execution time, call-stack size, value-stack size,
 namespace entries, abstract guest-memory units, integer bits, and syntax depth.
-Svit separately bounds persistent values, source bytes, logs, messages, and
-staged scripts. Every limit failure rolls back the activation.
+Svit separately bounds nested exec depth, persistent values, source bytes,
+logs, messages, and staged scripts. Every limit failure rolls back the activation.
 
 Ketos 0.12 does not expose deterministic instruction fuel. Therefore the
 execution deadline can vary with host load and cannot support cross-run
@@ -112,6 +118,6 @@ limitation and research requirement.
 
 ## Snapshot compatibility
 
-Snapshot format 2 stores Lisp scripts and the Ketos-oriented limit schema.
-Restore rejects format 1 snapshots rather than interpreting Lua source as Lisp
-or silently translating resource-limit semantics.
+Snapshot format 3 stores Lisp scripts, the Ketos-oriented limit schema, and the
+conventional process namespace with validated system metadata. Restore rejects
+formats 1 and 2 rather than translating old roots or runtime semantics.

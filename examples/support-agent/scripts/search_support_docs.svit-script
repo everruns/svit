@@ -21,9 +21,9 @@
 
 (define (main input)
   (let ((query (value-get input "/query"))
-        (account-recovery (memory-get "/docs/0"))
-        (password-reset (memory-get "/docs/1"))
-        (refunds (memory-get "/docs/2")))
+        (account-recovery (read "/memory/docs/0"))
+        (password-reset (read "/memory/docs/1"))
+        (refunds (read "/memory/docs/2")))
     (if (or (has-keyword query "refund")
             (has-keyword query "purchase")
             (has-keyword query "billing"))

@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use svit::{Process, Value};
+use svit::{Process, Value, value};
 
 fn main() -> ExitCode {
     match exec() {
@@ -36,7 +36,7 @@ fn exec() -> Result<(), String> {
     let mut process =
         Process::new("svit://local/cli/process").map_err(|error| error.to_string())?;
     process
-        .save_script("main", source)
+        .write("/lib/main", value!({"source": source}))
         .map_err(|error| error.to_string())?;
     let activation = process
         .exec("main", input)
@@ -44,7 +44,7 @@ fn exec() -> Result<(), String> {
 
     let document = serde_json::json!({
         "memory": process
-            .get("/memory")
+            .read("/memory")
             .map_err(|error| error.to_string())?
             .expect("process root always has memory")
             .to_json(),

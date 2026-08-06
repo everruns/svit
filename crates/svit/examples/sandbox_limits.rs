@@ -3,7 +3,10 @@ use svit::{Error, Limits, Process, Value, value};
 fn main() -> svit::Result<()> {
     let mut inspector = Process::new("svit://local/examples/sandbox-inspector")?;
     assert!(matches!(
-        inspector.save_script("inspect", "(use random) (define (main input) true)"),
+        inspector.write(
+            "/lib/inspect",
+            value!({"source": "(use random) (define (main input) true)"}),
+        ),
         Err(Error::Script(_))
     ));
 
@@ -15,19 +18,19 @@ fn main() -> svit::Result<()> {
         .limits(limits)
         .memory("started", value!(false))
         .build()?;
-    bounded.save_script(
-        "loop",
-        r#"
+    bounded.write(
+        "/lib/loop",
+        value!({"source": r#"
         (define (spin) (spin))
-        (define (main input) (do (memory-set! "/started" true) (spin)))
-        "#,
+        (define (main input) (do (write "/memory/started" true) (spin)))
+        "#}),
     )?;
     let version_before = bounded.version();
 
     let failure = bounded.exec("loop", Value::Null);
     assert!(matches!(failure, Err(Error::ExecutionLimitExceeded)));
     assert_eq!(bounded.version(), version_before);
-    assert_eq!(bounded.get("/memory/started")?, Some(&Value::Bool(false)));
+    assert_eq!(bounded.read("/memory/started")?, Some(&Value::Bool(false)));
 
     println!("sandbox_limits ambient=denied loop=stopped state=unchanged");
     Ok(())

@@ -2,9 +2,9 @@ use svit::{Process, Value, value};
 
 const COUNTER: &str = r#"
 (define (main input)
-  (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+  (let ((count (+ (read "/memory/count") (value-get input "/by"))))
     (do
-      (memory-set! "/count" count)
+      (write "/memory/count" count)
       (value-map "count" count))))
 "#;
 
@@ -12,7 +12,7 @@ fn main() -> svit::Result<()> {
     let mut process = Process::builder("svit://local/examples/counter")?
         .memory("count", value!(0))
         .build()?;
-    process.save_script("counter", COUNTER)?;
+    process.write("/lib/counter", value!({"source": COUNTER}))?;
 
     let first = process.exec("counter", value!({"by": 2}))?;
     let second = process.exec("counter", value!({"by": 3}))?;
@@ -22,7 +22,7 @@ fn main() -> svit::Result<()> {
     let snapshot = process.snapshot()?;
     let mut restored = Process::restore(&snapshot)?;
     assert_eq!(restored.version(), 3);
-    assert_eq!(restored.get("/memory/count")?, Some(&Value::Integer(5)));
+    assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(5)));
 
     let third = restored.exec("counter", value!({"by": 4}))?;
     assert_eq!(third.output, value!({"count": 9}));

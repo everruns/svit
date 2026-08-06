@@ -16,43 +16,63 @@ Implemented for the initial in-memory vertical slice.
 
 ## Process state
 
-The initial process owns:
+The initial process exposes one conventional namespace:
 
 ```text
-Process = {
-  address,
-  version,
-  memory,
-  scripts,
-  outbox,
-  limits
-}
+/
+├── memory/                 agent-owned durable values
+├── lib/                    named scripts
+├── tasks/                  reserved; empty in this slice
+├── inbox/                  reserved; empty in this slice
+├── children/               reserved; empty in this slice
+├── mounts/                 reserved; empty in this slice
+└── system/                 read-only runtime metadata
+    ├── identity            logical address, explicitly unauthenticated
+    ├── capabilities        empty in this slice
+    ├── api                 generic agent operations
+    ├── limits              configured resource limits
+    ├── lineage             parent address for forks
+    ├── runtime             language and snapshot format
+    └── outbox              committed message intents
 ```
 
-`memory`, `scripts`, and `outbox` form one committed logical root even if the
-Rust implementation uses separate typed fields. The guest may reflect over
+`memory`, scripts, system metadata, and outbox form one committed logical root.
+The reserved nodes establish the namespace without claiming scheduler,
+delivery, child-supervision, or projection behavior. They remain empty and
+read-only until those semantics are implemented. The guest may reflect over
 memory and scripts. Enforcement state and host secrets never appear there.
 The process builder assembles initial memory from separately named items into a
-text-keyed map so each durable value is explicit at the setup boundary.
-Agent integrations use exactly four generic process operations:
+text-keyed map and initial scripts through `library(name, script)` so both
+durable namespaces are explicit at the setup boundary.
+Rust callers, agent integrations, and Svit Lisp use the same five generic
+process operations:
 
 ```text
 discover(path)
-get(path)
-set(path, value)
+read(path)
+write(path, value)
+remove(path)
 exec(script, input)
 ```
 
 `discover` returns deterministic immediate child names across memory, scripts,
-and system state. `get` returns a committed value. `set` atomically replaces a
-value at or below `/memory` and increments the process version once. `exec`
-runs a named script activation. Builders, snapshot, restore, and fork are
-lifecycle operations outside this agent contract. Adapters preserve these four
+reserved nodes, and system state at every map or array depth. `read` returns a
+value. `write` and `remove` modify `/memory` or one typed `/lib/<name>` entry.
+`exec` runs a named script activation. Inside Svit Lisp these operations use
+the activation's transactional view; nested `exec` shares its transaction,
+deadline, output limits, and independent nesting-depth limit.
+Builders, snapshot, restore, and fork are
+lifecycle operations outside this agent contract. Adapters preserve these five
 names and semantics rather than introducing another vocabulary.
 
 Addresses are validated identifiers. In the initial local-only slice they name
 message destinations and fork identities but do not imply global routing,
 authentication, reachability, or delivery.
+
+`/system/identity` repeats that logical address for discovery and includes
+`authenticated: false`. It is descriptive metadata, never a principal or
+capability. A fork replaces this address and records its parent's address under
+`/system/lineage/parent` without mutating the parent.
 
 ## Activation transition
 
@@ -69,9 +89,9 @@ replaces the root, appends buffered message intents, and increments the process
 version exactly once. On any failure, version, memory, scripts, and outbox are
 unchanged.
 
-A host `set` constructs and validates a replacement root before its single
-commit assignment. A rejected path or value leaves the committed root and
-version unchanged.
+A host `write` or `remove` constructs and validates a replacement root before
+its single commit assignment. A rejected path or value leaves the committed
+root and version unchanged.
 
 The initial implementation may clone values during activation. Persistent
 structural sharing is an optimization, not part of the public contract.

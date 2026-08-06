@@ -321,11 +321,11 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
               <p>VISIBLE TO GUEST</p>
               <code>input</code>
               <code>(value-null? value)</code>
-              <code>(memory-get path)</code>
-              <code>(memory-set! path value)</code>
-              <code>(scripts-list)</code>
-              <code>(scripts-read name)</code>
-              <code>(scripts-save! name source)</code>
+              <code>(discover path)</code>
+              <code>(read path)</code>
+              <code>(write path value)</code>
+              <code>(remove path)</code>
+              <code>(exec script input)</code>
               <code>(log-info! message fields)</code>
               <code>(send! address message)</code>
             </div>
@@ -348,12 +348,12 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
         <div class="code-window">
           <div class="code-heading">
             <span>counter.svit-script</span>
-            <span>SVIT LISP 1</span>
+            <span>SVIT LISP 2</span>
           </div>
           <pre><code><span class="code-dim">01</span>  (<span class="code-keyword">define</span> (<span class="code-call">main</span> input)
-<span class="code-dim">02</span>    (<span class="code-keyword">let</span> ((count (+ (memory-get "/count")
+<span class="code-dim">02</span>    (<span class="code-keyword">let</span> ((count (+ (read "/memory/count")
 <span class="code-dim">03</span>                    (value-get input "/by"))))
-<span class="code-dim">04</span>      (memory-set! "/count" count)
+<span class="code-dim">04</span>      (write "/memory/count" count)
 <span class="code-dim">05</span>      (value-map "count" count)))</code></pre>
           <div class="code-result">
             <span>INPUT</span><code>&#123; by: 4 &#125;</code>

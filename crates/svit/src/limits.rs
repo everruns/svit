@@ -16,6 +16,8 @@ pub struct Limits {
     pub max_value_stack: usize,
     /// Maximum guest-defined names in one activation.
     pub max_namespace_entries: usize,
+    /// Maximum nested calls from one Svit script into another.
+    pub max_exec_depth: usize,
     /// Maximum nested Lisp syntax depth.
     pub max_syntax_depth: usize,
     /// Maximum size of guest integer and ratio values in bits.
@@ -44,6 +46,7 @@ impl Default for Limits {
             max_call_stack: 64,
             max_value_stack: 4096,
             max_namespace_entries: 256,
+            max_exec_depth: 16,
             max_syntax_depth: 64,
             max_integer_bits: 64,
             max_value_depth: 32,
@@ -66,6 +69,7 @@ impl Limits {
             && self.max_call_stack <= 4096
             && self.max_value_stack <= 1_000_000
             && self.max_namespace_entries <= 10_000
+            && self.max_exec_depth <= 64
             && self.max_syntax_depth <= 1024
             && self.max_integer_bits <= 4096
             && self.max_value_depth <= 128

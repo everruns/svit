@@ -12,10 +12,10 @@
 //!
 //! let mut process = Process::builder("svit://local/example/counter")?
 //!     .memory("count", value!(0))
-//!     .script("counter", Script::new(r#"
+//!     .library("counter", Script::new(r#"
 //!         (define (main input)
-//!           (let ((count (+ (memory-get "/count") (value-get input "/by"))))
-//!             (do (memory-set! "/count" count) count)))
+//!           (let ((count (+ (read "/memory/count") (value-get input "/by"))))
+//!             (do (write "/memory/count" count) count)))
 //!     "#))
 //!     .build()?;
 //!

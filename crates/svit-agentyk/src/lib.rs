@@ -7,8 +7,7 @@ use async_trait::async_trait;
 use serde_json::{Value as JsonValue, json};
 use svit::{Process, Value};
 
-/// An Agentyk capability exposing `discover`, `exec`, `get`, and `set` for one
-/// Svit process.
+/// An Agentyk capability exposing Svit's five generic process operations.
 #[derive(Clone)]
 pub struct SvitCapability {
     process: Arc<Mutex<Process>>,
@@ -69,9 +68,8 @@ impl Capability for SvitCapability {
 
     async fn system_prompt_contribution(&self, _context: &SystemPromptContext) -> Option<String> {
         Some(
-            "Use discover to list children in the Svit tree. Scripts are under /lib; use get to \
-             inspect a script and exec to run it. Use get or set for process memory. Svit script \
-             executions and set operations are transactional."
+            "Use absolute Svit paths with discover, read, write, and remove. Scripts are under \
+             /lib and run through exec. Writes, removes, and script executions are transactional."
                 .into(),
         )
     }
@@ -121,9 +119,9 @@ impl Capability for SvitCapability {
             },
         ));
 
-        let get_process = self.process.clone();
-        let get: Arc<dyn Tool> = Arc::new(FnTool::new(
-            "get",
+        let read_process = self.process.clone();
+        let read: Arc<dyn Tool> = Arc::new(FnTool::new(
+            "read",
             "Read a value from the Svit process tree by absolute path.",
             json!({
                 "type": "object",
@@ -131,13 +129,13 @@ impl Capability for SvitCapability {
                 "required": ["path"]
             }),
             move |arguments| {
-                let process = get_process.clone();
+                let process = read_process.clone();
                 async move {
                     let path = arguments["path"].as_str().unwrap_or_default();
                     let Ok(process) = process.lock() else {
                         return ToolOutput::error("Svit process lock is unavailable");
                     };
-                    match process.get(path) {
+                    match process.read(path) {
                         Ok(value) => ToolOutput::text(
                             json!({
                                 "path": path,
@@ -152,17 +150,17 @@ impl Capability for SvitCapability {
             },
         ));
 
-        let set_process = self.process.clone();
-        let set: Arc<dyn Tool> = Arc::new(FnTool::new(
-            "set",
-            "Transactionally set a value below /memory in Svit.",
+        let write_process = self.process.clone();
+        let write: Arc<dyn Tool> = Arc::new(FnTool::new(
+            "write",
+            "Transactionally write a value by absolute Svit process path.",
             json!({
                 "type": "object",
                 "properties": {"path": {"type": "string"}, "value": {}},
                 "required": ["path", "value"]
             }),
             move |arguments| {
-                let process = set_process.clone();
+                let process = write_process.clone();
                 async move {
                     let Some(path) = arguments["path"].as_str() else {
                         return ToolOutput::error("path must be text");
@@ -174,7 +172,7 @@ impl Capability for SvitCapability {
                     let Ok(mut process) = process.lock() else {
                         return ToolOutput::error("Svit process lock is unavailable");
                     };
-                    match process.set(path, value) {
+                    match process.write(path, value) {
                         Ok(()) => ToolOutput::text(
                             json!({"path": path, "version": process.version()}).to_string(),
                         ),
@@ -184,6 +182,34 @@ impl Capability for SvitCapability {
             },
         ));
 
-        Ok(vec![discover, exec_tool, get, set])
+        let remove_process = self.process.clone();
+        let remove: Arc<dyn Tool> = Arc::new(FnTool::new(
+            "remove",
+            "Transactionally remove a value by absolute Svit process path.",
+            json!({
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }),
+            move |arguments| {
+                let process = remove_process.clone();
+                async move {
+                    let Some(path) = arguments["path"].as_str() else {
+                        return ToolOutput::error("path must be text");
+                    };
+                    let Ok(mut process) = process.lock() else {
+                        return ToolOutput::error("Svit process lock is unavailable");
+                    };
+                    match process.remove(path) {
+                        Ok(()) => ToolOutput::text(
+                            json!({"path": path, "version": process.version()}).to_string(),
+                        ),
+                        Err(error) => ToolOutput::error(error.to_string()),
+                    }
+                }
+            },
+        ));
+
+        Ok(vec![discover, read, write, remove, exec_tool])
     }
 }

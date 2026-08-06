@@ -4,14 +4,14 @@ const SCORE_EVIDENCE: &str = r#"
 (define (main input)
   (let ((impact-weight (value-get input "/impact_weight"))
         (cost-weight (value-get input "/cost_weight"))
-        (evidence (memory-get "/evidence")))
+        (evidence (read "/memory/evidence")))
     (let ((score (+ (- (* (value-get evidence "/0/impact") impact-weight)
                         (* (value-get evidence "/0/cost") cost-weight))
                     (- (* (value-get evidence "/1/impact") impact-weight)
                         (* (value-get evidence "/1/cost") cost-weight)))))
       (let ((analysis (value-map "lens" (value-get input "/lens") "score" score)))
         (do
-          (memory-set! "/analysis" analysis)
+          (write "/memory/analysis" analysis)
           analysis)))))
 "#;
 
@@ -25,7 +25,7 @@ fn main() -> svit::Result<()> {
             ]),
         )
         .build()?;
-    parent.save_script("score_evidence", SCORE_EVIDENCE)?;
+    parent.write("/lib/score_evidence", value!({"source": SCORE_EVIDENCE}))?;
 
     let mut growth = parent.fork("svit://local/examples/research-growth")?;
     let mut efficiency = parent.fork("svit://local/examples/research-efficiency")?;
@@ -47,13 +47,13 @@ fn main() -> svit::Result<()> {
         efficiency_result.output,
         value!({"lens": "efficiency", "score": -5})
     );
-    assert_eq!(parent.get("/memory/analysis")?, None);
+    assert_eq!(parent.read("/memory/analysis")?, None);
     assert_eq!(
-        growth.get("/memory/analysis/lens")?,
+        growth.read("/memory/analysis/lens")?,
         Some(&Value::String("growth".into()))
     );
     assert_eq!(
-        efficiency.get("/memory/analysis/lens")?,
+        efficiency.read("/memory/analysis/lens")?,
         Some(&Value::String("efficiency".into()))
     );
 

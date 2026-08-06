@@ -9,7 +9,7 @@ use std::fmt;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ketos::module::NullModuleLoader;
 use ketos::{
@@ -26,7 +26,8 @@ use crate::hooks::{
 };
 use crate::{Error, Limits, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 2;
+const SNAPSHOT_FORMAT: u32 = 3;
+const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
 /// Stable logical address of one agent process.
@@ -106,7 +107,8 @@ pub struct Activation {
     pub root_hash: String,
 }
 
-/// Builder for a process with initial memory, scripts, limits, and frozen hooks.
+/// Builder for a conventional process namespace with initial memory, scripts,
+/// limits, generated system metadata, and frozen hooks.
 pub struct ProcessBuilder {
     id: ProcessId,
     memory: BTreeMap<String, Value>,
@@ -122,8 +124,8 @@ impl ProcessBuilder {
         self
     }
 
-    /// Adds or replaces a named script in the initial `/lib` value.
-    pub fn script(mut self, name: impl Into<String>, script: Script) -> Self {
+    /// Adds or replaces a named script in the initial `/lib` library.
+    pub fn library(mut self, name: impl Into<String>, script: Script) -> Self {
         self.scripts.insert(name.into(), script);
         self
     }
@@ -144,8 +146,8 @@ impl ProcessBuilder {
     pub fn build(self) -> Result<Process> {
         self.limits.validate()?;
         // Builder scripts are version-zero state; only post-build saves commit a version.
-        let root = initial_root(self.memory, self.scripts);
-        validate_root(&root, &self.limits)?;
+        let root = initial_root(&self.id, &self.limits, self.memory, self.scripts);
+        validate_root(&root, &self.id, &self.limits)?;
         Ok(Process {
             id: self.id,
             version: 0,
@@ -205,8 +207,8 @@ impl Process {
         root_hash(self.root.as_ref()).expect("validated process roots serialize")
     }
 
-    /// Gets a committed value by slash-separated path.
-    pub fn get(&self, path: &str) -> Result<Option<&Value>> {
+    /// Reads a committed value by absolute slash-separated process path.
+    pub fn read(&self, path: &str) -> Result<Option<&Value>> {
         if path.is_empty() || path == "/" {
             return Ok(Some(self.root.as_ref()));
         }
@@ -241,7 +243,7 @@ impl Process {
     /// Discovers the deterministic child names below a map or array path.
     pub fn discover(&self, path: &str) -> Result<Vec<String>> {
         let value = self
-            .get(path)?
+            .read(path)?
             .ok_or_else(|| Error::InvalidPath(path.into()))?;
         match value {
             Value::Map(values) => Ok(values.keys().cloned().collect()),
@@ -250,22 +252,23 @@ impl Process {
         }
     }
 
-    /// Sets a committed value at or below `/memory`.
-    pub fn set(&mut self, path: &str, value: Value) -> Result<()> {
-        let Some(memory_path) = path.strip_prefix("/memory") else {
-            return Err(Error::InvalidPath(path.into()));
-        };
-        if !memory_path.is_empty() && !memory_path.starts_with('/') {
+    /// Writes a committed value through the schema selected by its absolute path.
+    pub fn write(&mut self, path: &str, value: Value) -> Result<()> {
+        let mut root = root_map(self.root.as_ref())?.clone();
+        if let Some(memory_path) = memory_path(path)? {
+            let memory = root
+                .get_mut("memory")
+                .expect("validated process root has memory");
+            set_value_path(memory, memory_path, value)?;
+        } else if let Some(name) = library_path(path)? {
+            let script = script_from_write_value(value)?;
+            let library = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
+            library.insert(name.into(), Value::Script(script));
+        } else {
             return Err(Error::InvalidPath(path.into()));
         }
-
-        let mut root = root_map(self.root.as_ref())?.clone();
-        let memory = root
-            .get_mut("memory")
-            .expect("validated process root has memory");
-        set_value_path(memory, memory_path, value)?;
         let new_root = Value::Map(root);
-        validate_root(&new_root, &self.limits)?;
+        validate_root(&new_root, &self.id, &self.limits)?;
 
         // THREAT[TM-EFF-001]: Validate the complete replacement root before
         // the single committed-root assignment.
@@ -274,33 +277,27 @@ impl Process {
         Ok(())
     }
 
-    /// Saves or replaces a named script and commits a new process version.
-    pub fn save_script(&mut self, name: &str, source: impl Into<String>) -> Result<()> {
-        self.save_script_record(name, Script::new(source))
-    }
-
-    /// Saves a script record with discoverable documentation.
-    pub fn save_script_record(&mut self, name: &str, script: Script) -> Result<()> {
-        validate_script_name(name)?;
-        script_value(&script).validate(&self.limits, true)?;
-        validate_script_source(name, script.source(), &self.limits)?;
-
+    /// Removes a committed value through the schema selected by its absolute path.
+    pub fn remove(&mut self, path: &str) -> Result<()> {
         let mut root = root_map(self.root.as_ref())?.clone();
-        let lib = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
-        lib.insert(name.into(), Value::Script(script));
-        self.root = Arc::new(Value::Map(root));
+        if let Some(memory_path) = memory_path(path)? {
+            let memory = root
+                .get_mut("memory")
+                .expect("validated process root has memory");
+            remove_value_path(memory, memory_path)?;
+        } else if let Some(name) = library_path(path)? {
+            let library = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
+            if library.remove(name).is_none() {
+                return Err(Error::InvalidPath(path.into()));
+            }
+        } else {
+            return Err(Error::InvalidPath(path.into()));
+        }
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.id, &self.limits)?;
+        self.root = Arc::new(new_root);
         self.version += 1;
         Ok(())
-    }
-
-    /// Returns a stored script record.
-    pub fn script(&self, name: &str) -> Option<&Script> {
-        let root = root_map(self.root.as_ref()).ok()?;
-        let lib = root_map(root.get("lib")?).ok()?;
-        match lib.get(name)? {
-            Value::Script(script) => Some(script),
-            _ => None,
-        }
     }
 
     /// Returns every committed but not externally acknowledged message intent.
@@ -403,7 +400,7 @@ impl Process {
             )));
         }
         snapshot.limits.validate()?;
-        validate_root(&snapshot.root, &snapshot.limits)?;
+        validate_root(&snapshot.root, &snapshot.id, &snapshot.limits)?;
         // THREAT[TM-SNAP-001]: Recompute integrity after decoding and complete
         // invariant validation. Hashes detect corruption, not provenance.
         if root_hash(&snapshot.root)? != snapshot.root_hash {
@@ -420,19 +417,24 @@ impl Process {
 
     /// Creates an independent child at the current committed boundary.
     ///
-    /// Memory and scripts are copied. Already-committed parent message intents
-    /// are not duplicated into the child.
+    /// The committed namespace is copied, discoverable identity and lineage
+    /// are updated, and parent message intents are not duplicated into the child.
     pub fn fork(&self, child_id: impl Into<String>) -> Result<Self> {
         // THREAT[TM-FORK-001]: Clone the committed root before clearing
         // process-local delivery state; subsequent child commits replace only
         // the child's root.
+        let child_id = ProcessId::new(child_id)?;
         let mut root = root_map(self.root.as_ref())?.clone();
         let system = root_map_mut(root.get_mut("system").expect("validated process root"))?;
         system.insert("outbox".into(), Value::Array(Vec::new()));
+        system.insert("identity".into(), identity_value(&child_id));
+        system.insert("lineage".into(), lineage_value(Some(&self.id)));
+        let root = Value::Map(root);
+        validate_root(&root, &child_id, &self.limits)?;
         Ok(Self {
-            id: ProcessId::new(child_id)?,
+            id: child_id,
             version: self.version,
-            root: Arc::new(Value::Map(root)),
+            root: Arc::new(root),
             limits: self.limits.clone(),
             hooks: Arc::clone(&self.hooks),
         })
@@ -440,44 +442,36 @@ impl Process {
 
     fn exec_inner(&mut self, request: ActivationRequest) -> Result<Activation> {
         request.input.validate(&self.limits, false)?;
-        let script = self
-            .script(&request.script)
-            .cloned()
-            .ok_or_else(|| Error::ScriptNotFound(request.script.clone()))?;
         let memory = self
-            .get("/memory")?
+            .read("/memory")?
             .expect("validated process root")
             .clone();
 
-        let state = RuntimeState::new(memory);
-        let interpreter =
-            secure_lisp(&state, &request.input, &self.script_records(), &self.limits)?;
-        // Svit owns the language contract and virtual source identity; Ketos is
-        // an interpreter implementation detail.
-        let source_path = format!("/lib/{}.svit-script", request.script);
-        let output_lisp = catch_unwind(AssertUnwindSafe(|| {
-            let execution = (|| {
-                interpreter
-                    .run_code(script.source(), Some(source_path.clone()))
-                    .map_err(|error| map_ketos_error(&interpreter, error))?;
-                if interpreter.get_value("main").is_none() {
-                    return Err(Error::Script("script must define main(input)".into()));
-                }
-                interpreter
-                    .call("main", vec![persistent_to_ketos(&request.input)?])
-                    .map_err(|error| map_ketos_error(&interpreter, error))
-            })();
-            execution.map_err(|error| add_script_path(&source_path, error))
+        let state = RuntimeState::new(
+            self.root.as_ref().clone(),
+            memory,
+            Duration::from_millis(self.limits.max_execution_millis),
+        );
+        let output = catch_unwind(AssertUnwindSafe(|| {
+            run_guest_script(
+                &state,
+                &request.script,
+                &request.input,
+                &self.limits,
+                self.limits.max_exec_depth,
+            )
         }))
         .map_err(|_| Error::Script("Lisp interpreter failed".into()))??;
 
-        let output = persistent_from_ketos(&output_lisp, &self.limits)?;
         let new_memory = lock(&state.memory)?.clone();
         output.validate(&self.limits, false)?;
         new_memory.validate(&self.limits, false)?;
 
-        let staged_scripts = lock(&state.staged_scripts)?.clone();
-        for (name, script) in &staged_scripts {
+        let library_changes = lock(&state.library_changes)?.clone();
+        for (name, script) in library_changes
+            .iter()
+            .filter_map(|(name, script)| script.as_ref().map(|script| (name, script)))
+        {
             validate_script_name(name)?;
             script_value(script).validate(&self.limits, true)?;
             validate_script_source(name, script.source(), &self.limits)?;
@@ -500,8 +494,15 @@ impl Process {
         let mut root = root_map(self.root.as_ref())?.clone();
         root.insert("memory".into(), new_memory);
         let lib = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
-        for (name, script) in staged_scripts {
-            lib.insert(name, Value::Script(script));
+        for (name, script) in library_changes {
+            match script {
+                Some(script) => {
+                    lib.insert(name, Value::Script(script));
+                }
+                None => {
+                    lib.remove(&name);
+                }
+            }
         }
         let system = root_map_mut(root.get_mut("system").expect("validated process root"))?;
         let Value::Array(outbox) = system.get_mut("outbox").expect("validated process root") else {
@@ -512,7 +513,7 @@ impl Process {
         outbox.extend(committed_messages.iter().map(message_to_value));
 
         let new_root = Value::Map(root);
-        validate_root(&new_root, &self.limits)?;
+        validate_root(&new_root, &self.id, &self.limits)?;
         // THREAT[TM-EFF-001]: This is the only activation commit point. Every
         // fallible guest conversion and staged-script validation is complete.
         self.root = Arc::new(new_root);
@@ -525,14 +526,6 @@ impl Process {
             version,
             root_hash: self.root_hash(),
         })
-    }
-
-    fn script_records(&self) -> BTreeMap<String, Script> {
-        self.discover("/lib")
-            .expect("validated process root has a script library")
-            .into_iter()
-            .filter_map(|name| self.script(&name).cloned().map(|script| (name, script)))
-            .collect()
     }
 }
 
@@ -553,8 +546,15 @@ struct StagedMessage {
     body: Value,
 }
 
-fn initial_root(memory: BTreeMap<String, Value>, scripts: BTreeMap<String, Script>) -> Value {
+fn initial_root(
+    id: &ProcessId,
+    limits: &Limits,
+    memory: BTreeMap<String, Value>,
+    scripts: BTreeMap<String, Script>,
+) -> Value {
     Value::Map(BTreeMap::from([
+        ("children".into(), Value::empty_map()),
+        ("inbox".into(), Value::Array(Vec::new())),
         (
             "lib".into(),
             Value::Map(
@@ -565,25 +565,28 @@ fn initial_root(memory: BTreeMap<String, Value>, scripts: BTreeMap<String, Scrip
             ),
         ),
         ("memory".into(), Value::Map(memory)),
-        (
-            "system".into(),
-            Value::Map(BTreeMap::from([(
-                "outbox".into(),
-                Value::Array(Vec::new()),
-            )])),
-        ),
+        ("mounts".into(), Value::empty_map()),
+        ("system".into(), system_value(id, limits, None)),
+        ("tasks".into(), Value::empty_map()),
     ]))
 }
 
-fn validate_root(root: &Value, limits: &Limits) -> Result<()> {
+fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
-        != BTreeSet::from(["lib", "memory", "system"])
+        != BTreeSet::from([
+            "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
+        ])
     {
         return Err(Error::InvalidSnapshot(
-            "process root must contain exactly lib, memory, and system".into(),
+            "process root does not match the conventional namespace".into(),
         ));
     }
+    validate_reserved_root(root, "children", Value::empty_map())?;
+    validate_reserved_root(root, "inbox", Value::Array(Vec::new()))?;
+    validate_reserved_root(root, "mounts", Value::empty_map())?;
+    validate_reserved_root(root, "tasks", Value::empty_map())?;
+
     let memory = root
         .get("memory")
         .ok_or_else(|| Error::InvalidSnapshot("missing /memory".into()))?;
@@ -609,11 +612,35 @@ fn validate_root(root: &Value, limits: &Limits) -> Result<()> {
         root.get("system")
             .ok_or_else(|| Error::InvalidSnapshot("missing /system".into()))?,
     )?;
-    if system.keys().map(String::as_str).collect::<BTreeSet<_>>() != BTreeSet::from(["outbox"]) {
+    if system.keys().map(String::as_str).collect::<BTreeSet<_>>()
+        != BTreeSet::from([
+            "api",
+            "capabilities",
+            "identity",
+            "limits",
+            "lineage",
+            "outbox",
+            "runtime",
+        ])
+    {
         return Err(Error::InvalidSnapshot(
-            "/system must contain exactly outbox".into(),
+            "/system does not match the runtime metadata schema".into(),
         ));
     }
+    for (name, expected) in [
+        ("api", api_value()),
+        ("capabilities", Value::Array(Vec::new())),
+        ("identity", identity_value(id)),
+        ("limits", limits_value(limits)),
+        ("runtime", runtime_value()),
+    ] {
+        if system.get(name) != Some(&expected) {
+            return Err(Error::InvalidSnapshot(format!(
+                "/system/{name} does not match process metadata"
+            )));
+        }
+    }
+    validate_lineage(system.get("lineage"))?;
     let Value::Array(outbox) = system
         .get("outbox")
         .ok_or_else(|| Error::InvalidSnapshot("missing /system/outbox".into()))?
@@ -627,6 +654,206 @@ fn validate_root(root: &Value, limits: &Limits) -> Result<()> {
         message_from_value(message)?;
     }
     Ok(())
+}
+
+fn validate_reserved_root(
+    root: &BTreeMap<String, Value>,
+    name: &str,
+    expected: Value,
+) -> Result<()> {
+    if root.get(name) != Some(&expected) {
+        return Err(Error::InvalidSnapshot(format!(
+            "/{name} is reserved and must be empty in the initial slice"
+        )));
+    }
+    Ok(())
+}
+
+fn validate_lineage(value: Option<&Value>) -> Result<()> {
+    let lineage = value
+        .ok_or_else(|| Error::InvalidSnapshot("missing /system/lineage".into()))
+        .and_then(root_map)?;
+    if lineage.keys().map(String::as_str).collect::<BTreeSet<_>>() != BTreeSet::from(["parent"]) {
+        return Err(Error::InvalidSnapshot(
+            "/system/lineage must contain exactly parent".into(),
+        ));
+    }
+    match lineage.get("parent") {
+        Some(Value::Null) => Ok(()),
+        Some(Value::String(parent)) => ProcessId::new(parent.clone())
+            .map(|_| ())
+            .map_err(|_| Error::InvalidSnapshot("invalid /system/lineage/parent".into())),
+        _ => Err(Error::InvalidSnapshot(
+            "/system/lineage/parent must be null or a process address".into(),
+        )),
+    }
+}
+
+fn system_value(id: &ProcessId, limits: &Limits, parent: Option<&ProcessId>) -> Value {
+    Value::Map(BTreeMap::from([
+        ("api".into(), api_value()),
+        ("capabilities".into(), Value::Array(Vec::new())),
+        ("identity".into(), identity_value(id)),
+        ("limits".into(), limits_value(limits)),
+        ("lineage".into(), lineage_value(parent)),
+        ("outbox".into(), Value::Array(Vec::new())),
+        ("runtime".into(), runtime_value()),
+    ]))
+}
+
+fn api_value() -> Value {
+    Value::Map(BTreeMap::from([(
+        "operations".into(),
+        Value::Array(
+            ["discover", "exec", "read", "remove", "write"]
+                .into_iter()
+                .map(Value::from)
+                .collect(),
+        ),
+    )]))
+}
+
+fn identity_value(id: &ProcessId) -> Value {
+    // THREAT[TM-AUTH-001]: The discoverable address is explicitly marked as
+    // unauthenticated so callers cannot mistake process metadata for authority.
+    Value::Map(BTreeMap::from([
+        ("address".into(), Value::String(id.to_string())),
+        ("authenticated".into(), Value::Bool(false)),
+    ]))
+}
+
+fn lineage_value(parent: Option<&ProcessId>) -> Value {
+    Value::Map(BTreeMap::from([(
+        "parent".into(),
+        parent
+            .map(|parent| Value::String(parent.to_string()))
+            .unwrap_or(Value::Null),
+    )]))
+}
+
+fn runtime_value() -> Value {
+    Value::Map(BTreeMap::from([
+        ("language".into(), Value::from(RUNTIME_LANGUAGE)),
+        (
+            "snapshot_format".into(),
+            Value::Integer(i64::from(SNAPSHOT_FORMAT)),
+        ),
+    ]))
+}
+
+fn limits_value(limits: &Limits) -> Value {
+    Value::Map(BTreeMap::from([
+        (
+            "max_call_stack".into(),
+            integer_value(limits.max_call_stack),
+        ),
+        (
+            "max_exec_depth".into(),
+            integer_value(limits.max_exec_depth),
+        ),
+        (
+            "max_execution_millis".into(),
+            Value::Integer(limits.max_execution_millis as i64),
+        ),
+        (
+            "max_guest_memory".into(),
+            integer_value(limits.max_guest_memory),
+        ),
+        (
+            "max_integer_bits".into(),
+            integer_value(limits.max_integer_bits),
+        ),
+        ("max_logs".into(), integer_value(limits.max_logs)),
+        ("max_messages".into(), integer_value(limits.max_messages)),
+        (
+            "max_namespace_entries".into(),
+            integer_value(limits.max_namespace_entries),
+        ),
+        (
+            "max_script_bytes".into(),
+            integer_value(limits.max_script_bytes),
+        ),
+        (
+            "max_staged_scripts".into(),
+            integer_value(limits.max_staged_scripts),
+        ),
+        (
+            "max_syntax_depth".into(),
+            integer_value(limits.max_syntax_depth),
+        ),
+        (
+            "max_text_bytes".into(),
+            integer_value(limits.max_text_bytes),
+        ),
+        (
+            "max_value_depth".into(),
+            integer_value(limits.max_value_depth),
+        ),
+        (
+            "max_value_entries".into(),
+            integer_value(limits.max_value_entries),
+        ),
+        (
+            "max_value_stack".into(),
+            integer_value(limits.max_value_stack),
+        ),
+    ]))
+}
+
+fn integer_value(value: usize) -> Value {
+    Value::Integer(value as i64)
+}
+
+fn memory_path(path: &str) -> Result<Option<&str>> {
+    let Some(memory_path) = path.strip_prefix("/memory") else {
+        return Ok(None);
+    };
+    if !memory_path.is_empty() && !memory_path.starts_with('/') {
+        return Err(Error::InvalidPath(path.into()));
+    }
+    Ok(Some(memory_path))
+}
+
+fn library_path(path: &str) -> Result<Option<&str>> {
+    let Some(name) = path.strip_prefix("/lib/") else {
+        return Ok(None);
+    };
+    validate_script_name(name)?;
+    Ok(Some(name))
+}
+
+fn script_from_write_value(value: Value) -> Result<Script> {
+    match value {
+        Value::Script(script) => Ok(script),
+        Value::Map(mut fields) => {
+            let source = match fields.remove("source") {
+                Some(Value::String(source)) => source,
+                _ => {
+                    return Err(Error::InvalidValue(
+                        "library writes require a text source".into(),
+                    ));
+                }
+            };
+            let documentation = match fields.remove("documentation") {
+                Some(Value::String(documentation)) => documentation,
+                None => String::new(),
+                _ => {
+                    return Err(Error::InvalidValue(
+                        "library documentation must be text".into(),
+                    ));
+                }
+            };
+            if !fields.is_empty() {
+                return Err(Error::InvalidValue(
+                    "library writes accept only source and documentation".into(),
+                ));
+            }
+            Ok(Script::new(source).with_documentation(documentation))
+        }
+        _ => Err(Error::InvalidValue(
+            "library writes require a script record".into(),
+        )),
+    }
 }
 
 fn validate_process_id(value: &str) -> Result<()> {
@@ -658,8 +885,14 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
     if source.len() > limits.max_script_bytes {
         return Err(Error::ResourceLimitExceeded("script source"));
     }
-    let state = RuntimeState::new(Value::empty_map());
-    let interpreter = secure_lisp(&state, &Value::Null, &BTreeMap::new(), limits)?;
+    let validation_id = ProcessId::new("svit://local/validation")?;
+    let root = initial_root(&validation_id, limits, BTreeMap::new(), BTreeMap::new());
+    let state = RuntimeState::new(
+        root,
+        Value::empty_map(),
+        Duration::from_millis(limits.max_execution_millis),
+    );
+    let interpreter = secure_lisp(&state, &Value::Null, limits, limits.max_exec_depth)?;
     interpreter
         .compile_exprs(source)
         .map(|_| ())
@@ -672,23 +905,142 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
         })
 }
 
+#[derive(Clone)]
 struct RuntimeState {
+    committed_root: Arc<Value>,
     memory: Arc<Mutex<Value>>,
     logs: Arc<Mutex<Vec<LogRecord>>>,
     messages: Arc<Mutex<Vec<StagedMessage>>>,
-    staged_scripts: Arc<Mutex<Vec<(String, Script)>>>,
+    library_changes: Arc<Mutex<LibraryChanges>>,
+    deadline: Instant,
 }
 
 impl RuntimeState {
-    fn new(memory: Value) -> Self {
+    fn new(committed_root: Value, memory: Value, execution_time: Duration) -> Self {
         Self {
+            committed_root: Arc::new(committed_root),
             memory: Arc::new(Mutex::new(memory)),
             logs: Arc::new(Mutex::new(Vec::new())),
             messages: Arc::new(Mutex::new(Vec::new())),
-            staged_scripts: Arc::new(Mutex::new(Vec::new())),
+            library_changes: Arc::new(Mutex::new(Vec::new())),
+            deadline: Instant::now() + execution_time,
         }
     }
+
+    fn remaining_time(&self) -> Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or(Error::ExecutionLimitExceeded)
+    }
+
+    fn script(&self, name: &str) -> Result<Option<Script>> {
+        for (changed_name, script) in lock(&self.library_changes)?.iter().rev() {
+            if changed_name == name {
+                return Ok(script.clone());
+            }
+        }
+        let root = root_map(self.committed_root.as_ref())?;
+        let library = root_map(root.get("lib").expect("validated process root"))?;
+        Ok(match library.get(name) {
+            Some(Value::Script(script)) => Some(script.clone()),
+            _ => None,
+        })
+    }
+
+    fn view(&self) -> Result<Value> {
+        let mut root = root_map(self.committed_root.as_ref())?.clone();
+        root.insert("memory".into(), lock(&self.memory)?.clone());
+        let library = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
+        for (name, script) in lock(&self.library_changes)?.iter() {
+            match script {
+                Some(script) => {
+                    library.insert(name.clone(), Value::Script(script.clone()));
+                }
+                None => {
+                    library.remove(name);
+                }
+            }
+        }
+        for value in library.values_mut() {
+            let Value::Script(script) = value else {
+                return Err(Error::InvalidValue("invalid library record".into()));
+            };
+            *value = script_metadata(script);
+        }
+        Ok(Value::Map(root))
+    }
+
+    fn checkpoint(&self) -> Result<RuntimeCheckpoint> {
+        Ok(RuntimeCheckpoint {
+            memory: lock(&self.memory)?.clone(),
+            logs: lock(&self.logs)?.clone(),
+            messages: lock(&self.messages)?.clone(),
+            library_changes: lock(&self.library_changes)?.clone(),
+        })
+    }
+
+    fn restore(&self, checkpoint: RuntimeCheckpoint) -> Result<()> {
+        *lock(&self.memory)? = checkpoint.memory;
+        *lock(&self.logs)? = checkpoint.logs;
+        *lock(&self.messages)? = checkpoint.messages;
+        *lock(&self.library_changes)? = checkpoint.library_changes;
+        Ok(())
+    }
+
+    fn write(&self, path: &str, value: Value, limits: &Limits) -> Result<()> {
+        if let Some(memory_path) = memory_path(path)? {
+            value.validate(limits, false)?;
+            let mut candidate = lock(&self.memory)?.clone();
+            set_value_path(&mut candidate, memory_path, value)?;
+            candidate.validate(limits, false)?;
+            *lock(&self.memory)? = candidate;
+            return Ok(());
+        }
+        if let Some(name) = library_path(path)? {
+            let script = script_from_write_value(value)?;
+            script_value(&script).validate(limits, true)?;
+            let mut changes = lock(&self.library_changes)?;
+            if changes.len() >= limits.max_staged_scripts {
+                return Err(Error::ResourceLimitExceeded("staged scripts"));
+            }
+            changes.push((name.into(), Some(script)));
+            return Ok(());
+        }
+        Err(Error::InvalidPath(path.into()))
+    }
+
+    fn remove(&self, path: &str, limits: &Limits) -> Result<()> {
+        if let Some(memory_path) = memory_path(path)? {
+            let mut candidate = lock(&self.memory)?.clone();
+            remove_value_path(&mut candidate, memory_path)?;
+            candidate.validate(limits, false)?;
+            *lock(&self.memory)? = candidate;
+            return Ok(());
+        }
+        if let Some(name) = library_path(path)? {
+            if self.script(name)?.is_none() {
+                return Err(Error::InvalidPath(path.into()));
+            }
+            let mut changes = lock(&self.library_changes)?;
+            if changes.len() >= limits.max_staged_scripts {
+                return Err(Error::ResourceLimitExceeded("staged scripts"));
+            }
+            changes.push((name.into(), None));
+            return Ok(());
+        }
+        Err(Error::InvalidPath(path.into()))
+    }
 }
+
+struct RuntimeCheckpoint {
+    memory: Value,
+    logs: Vec<LogRecord>,
+    messages: Vec<StagedMessage>,
+    library_changes: LibraryChanges,
+}
+
+type LibraryChanges = Vec<(String, Option<Script>)>;
 
 #[derive(Clone, Debug)]
 struct GuestPersistent(Value);
@@ -705,6 +1057,7 @@ impl ForeignValue for GuestPersistent {
 
 #[derive(Clone, Debug)]
 enum GuestFailure {
+    Execution,
     InvalidPath(String),
     InvalidValue(String),
     Resource(&'static str),
@@ -714,6 +1067,7 @@ enum GuestFailure {
 impl fmt::Display for GuestFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Execution => formatter.write_str("activation execution limit exceeded"),
             Self::InvalidPath(message) | Self::InvalidValue(message) | Self::Script(message) => {
                 formatter.write_str(message)
             }
@@ -724,17 +1078,49 @@ impl fmt::Display for GuestFailure {
 
 impl StdError for GuestFailure {}
 
+fn run_guest_script(
+    state: &RuntimeState,
+    name: &str,
+    input: &Value,
+    limits: &Limits,
+    remaining_exec_depth: usize,
+) -> Result<Value> {
+    validate_script_name(name)?;
+    let script = state
+        .script(name)?
+        .ok_or_else(|| Error::ScriptNotFound(name.into()))?;
+    let interpreter = secure_lisp(state, input, limits, remaining_exec_depth)?;
+    // Svit owns the language contract and virtual source identity; Ketos is
+    // an interpreter implementation detail.
+    let source_path = format!("/lib/{name}.svit-script");
+    let execution = (|| {
+        interpreter
+            .run_code(script.source(), Some(source_path.clone()))
+            .map_err(|error| map_ketos_error(&interpreter, error))?;
+        if interpreter.get_value("main").is_none() {
+            return Err(Error::Script("script must define main(input)".into()));
+        }
+        let output = interpreter
+            .call("main", vec![persistent_to_ketos(input)?])
+            .map_err(|error| map_ketos_error(&interpreter, error))?;
+        persistent_from_ketos(&output, limits)
+    })();
+    execution.map_err(|error| add_script_path(&source_path, error))
+}
+
 fn secure_lisp(
     state: &RuntimeState,
     input: &Value,
-    scripts: &BTreeMap<String, Script>,
     limits: &Limits,
+    remaining_exec_depth: usize,
 ) -> Result<KetosInterpreter> {
     // THREAT[TM-ESC-001]: Null I/O and a null module loader leave guest code
     // without filesystem, environment, network, clock, randomness, or modules.
     // THREAT[TM-ISO-001]: Every activation receives a fresh interpreter scope.
     let restrictions = RestrictConfig {
-        execution_time: Some(Duration::from_millis(limits.max_execution_millis)),
+        // THREAT[TM-DOS-006]: Nested exec uses a fresh interpreter but shares
+        // this activation's deadline, so composition cannot reset wall time.
+        execution_time: Some(state.remaining_time()?),
         call_stack_size: limits.max_call_stack,
         value_stack_size: limits.max_value_stack,
         namespace_size: limits.max_namespace_entries,
@@ -750,8 +1136,8 @@ fn secure_lisp(
         .finish();
     interpreter
         .scope()
-        .add_named_value("*svit-version*", KetosValue::from("Svit Lisp 1"));
-    install_guest_api(&interpreter, state, input, scripts, limits);
+        .add_named_value("*svit-version*", KetosValue::from("Svit Lisp 2"));
+    install_guest_api(&interpreter, state, input, limits, remaining_exec_depth);
     Ok(interpreter)
 }
 
@@ -759,8 +1145,8 @@ fn install_guest_api(
     interpreter: &KetosInterpreter,
     state: &RuntimeState,
     input: &Value,
-    scripts: &BTreeMap<String, Script>,
     limits: &Limits,
+    remaining_exec_depth: usize,
 ) {
     interpreter.scope().add_named_value(
         "input",
@@ -827,97 +1213,88 @@ fn install_guest_api(
         persistent_to_ketos(&found).map_err(guest_from_svit)
     });
 
-    let memory_for_get = Arc::clone(&state.memory);
-    install_guest_function(interpreter, "memory-get", move |_, args| {
-        expect_arity(args, 1, "memory-get")?;
-        let path = guest_string(&args[0], "memory-get path")?;
-        let memory = memory_for_get.lock().map_err(|_| {
-            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
-        })?;
-        let found = read_value_path(&memory, &path)
+    let state_for_discover = state.clone();
+    install_guest_function(interpreter, "discover", move |_, args| {
+        expect_arity(args, 1, "discover")?;
+        let path = guest_string(&args[0], "discover path")?;
+        let view = state_for_discover.view().map_err(guest_from_svit)?;
+        let value = read_value_path(&view, &path)
+            .map_err(guest_from_svit)?
+            .ok_or_else(|| KetosError::custom(GuestFailure::InvalidPath(path.clone())))?;
+        let children = match value {
+            Value::Map(values) => values.keys().cloned().map(Value::String).collect(),
+            Value::Array(values) => (0..values.len())
+                .map(|index| Value::String(index.to_string()))
+                .collect(),
+            _ => return Err(KetosError::custom(GuestFailure::InvalidPath(path))),
+        };
+        persistent_to_ketos(&Value::Array(children)).map_err(guest_from_svit)
+    });
+
+    let state_for_read = state.clone();
+    install_guest_function(interpreter, "read", move |_, args| {
+        expect_arity(args, 1, "read")?;
+        let path = guest_string(&args[0], "read path")?;
+        let view = state_for_read.view().map_err(guest_from_svit)?;
+        let found = read_value_path(&view, &path)
             .map_err(guest_from_svit)?
             .cloned()
             .unwrap_or(Value::Null);
         persistent_to_ketos(&found).map_err(guest_from_svit)
     });
 
-    let memory_for_set = Arc::clone(&state.memory);
-    let set_limits = limits.clone();
-    install_guest_function(interpreter, "memory-set!", move |_, args| {
-        expect_arity(args, 2, "memory-set!")?;
-        let path = guest_string(&args[0], "memory-set! path")?;
-        let value = persistent_from_ketos(&args[1], &set_limits).map_err(guest_from_svit)?;
-        value
-            .validate(&set_limits, false)
-            .map_err(guest_from_svit)?;
-        let mut memory = memory_for_set.lock().map_err(|_| {
-            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
-        })?;
-        set_value_path(&mut memory, &path, value).map_err(guest_from_svit)?;
-        memory
-            .validate(&set_limits, false)
+    let state_for_write = state.clone();
+    let write_limits = limits.clone();
+    install_guest_function(interpreter, "write", move |_, args| {
+        expect_arity(args, 2, "write")?;
+        let path = guest_string(&args[0], "write path")?;
+        let value = persistent_from_ketos(&args[1], &write_limits).map_err(guest_from_svit)?;
+        state_for_write
+            .write(&path, value, &write_limits)
             .map_err(guest_from_svit)?;
         Ok(KetosValue::Unit)
     });
 
-    let memory_for_remove = Arc::clone(&state.memory);
-    install_guest_function(interpreter, "memory-remove!", move |_, args| {
-        expect_arity(args, 1, "memory-remove!")?;
-        let path = guest_string(&args[0], "memory-remove! path")?;
-        let mut memory = memory_for_remove.lock().map_err(|_| {
-            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
-        })?;
-        remove_value_path(&mut memory, &path).map_err(guest_from_svit)?;
+    let state_for_remove = state.clone();
+    let remove_limits = limits.clone();
+    install_guest_function(interpreter, "remove", move |_, args| {
+        expect_arity(args, 1, "remove")?;
+        let path = guest_string(&args[0], "remove path")?;
+        state_for_remove
+            .remove(&path, &remove_limits)
+            .map_err(guest_from_svit)?;
         Ok(KetosValue::Unit)
     });
 
-    let script_names: Vec<Value> = scripts.keys().cloned().map(Value::String).collect();
-    install_guest_function(interpreter, "scripts-list", move |_, args| {
-        expect_arity(args, 0, "scripts-list")?;
-        persistent_to_ketos(&Value::Array(script_names.clone())).map_err(guest_from_svit)
-    });
-
-    let readable_scripts = scripts.clone();
-    install_guest_function(interpreter, "scripts-read", move |_, args| {
-        expect_arity(args, 1, "scripts-read")?;
-        let name = guest_string(&args[0], "scripts-read name")?;
-        let value = readable_scripts.get(&name).map_or(Value::Null, |script| {
-            Value::Map(BTreeMap::from([
-                (
-                    "documentation".into(),
-                    Value::String(script.documentation().into()),
-                ),
-                ("source".into(), Value::String(script.source().into())),
-            ]))
-        });
-        persistent_to_ketos(&value).map_err(guest_from_svit)
-    });
-
-    let staged_for_save = Arc::clone(&state.staged_scripts);
-    let maximum_scripts = limits.max_staged_scripts;
-    let maximum_script_bytes = limits.max_script_bytes;
-    install_guest_function(interpreter, "scripts-save!", move |_, args| {
-        if !(2..=3).contains(&args.len()) {
-            return guest_error("scripts-save! expects name, source, and optional documentation");
+    let state_for_exec = state.clone();
+    let exec_limits = limits.clone();
+    install_guest_function(interpreter, "exec", move |_, args| {
+        expect_arity(args, 2, "exec")?;
+        // THREAT[TM-DOS-006]: Bound native recursion independently of the
+        // Ketos call stack because nested exec creates a fresh interpreter.
+        if remaining_exec_depth == 0 {
+            return Err(KetosError::custom(GuestFailure::Resource(
+                "nested exec depth",
+            )));
         }
-        let name = guest_string(&args[0], "scripts-save! name")?;
-        let source = guest_string(&args[1], "scripts-save! source")?;
-        let documentation = args
-            .get(2)
-            .map(|value| guest_string(value, "scripts-save! documentation"))
-            .transpose()?
-            .unwrap_or_default();
-        if source.len() > maximum_script_bytes {
-            return Err(KetosError::custom(GuestFailure::Resource("script source")));
+        let name = guest_string(&args[0], "exec script")?;
+        let input = persistent_from_ketos(&args[1], &exec_limits).map_err(guest_from_svit)?;
+        let checkpoint = state_for_exec.checkpoint().map_err(guest_from_svit)?;
+        match run_guest_script(
+            &state_for_exec,
+            &name,
+            &input,
+            &exec_limits,
+            remaining_exec_depth - 1,
+        ) {
+            Ok(output) => persistent_to_ketos(&output).map_err(guest_from_svit),
+            Err(error) => {
+                state_for_exec
+                    .restore(checkpoint)
+                    .map_err(guest_from_svit)?;
+                Err(guest_from_svit(error))
+            }
         }
-        let mut staged = staged_for_save.lock().map_err(|_| {
-            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
-        })?;
-        if staged.len() >= maximum_scripts {
-            return Err(KetosError::custom(GuestFailure::Resource("staged scripts")));
-        }
-        staged.push((name, Script::new(source).with_documentation(documentation)));
-        Ok(KetosValue::Unit)
     });
 
     let logs_for_info = Arc::clone(&state.logs);
@@ -1090,14 +1467,14 @@ fn set_value_path(root: &mut Value, path: &str, value: Value) -> Result<()> {
 fn remove_value_path(root: &mut Value, path: &str) -> Result<()> {
     let segments = path_segments(path)?;
     if segments.is_empty() {
-        return Err(Error::InvalidPath("cannot remove the memory root".into()));
+        return Err(Error::InvalidPath("cannot remove a namespace root".into()));
     }
     let (parent, leaf) = parent_at_path(root, &segments)?;
     match parent {
-        Value::Map(values) => {
-            values.remove(&leaf);
-            Ok(())
-        }
+        Value::Map(values) => values
+            .remove(&leaf)
+            .map(|_| ())
+            .ok_or_else(|| Error::InvalidPath(path.into())),
         Value::Array(values) => {
             let index = leaf
                 .parse::<usize>()
@@ -1178,6 +1555,7 @@ fn guest_error<T>(message: impl Into<String>) -> std::result::Result<T, KetosErr
 
 fn guest_from_svit(error: Error) -> KetosError {
     let failure = match error {
+        Error::ExecutionLimitExceeded => GuestFailure::Execution,
         Error::InvalidPath(message) => GuestFailure::InvalidPath(message),
         Error::InvalidValue(message) => GuestFailure::InvalidValue(message),
         Error::ResourceLimitExceeded(resource) => GuestFailure::Resource(resource),
@@ -1210,6 +1588,7 @@ fn map_ketos_error(interpreter: &KetosInterpreter, error: KetosError) -> Error {
             Error::ResourceLimitExceeded("syntax depth")
         }
         KetosError::Custom(error) => match error.downcast_ref::<GuestFailure>() {
+            Some(GuestFailure::Execution) => Error::ExecutionLimitExceeded,
             Some(GuestFailure::InvalidPath(message)) => Error::InvalidPath(message.clone()),
             Some(GuestFailure::InvalidValue(message)) => Error::InvalidValue(message.clone()),
             Some(GuestFailure::Resource(resource)) => Error::ResourceLimitExceeded(resource),
@@ -1243,6 +1622,16 @@ fn root_map_mut(value: &mut Value) -> Result<&mut BTreeMap<String, Value>> {
 
 fn script_value(script: &Script) -> Value {
     Value::Script(script.clone())
+}
+
+fn script_metadata(script: &Script) -> Value {
+    Value::Map(BTreeMap::from([
+        (
+            "documentation".into(),
+            Value::String(script.documentation().into()),
+        ),
+        ("source".into(), Value::String(script.source().into())),
+    ]))
 }
 
 fn message_to_value(message: &MessageIntent) -> Value {
@@ -1296,12 +1685,22 @@ mod tests {
 
     const COUNTER: &str = r#"
         (define (main input)
-          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+          (let ((count (+ (read "/memory/count") (value-get input "/by"))))
             (do
-              (memory-set! "/count" count)
+              (write "/memory/count" count)
               (log-info! "counted" (value-map "count" count))
               (value-map "count" count))))
     "#;
+
+    fn write_script(process: &mut Process, name: &str, source: impl Into<String>) -> Result<()> {
+        process.write(
+            &format!("/lib/{name}"),
+            Value::Map(BTreeMap::from([(
+                "source".into(),
+                Value::String(source.into()),
+            )])),
+        )
+    }
 
     #[test]
     fn activation_commits_memory_output_logs_and_version() {
@@ -1310,14 +1709,14 @@ mod tests {
             .memory("count", value!(0))
             .build()
             .unwrap();
-        process.save_script("counter", COUNTER).unwrap();
+        write_script(&mut process, "counter", COUNTER).unwrap();
 
         let activation = process.exec("counter", value!({"by": 2})).unwrap();
 
         assert_eq!(activation.output, value!({"count": 2}));
         assert_eq!(activation.logs[0].message, "counted");
         assert_eq!(
-            process.get("/memory/count").unwrap(),
+            process.read("/memory/count").unwrap(),
             Some(&Value::Integer(2))
         );
         assert_eq!(activation.version, 2);
@@ -1325,26 +1724,26 @@ mod tests {
 
     #[test]
     // THREAT[TM-EFF-001]
-    fn host_set_commits_once() {
-        let mut process = Process::builder("svit://local/test/set")
+    fn host_write_commits_once() {
+        let mut process = Process::builder("svit://local/test/write")
             .unwrap()
             .memory("count", value!(0))
             .build()
             .unwrap();
 
-        process.set("/memory/count", value!(2)).unwrap();
+        process.write("/memory/count", value!(2)).unwrap();
 
         assert_eq!(process.version(), 1);
         assert_eq!(
-            process.get("/memory/count").unwrap(),
+            process.read("/memory/count").unwrap(),
             Some(&Value::Integer(2))
         );
     }
 
     #[test]
     // THREAT[TM-EFF-001]
-    fn rejected_host_set_preserves_committed_root() {
-        let mut process = Process::builder("svit://local/test/set-rollback")
+    fn rejected_host_write_or_remove_preserves_committed_root() {
+        let mut process = Process::builder("svit://local/test/write-rollback")
             .unwrap()
             .memory("count", value!(0))
             .build()
@@ -1352,11 +1751,18 @@ mod tests {
         let before = process.snapshot().unwrap();
 
         assert!(matches!(
-            process.set(
+            process.write(
                 "/memory/count",
                 Value::Script(Script::new("(define (main input) input)")),
             ),
             Err(Error::InvalidValue(_))
+        ));
+        assert_eq!(process.version(), 0);
+        assert_eq!(process.snapshot().unwrap(), before);
+
+        assert!(matches!(
+            process.remove("/memory/missing"),
+            Err(Error::InvalidPath(_))
         ));
         assert_eq!(process.version(), 0);
         assert_eq!(process.snapshot().unwrap(), before);
@@ -1370,25 +1776,25 @@ mod tests {
             .memory("balance", value!(10))
             .build()
             .unwrap();
-        process
-            .save_script(
-                "payment",
-                r#"
+        write_script(
+            &mut process,
+            "payment",
+            r#"
                 (define (main input)
                   (let ((amount (value-get input "/amount")))
                     (do
-                      (memory-set! "/balance" (- (memory-get "/balance") amount))
+                      (write "/memory/balance" (- (read "/memory/balance") amount))
                       (send! "svit://local/test/merchant" (value-map "amount" amount))
                       (panic "declined"))))
                 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
         let version = process.version();
 
         assert!(process.exec("payment", value!({"amount": 3})).is_err());
         assert_eq!(process.version(), version);
         assert_eq!(
-            process.get("/memory/balance").unwrap(),
+            process.read("/memory/balance").unwrap(),
             Some(&Value::Integer(10))
         );
         assert!(process.outbox().unwrap().is_empty());
@@ -1402,22 +1808,22 @@ mod tests {
             .memory("count", value!(0))
             .build()
             .unwrap();
-        parent.save_script("counter", COUNTER).unwrap();
+        write_script(&mut parent, "counter", COUNTER).unwrap();
         let snapshot = parent.snapshot().unwrap();
         let restored = Process::restore(&snapshot).unwrap();
         assert_eq!(
-            restored.get("/memory").unwrap(),
-            parent.get("/memory").unwrap()
+            restored.read("/memory").unwrap(),
+            parent.read("/memory").unwrap()
         );
 
         let mut child = parent.fork("svit://local/test/child").unwrap();
         child.exec("counter", value!({"by": 5})).unwrap();
         assert_eq!(
-            parent.get("/memory/count").unwrap(),
+            parent.read("/memory/count").unwrap(),
             Some(&Value::Integer(0))
         );
         assert_eq!(
-            child.get("/memory/count").unwrap(),
+            child.read("/memory/count").unwrap(),
             Some(&Value::Integer(5))
         );
     }
@@ -1435,23 +1841,23 @@ mod tests {
             .memory("started", value!(false))
             .build()
             .unwrap();
-        process
-            .save_script(
-                "loop",
-                r#"
+        write_script(
+            &mut process,
+            "loop",
+            r#"
                 (define (spin) (spin))
                 (define (main input)
-                  (do (memory-set! "/started" true) (spin)))
+                  (do (write "/memory/started" true) (spin)))
                 "#,
-            )
-            .unwrap();
+        )
+        .unwrap();
         let version = process.version();
 
         let error = process.exec("loop", Value::Null).unwrap_err();
         assert!(matches!(error, Error::ExecutionLimitExceeded));
         assert_eq!(process.version(), version);
         assert_eq!(
-            process.get("/memory/started").unwrap(),
+            process.read("/memory/started").unwrap(),
             Some(&Value::Bool(false))
         );
     }
@@ -1461,33 +1867,41 @@ mod tests {
     fn denied_ambient_modules_are_not_in_the_script_environment() {
         let mut process = Process::new("svit://local/test/sandbox").unwrap();
         assert!(matches!(
-            process.save_script("inspect", "(use random) (define (main input) true)"),
+            write_script(
+                &mut process,
+                "inspect",
+                "(use random) (define (main input) true)"
+            ),
             Err(Error::Script(_))
         ));
     }
 
     #[test]
     fn guest_can_stage_a_discoverable_script_atomically() {
-        let mut process = Process::new("svit://local/test/author").unwrap();
-        process
-            .save_script(
+        let mut process = Process::builder("svit://local/test/author")
+            .unwrap()
+            .library(
                 "teacher",
+                Script::new(
                 r##"
                 (define (main input)
                   (do
-                    (scripts-save!
-                      "greeter"
-                      "(define (main input) (concat \"Hello, \" (value-get input \"/name\")))"
-                      "Greets a person")
-                    (scripts-list)))
+                    (write
+                      "/lib/greeter"
+                      (value-map
+                        "source" "(define (main input) (concat \"Hello, \" (value-get input \"/name\")))"
+                        "documentation" "Greets a person"))
+                    (discover "/lib")))
                 "##,
+                ),
             )
+            .build()
             .unwrap();
 
         process.exec("teacher", Value::Null).unwrap();
         assert_eq!(
-            process.script("greeter").unwrap().documentation(),
-            "Greets a person"
+            process.read("/lib/greeter").unwrap().unwrap().to_json()["documentation"],
+            "Greets a person",
         );
         let greeting = process.exec("greeter", value!({"name": "Svit"})).unwrap();
         assert_eq!(greeting.output, Value::String("Hello, Svit".into()));
@@ -1517,18 +1931,18 @@ mod tests {
             })
             .build()
             .unwrap();
-        process
-            .save_script(
-                "mutate",
-                "(define (main input) (memory-set! \"/changed\" true))",
-            )
-            .unwrap();
+        write_script(
+            &mut process,
+            "mutate",
+            "(define (main input) (write \"/memory/changed\" true))",
+        )
+        .unwrap();
 
         assert!(matches!(
             process.exec("mutate", Value::Null),
             Err(Error::HookCancelled(_))
         ));
-        assert_eq!(process.get("/memory/changed").unwrap(), None);
+        assert_eq!(process.read("/memory/changed").unwrap(), None);
         assert!(matches!(
             seen.lock().unwrap()[0].status,
             ActivationStatus::Failed { .. }
