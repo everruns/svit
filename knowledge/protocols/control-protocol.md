@@ -7,6 +7,7 @@ tags:
   - protocol
   - transaction
   - concurrency
+  - vast
 ---
 
 # Svit Control Protocol 1
@@ -28,6 +29,48 @@ It does not select HTTP, gRPC, WebSocket, or another transport.
 The only mutating command in version 1 is `activate`. A named activation is
 already the complete Svit transaction: memory, staged scripts, and outbox
 intents commit together, or none commit.
+
+## VAST semantics
+
+Svit calls this model **Versioned Atomic State Transitions (VAST)**. Svit
+Control Protocol 1 implements VAST for one process at one valid serialization
+point. VAST names the protocol's concurrency and commit semantics; it is not a
+second wire protocol, storage format, merge algorithm, external standard, or
+distributed-consensus claim.
+
+For a process whose current committed state is version `N` with root `R(N)`, a
+new, correctly addressed activation request that passes command validation has
+exactly one outcome:
+
+```text
+expected_version != N  -> conflict; keep N and R(N); do not execute
+expected_version == N  -> committed; publish N+1 and R(N+1)
+                       -> rejected; keep N and R(N)
+```
+
+The VAST invariants are:
+
+1. **Versioned**: every attempted transition names its expected committed
+   version.
+2. **Atomic**: success publishes memory, staged scripts, and outbox intents as
+   one next root and increments the version exactly once.
+3. **State-preserving failure**: conflict, validation failure, cancellation,
+   resource exhaustion, syntax failure, and runtime failure leave the committed
+   version and root unchanged.
+4. **Single next transition**: at most one successful activation can advance a
+   given version at the serialization point. Other contenders conflict and must
+   observe and recompute; Svit does not merge their transitions.
+
+Deterministic replay, bounded idempotency receipts, snapshot integrity, and
+durable storage complement VAST but are separate guarantees. A controller must
+still have exclusive, fenced ownership before claiming VAST semantics across
+multiple hosts.
+
+Executable evidence lives in the
+[control protocol tests](../../crates/svit/tests/control_protocol.rs) for
+concurrent commits, conflicts, and retry safety, and the
+[process invariant tests](../../crates/svit/tests/process_invariants.rs) for
+atomic rollback across activation failure classes.
 
 ## Request
 
@@ -76,9 +119,8 @@ and capped diagnostic.
 
 ## Concurrency and isolation level
 
-The protocol provides **linearizable, optimistic transactions per process**
-when every request for that process passes through one valid serialization
-point:
+VAST provides **linearizable, optimistic transactions per process** when every
+request for that process passes through one valid serialization point:
 
 1. The controller orders requests by entry to its process lock.
 2. It compares `expected_version` while holding that lock.

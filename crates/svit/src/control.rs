@@ -1,4 +1,9 @@
-//! Transport-neutral, versioned control protocol for one Svit process.
+//! Transport-neutral control protocol implementing Versioned Atomic State
+//! Transitions (VAST) for one Svit process.
+//!
+//! VAST is the concurrency and commit model. `svit-control@1` is the concrete
+//! wire major. The model requires one valid serialization point and does not
+//! imply distributed consensus or merge concurrent activations.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Mutex, MutexGuard};
@@ -219,7 +224,7 @@ pub struct ProcessObservation {
     pub root_hash: String,
 }
 
-/// Thread-safe in-memory serialization point for one Svit process.
+/// Thread-safe in-memory VAST serialization point for one Svit process.
 ///
 /// The controller is a reference adapter for the protocol. Durable hosts must
 /// make the process commit and receipt write atomic in their own storage.
@@ -325,9 +330,12 @@ impl ProcessController {
             ));
         }
 
-        // THREAT[TM-EFF-002]: The process id and expected version are checked
-        // under the same lock as activation commit, making this controller a
-        // single linearization point for all clients of the process.
+        // VAST boundary: under this lock, a stale request cannot execute; a
+        // matching request either commits exactly one next version or leaves
+        // the committed process root unchanged.
+        // THREAT[TM-EFF-002]: Checking the expected version under the same lock
+        // as activation commit makes this the single linearization point for
+        // all clients of the process.
         let response = if request.expected_version != state.process.version() {
             conflict(&request, &state.process)
         } else {

@@ -25,6 +25,12 @@ An **activation** is one bounded transition. It receives input, runs a named
 script against a working copy, and either commits the resulting state and
 effect intents together or commits nothing.
 
+Controlled activations use **VAST: Versioned Atomic State Transitions**. A
+request names the process version it observed. At the process serialization
+point, it either commits one complete next version, is rejected without state
+change, or conflicts because another transition already advanced the process.
+VAST does not merge concurrent activations.
+
 ```mermaid
 flowchart LR
     Event["Input event"] --> Activation["Bounded activation"]
