@@ -75,13 +75,14 @@ smoke-test tool, not a persistent process supervisor.
   script limits.
 - Typed host activation hooks that may rewrite, deny, or observe activations.
 - Reflection over committed memory and the named script library.
-- Versioned multi-client control requests with mandatory process-version
-  preconditions, conflict responses, and bounded idempotency receipts.
+- Svit Control Protocol 1 with Versioned Atomic State Transitions (VAST)
+  semantics: mandatory process-version preconditions, atomic next-version
+  commits, conflict responses, and bounded idempotency receipts.
 - Additive-field compatibility and exact wire-shape tests, with generated schema
   and remote version negotiation required before protocol stabilization.
 
-See [Controlling a Svit process](docs/control-protocol.md) for the protocol and
-its exact transaction boundary.
+See [Controlling a Svit process](docs/control-protocol.md) for VAST semantics,
+the wire protocol, and its exact transaction boundary.
 
 ## Svit Lua 1
 

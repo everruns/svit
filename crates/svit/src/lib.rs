@@ -3,6 +3,9 @@
 //! The current vertical slice runs named, untrusted Svit Lua scripts against a
 //! transactional memory tree. Successful activations commit memory, staged
 //! scripts, and message intents together. Failures commit nothing.
+//! Multi-client control implements Versioned Atomic State Transitions (VAST):
+//! one matching request may commit the next process version, while stale or
+//! rejected requests leave committed state unchanged.
 //!
 //! ```
 //! use svit::{Process, value};

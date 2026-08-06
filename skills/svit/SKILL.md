@@ -25,6 +25,8 @@ Load only the reference needed:
 - Call the isolated unit a **Svit process** and the Rust executor the **Svit
   runtime**.
 - Describe a single script invocation as an **activation**.
+- Call the controlled concurrency and commit model **VAST: Versioned Atomic
+  State Transitions**. Keep `svit-control@1` as the wire protocol identifier.
 - Treat memory, named scripts, and buffered messages as one atomic committed
   process state.
 - State that guest Lua has no ambient host filesystem, network, environment,

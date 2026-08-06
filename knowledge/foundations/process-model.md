@@ -69,6 +69,13 @@ commit. These guarantees are implemented by the in-memory reference controller.
 Durable replay across a host crash requires a storage adapter that atomically
 persists the process commit and receipt.
 
+This is **Versioned Atomic State Transitions (VAST)** semantics: one request may
+advance the current version by exactly one atomic root replacement; a stale or
+rejected request leaves the committed root unchanged. VAST is the controlled
+transition model, while `svit-control@1` remains the concrete wire major. It
+does not merge concurrent activations or establish distributed process
+ownership.
+
 See [Svit Control Protocol 1](../protocols/control-protocol.md).
 
 ## Scripts

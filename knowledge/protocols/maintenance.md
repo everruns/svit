@@ -40,7 +40,10 @@ methods or stdio lifecycle.
 ## Compatibility contract
 
 `svit-control@1` identifies a wire **major**, not a crate release. A breaking
-wire change requires a new major. A compatible change may add:
+wire change requires a new major. Versioned Atomic State Transitions (VAST)
+semantics name the protocol's concurrency and commit model; `VAST` is not a
+wire identifier or independently negotiated capability. A compatible change
+may add:
 
 - an optional field with a documented omission default;
 - a capability-gated operation or behavior;

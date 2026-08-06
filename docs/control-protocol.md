@@ -4,6 +4,10 @@ Multiple clients can safely submit work to one Svit process through Svit
 Control Protocol 1. The protocol is transport-neutral: a host may expose it over
 an in-process API, HTTP, gRPC, WebSocket, or another authenticated transport.
 
+The protocol implements **VAST: Versioned Atomic State Transitions**. VAST is
+the concurrency and commit model; `svit-control@1` remains the wire protocol
+major.
+
 The current implementation provides the in-process reference controller. It
 does not yet provide a network server or authentication.
 
@@ -15,11 +19,25 @@ crate version. Within major 1, clients ignore unknown fields on known messages;
 an unknown operation is rejected. This permits additive evolution without
 silently accepting behavior a client did not negotiate.
 
-## Transaction model
+## VAST transaction model
 
 One activation is one transaction. It can update memory, save scripts, and
 append message or effect intents. Those changes commit together as one new
 process version, or all remain unchanged.
+
+For a process at version `N`, a matching request either commits one complete
+version `N + 1` or leaves version `N` unchanged. A stale request conflicts
+without executing guest code. Concurrent transitions are not merged: one may
+commit, while the others must observe the new state and recompute.
+
+```text
+expected_version != N  -> conflict; state remains N
+expected_version == N  -> commit N+1 or reject with state still N
+```
+
+VAST is a per-process claim at one serialization point. It does not provide
+distributed consensus or prevent two unfenced hosts restored from the same
+snapshot from diverging.
 
 Every request supplies the version it expects:
 
