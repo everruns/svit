@@ -30,7 +30,8 @@ Required for the initial vertical slice.
 ## Required invariant tests
 
 - `TM-EFF-001`: syntax, runtime, conversion, invalid staged script, memory
-  limit, execution limit, and panic failures preserve the full committed root.
+  limit, execution limit, panic, and rejected host-set failures preserve the
+  full committed root.
 - `TM-ESC-001`: module loading fails closed, I/O is discarded, and no host
   filesystem, network, environment, process, clock, or randomness function is installed.
 - `TM-ISO-001`: globals and memory never cross activation or process identity.

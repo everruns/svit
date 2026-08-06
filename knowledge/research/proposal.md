@@ -367,7 +367,7 @@ later through a CPS transformation or a purpose-built bytecode interpreter.
 Reflection should be designed in, but it should reflect supported abstractions
 rather than raw interpreter internals:
 
-- `list(path)` and `find(path, query)` for state and scripts;
+- `discover(path)` and `find(path, query)` for state and scripts;
 - `describe(value_or_function)` for schema, documentation, effects, cost, and
   required capabilities;
 - `/system/api` as a read-only machine-readable catalog of built-ins;
@@ -659,15 +659,25 @@ Add a `SvitCapability` that binds an Agentyk session to a Svit process and
 exposes a compact tool surface:
 
 ```text
-state_read, state_write, state_find
-script_save, script_run, script_describe
-process_send, process_fork
-schedule_set, runtime_inspect
+discover
+exec
+get
+set
 ```
 
-The adapter records the resulting process version in the Agentyk event stream.
-Svit keeps its own typed state history; Agentyk keeps conversation and turn
-history. Forking both is allowed only at compatible committed boundaries.
+Domain operations such as search and committing a result are named Svit
+scripts, discovered and invoked through this generic surface. The adapter
+maps these names one-to-one to the process API and records the resulting process
+version in the Agentyk event stream. Svit keeps its own typed state history;
+Agentyk keeps conversation and turn history. Forking both is allowed only at
+compatible committed boundaries.
+
+The first executable integration is intentionally a private workspace adapter
+rather than a published integration crate. It maps those four generic tools to
+one in-memory process. The support search and result commit live in
+discoverable Svit scripts; the latter appends a ticket intent to the committed
+outbox. It demonstrates the ownership boundary without adding production
+delivery or persistence.
 
 ### Yolop
 

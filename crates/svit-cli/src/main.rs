@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use svit::{Process, Value};
 
 fn main() -> ExitCode {
-    match run() {
+    match exec() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("svit: {error}");
@@ -13,10 +13,10 @@ fn main() -> ExitCode {
     }
 }
 
-fn run() -> Result<(), String> {
+fn exec() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
     let command = arguments.next().ok_or_else(usage)?;
-    if command != "run" {
+    if command != "exec" {
         return Err(usage());
     }
     let script_path = arguments.next().ok_or_else(usage)?;
@@ -39,12 +39,12 @@ fn run() -> Result<(), String> {
         .save_script("main", source)
         .map_err(|error| error.to_string())?;
     let activation = process
-        .run("main", input)
+        .exec("main", input)
         .map_err(|error| error.to_string())?;
 
     let document = serde_json::json!({
         "memory": process
-            .read("/memory")
+            .get("/memory")
             .map_err(|error| error.to_string())?
             .expect("process root always has memory")
             .to_json(),
@@ -59,5 +59,5 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: svit run <script.svit-script> [input-json]".into()
+    "usage: svit exec <script.svit-script> [input-json]".into()
 }

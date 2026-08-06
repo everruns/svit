@@ -17,7 +17,7 @@ const COUNTER: &str = r#"
 fn counter_controller(receipt_limit: usize) -> ProcessController {
     let mut process = Process::builder("svit://local/control/counter")
         .unwrap()
-        .memory(value!({"count": 0}))
+        .memory("count", value!(0))
         .build()
         .unwrap();
     process.save_script("counter", COUNTER).unwrap();
@@ -76,7 +76,7 @@ fn concurrent_clients_cannot_commit_the_same_process_version() {
     assert_eq!(controller.observe().unwrap().version, 2);
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
-        restored.read("/memory/count").unwrap(),
+        restored.get("/memory/count").unwrap(),
         Some(&Value::Integer(1))
     );
 }
@@ -112,7 +112,7 @@ fn version_cas_prevents_duplicate_commit_after_receipt_eviction() {
     assert_eq!(controller.observe().unwrap().version, 3);
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
-        restored.read("/memory/count").unwrap(),
+        restored.get("/memory/count").unwrap(),
         Some(&Value::Integer(3))
     );
 }

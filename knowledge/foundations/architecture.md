@@ -53,9 +53,10 @@ the boundary.
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 
-The current workspace implements these responsibilities in the `svit` crate
-and provides a thin `svit-cli` crate. Module names may evolve; the boundaries
-are the decision.
+The current workspace implements these responsibilities in the `svit` crate,
+provides a thin `svit-cli` crate, and keeps the Agentyk integration in the
+separate `svit-agentyk` adapter crate. The core does not depend on an agent
+framework. Module names may evolve; the boundaries are the decision.
 
 ## Trusted-boundary rules
 

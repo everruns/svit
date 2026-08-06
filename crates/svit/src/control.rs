@@ -370,7 +370,7 @@ impl ProcessController {
 fn execute_command(request: &ControlRequest, process: &mut Process) -> ControlResponse {
     let previous_version = process.version();
     let result = match &request.command {
-        ControlCommand::Activate { script, input } => process.run(script, input.clone()),
+        ControlCommand::Activate { script, input } => process.exec(script, input.clone()),
     };
     let outcome = match result {
         Ok(activation) => ControlOutcome::Committed {

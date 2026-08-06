@@ -1,0 +1,34 @@
+(define (starts-with text pattern)
+  (if (null pattern)
+      true
+      (if (null text)
+          false
+          (if (= (first text) (first pattern))
+              (starts-with (tail text) (tail pattern))
+              false))))
+
+(define (contains text pattern)
+  (if (null pattern)
+      true
+      (if (null text)
+          false
+          (if (starts-with text pattern)
+              true
+              (contains (tail text) pattern)))))
+
+(define (has-keyword query keyword)
+  (contains (chars query) (chars keyword)))
+
+(define (main input)
+  (let ((query (value-get input "/query"))
+        (account-recovery (memory-get "/docs/0"))
+        (password-reset (memory-get "/docs/1"))
+        (refunds (memory-get "/docs/2")))
+    (if (or (has-keyword query "refund")
+            (has-keyword query "purchase")
+            (has-keyword query "billing"))
+        (value-array refunds account-recovery)
+        (if (or (has-keyword query "password")
+                (has-keyword query "reset"))
+            (value-array password-reset account-recovery)
+            (value-array account-recovery password-reset)))))

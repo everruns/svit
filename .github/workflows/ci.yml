@@ -82,7 +82,7 @@ jobs:
 
       - name: Run CLI smoke test
         run: >-
-          cargo run --locked -p svit-cli -- run examples/cli_counter.svit-script '{"by": 3}'
+          cargo run --locked -p svit-cli -- exec examples/cli_counter.svit-script '{"by": 3}'
 
   audit:
     name: Dependency audit

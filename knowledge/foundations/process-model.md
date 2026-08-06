@@ -32,6 +32,23 @@ Process = {
 `memory`, `scripts`, and `outbox` form one committed logical root even if the
 Rust implementation uses separate typed fields. The guest may reflect over
 memory and scripts. Enforcement state and host secrets never appear there.
+The process builder assembles initial memory from separately named items into a
+text-keyed map so each durable value is explicit at the setup boundary.
+Agent integrations use exactly four generic process operations:
+
+```text
+discover(path)
+get(path)
+set(path, value)
+exec(script, input)
+```
+
+`discover` returns deterministic immediate child names across memory, scripts,
+and system state. `get` returns a committed value. `set` atomically replaces a
+value at or below `/memory` and increments the process version once. `exec`
+runs a named script activation. Builders, snapshot, restore, and fork are
+lifecycle operations outside this agent contract. Adapters preserve these four
+names and semantics rather than introducing another vocabulary.
 
 Addresses are validated identifiers. In the initial local-only slice they name
 message destinations and fork identities but do not imply global routing,
@@ -51,6 +68,10 @@ On success, the runtime validates every staged value and script, atomically
 replaces the root, appends buffered message intents, and increments the process
 version exactly once. On any failure, version, memory, scripts, and outbox are
 unchanged.
+
+A host `set` constructs and validates a replacement root before its single
+commit assignment. A rejected path or value leaves the committed root and
+version unchanged.
 
 The initial implementation may clone values during activation. Persistent
 structural sharing is an optimization, not part of the public contract.
@@ -83,7 +104,9 @@ See [Svit Control Protocol 1](../protocols/control-protocol.md).
 A named script is source plus bounded metadata. Source, not VM bytecode or a
 closure, is canonical state. Saving or replacing a script participates in the
 same transaction as memory and outbox updates. Staged scripts must compile
-before commit.
+before commit. Scripts supplied to the process builder are validated with the
+complete initial root and begin at version zero; adding a script to an existing
+process is a committed state transition that increments its version.
 
 ## Snapshots and restore
 

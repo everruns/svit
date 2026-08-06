@@ -1,0 +1,16 @@
+(define (main input)
+  (let ((result
+          (value-map
+            "request_id" (value-get input "/request_id")
+            "answer" (value-get input "/answer")
+            "source_ids" (value-get input "/source_ids"))))
+    (do
+      (memory-set! "/requests/latest" result)
+      (if (value-get input "/create_ticket")
+          (send! "svit://local/support-tickets"
+                 (value-map
+                   "request_id" (value-get input "/request_id")
+                   "title" (value-get input "/ticket_title")
+                   "description" (value-get input "/ticket_description")))
+          ())
+      result)))

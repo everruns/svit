@@ -20,32 +20,31 @@ durable_counter count=9 version=4
 The same lifecycle through the Rust API:
 
 ```rust
-use svit::{Process, Value, value};
+use svit::{Process, Script, Value, value};
 
 fn main() -> svit::Result<()> {
     let mut process = Process::builder("svit://local/demo/counter")?
-        .memory(value!({"count": 0}))
+        .memory("count", value!(0))
+        .script("counter", Script::new(r#"
+            (define (main input)
+              (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+                (do
+                  (memory-set! "/count" count)
+                  (value-map "count" count))))
+        "#))
         .build()?;
 
-    process.save_script("counter", r#"
-        (define (main input)
-          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
-            (do
-              (memory-set! "/count" count)
-              (value-map "count" count))))
-    "#)?;
-
-    let activation = process.run("counter", value!({"by": 3}))?;
+    let activation = process.exec("counter", value!({"by": 3}))?;
     assert_eq!(activation.output, value!({"count": 3}));
     assert_eq!(
-        process.read("/memory/count")?,
+        process.get("/memory/count")?,
         Some(&Value::Integer(3)),
     );
 
     let snapshot = process.snapshot()?;
     let restored = Process::restore(&snapshot)?;
     let child = restored.fork("svit://local/demo/child")?;
-    assert_eq!(child.read("/memory/count")?, Some(&Value::Integer(3)));
+    assert_eq!(child.get("/memory/count")?, Some(&Value::Integer(3)));
     Ok(())
 }
 ```
@@ -53,12 +52,26 @@ fn main() -> svit::Result<()> {
 Run one standalone script through the CLI:
 
 ```console
-cargo run -p svit-cli -- run examples/cli_counter.svit-script '{"by": 3}'
+cargo run -p svit-cli -- exec examples/cli_counter.svit-script '{"by": 3}'
 ```
 
 The CLI creates a fresh process, installs the script as `main`, executes one
 activation, and prints committed memory, output, and version as JSON. It is a
 smoke-test tool, not a persistent process supervisor.
+
+## Generic process contract
+
+Agent integrations map directly to four Svit operations:
+
+```text
+discover(path)       -> immediate child names
+get(path)            -> committed value
+set(path, value)     -> committed memory update
+exec(script, input)  -> transactional script activation
+```
+
+Builders, snapshots, restore, and fork are process lifecycle APIs, not a second
+agent-operation vocabulary.
 
 ## What works now
 
