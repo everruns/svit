@@ -261,15 +261,15 @@ message intent visible at the implementation boundary.
 ```lisp
 ;; /lib/counter.svit-script
 (define (main input)
-  (let ((count (+ (memory-get "/count")
+  (let ((count (+ (read "/memory/count")
                   (value-get input "/by"))))
-    (memory-set! "/count" count)
+    (write "/memory/count" count)
     (send! "process://owner" (value-map "type" "counter.changed"
                                          "count" count))
     (value-map "count" count)))
 ```
 
-`memory-set!` changes only the activation's working copy. `send!` creates a
+`write` changes only the activation's working copy. `send!` creates a
 transactional outbox intent; it does not perform network I/O in the middle of
 the state mutation. Future capability calls must likewise record their inputs,
 results, cost, and authorization decisions.
@@ -326,7 +326,7 @@ A script record under `/lib/<name>` should contain:
 
 ```text
 {
-  language: "svit-lisp@1",
+  language: "svit-lisp@2",
   source: "...",
   source_hash: "...",
   entrypoints: ["main"],
@@ -661,8 +661,9 @@ exposes a compact tool surface:
 ```text
 discover
 exec
-get
-set
+read
+remove
+write
 ```
 
 Domain operations such as search and committing a result are named Svit
@@ -673,7 +674,7 @@ Agentyk keeps conversation and turn history. Forking both is allowed only at
 compatible committed boundaries.
 
 The first executable integration is intentionally a private workspace adapter
-rather than a published integration crate. It maps those four generic tools to
+rather than a published integration crate. It maps those five generic tools to
 one in-memory process. The support search and result commit live in
 discoverable Svit scripts; the latter appends a ticket intent to the committed
 outbox. It demonstrates the ownership boundary without adding production

@@ -118,7 +118,6 @@ impl Value {
                 .map(|(key, value)| (key.clone(), value.to_json()))
                 .collect(),
             Self::Script(script) => serde_json::json!({
-                "$type": "script",
                 "source": script.source(),
                 "documentation": script.documentation(),
             }),

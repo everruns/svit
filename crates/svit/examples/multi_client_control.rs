@@ -5,15 +5,15 @@ fn main() -> svit::Result<()> {
     let mut process = Process::builder(process_id)?
         .memory("count", value!(0))
         .build()?;
-    process.save_script(
-        "counter",
-        r#"
+    process.write(
+        "/lib/counter",
+        value!({"source": r#"
         (define (main input)
-          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+          (let ((count (+ (read "/memory/count") (value-get input "/by"))))
             (do
-              (memory-set! "/count" count)
+              (write "/memory/count" count)
               (value-map "count" count))))
-        "#,
+        "#}),
     )?;
     let controller = ProcessController::new(process);
     let process_id = ProcessId::new(process_id)?;
@@ -50,7 +50,7 @@ fn main() -> svit::Result<()> {
 
     let observation = controller.observe()?;
     let restored = Process::restore(&controller.snapshot()?)?;
-    assert_eq!(restored.get("/memory/count")?, Some(&Value::Integer(3)));
+    assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(3)));
     assert_eq!(observation.version, 3);
 
     println!(

@@ -21,14 +21,14 @@ async fn main() -> Result<(), Box<dyn Error>> {
             ]))?,
         )
         .memory("requests", Value::empty_map())
-        .script(
+        .library(
             "search_support_docs",
             Script::new(include_str!("../scripts/search_support_docs.svit-script"))
                 .with_documentation(
                     "Search support docs. Input: {query}. Returns the two best matches.",
                 ),
         )
-        .script(
+        .library(
             "commit_support_result",
             Script::new(include_str!("../scripts/commit_support_result.svit-script"))
                 .with_documentation(

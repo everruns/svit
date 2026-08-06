@@ -2,9 +2,15 @@
 
 ## 2026-08-05
 
+* **Process namespace**: Adopted the conventional `/memory`, `/lib`, `/tasks`, `/inbox`, `/children`, `/mounts`, and `/system` hierarchy. Deferred top-level nodes are validated as empty and read-only rather than claiming unimplemented behavior.
+* **Builder vocabulary**: Replaced the initial `script(name, script)` builder method with `library(name, script)` so process assembly maps directly to `/memory` and `/lib`.
+* **Generic operations**: Unified Rust, agent-tool, and Svit Lisp access as `discover`, `read`, `write`, `remove`, and `exec` over absolute process paths. Library entries now use the same typed write and remove boundary as memory instead of separate post-build script APIs.
+* **Nested execution**: Svit Lisp 2 adds transactional named-script `exec`; nested calls share working state and the outer deadline, roll back on failure, and are independently depth-bounded by `max_exec_depth`.
+* **System discovery**: Added validated runtime metadata for logical identity, generic API operations, limits, fork lineage, language and snapshot format, the empty capability set, and buffered outbox. Logical identity is explicitly marked unauthenticated.
+* **Compatibility**: Bumped snapshots to format 3 because the canonical root schema now includes the conventional hierarchy and system metadata; formats 1 and 2 restore fail closed.
 * **Language identity**: Adopted `.svit-script` for standalone Svit Lisp source and virtual script-library diagnostics, reserved `.svit` for an unimplemented future manifest format, and kept Ketos as an interpreter implementation detail.
 * **Runtime replacement**: Replaced Luau through `mlua` with the pure-Rust Ketos interpreter and defined the versioned [Svit Lisp Runtime](runtimes/lisp-runtime.md).
-* **Guest contract**: Separated lexical variables from durable memory through explicit `memory-get`, `memory-set!`, and `memory-remove!` operations; added immutable typed maps and arrays plus bounded script, log, and message functions.
+* **Guest contract**: Separated lexical variables from durable process state through explicit generic operations; added immutable typed maps and arrays plus bounded log and message functions.
 * **Security boundary**: Installed null I/O and a module loader that rejects every Ketos module, created a fresh interpreter for every activation, and retained one post-validation commit point.
 * **Limits**: Adopted Ketos wall-time, stack, namespace, syntax, integer, and abstract-memory restrictions. Recorded the absence of deterministic instruction fuel and allocator byte caps as limitations rather than preserving Luau-specific names.
 * **Dependency review**: Recorded Ketos 0.12's unconditionally declared, obsolete REPL dependency stack as `L-025`; audit exceptions are exact and limited to crates that Svit does not expose.

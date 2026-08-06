@@ -42,6 +42,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-023` | No generated control schema, initialization exchange, or cross-version SDK suite | The current JSON shape is a tested research interface, not a stable remote wire release |
 | `L-024` | Ketos memory accounting is an abstract value estimate, not an allocator byte cap | An outer process or Wasm memory limit remains required for hostile workloads |
 | `L-025` | Ketos 0.12 unconditionally declares an obsolete REPL dependency stack | The locked graph contains unused unmaintained crates and crate-specific license/advisory exceptions; a maintained fork or interpreter replacement is required before production use |
+| `L-026` | `/tasks`, `/inbox`, `/children`, and `/mounts` are reserved empty nodes only | Their discovery does not imply scheduling, delivery, child supervision, or external projection behavior |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

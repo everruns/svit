@@ -5,7 +5,7 @@
             "answer" (value-get input "/answer")
             "source_ids" (value-get input "/source_ids"))))
     (do
-      (memory-set! "/requests/latest" result)
+      (write "/memory/requests/latest" result)
       (if (value-get input "/create_ticket")
           (send! "svit://local/support-tickets"
                  (value-map

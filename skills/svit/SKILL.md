@@ -29,6 +29,8 @@ Load only the reference needed:
   State Transitions**. Keep `svit-control@1` as the wire protocol identifier.
 - Treat memory, named scripts, and buffered messages as one atomic committed
   process state.
+- Use `discover`, `read`, `write`, `remove`, and `exec` with absolute process
+  paths across Rust, agent tools, and Svit Lisp.
 - State that guest Lisp has no ambient host filesystem, network, environment,
   clock, randomness, process, module-loader, or native-extension access.
 - Do not describe buffered message intents as delivered messages.

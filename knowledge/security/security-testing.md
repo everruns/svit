@@ -30,7 +30,7 @@ Required for the initial vertical slice.
 ## Required invariant tests
 
 - `TM-EFF-001`: syntax, runtime, conversion, invalid staged script, memory
-  limit, execution limit, panic, and rejected host-set failures preserve the
+  limit, execution limit, panic, and rejected host write/remove failures preserve the
   full committed root.
 - `TM-ESC-001`: module loading fails closed, I/O is discarded, and no host
   filesystem, network, environment, process, clock, or randomness function is installed.
@@ -44,6 +44,8 @@ Required for the initial vertical slice.
   maximum.
 - `TM-DOS-005`: decoded oversized values are rejected before receipt retention;
   the transport byte cap remains required.
+- `TM-DOS-006`: nested `exec` shares the outer activation deadline, stops at
+  the configured nesting depth, and rolls back the complete activation.
 - `TM-EFF-002`: concurrent clients cannot both commit from one process version.
 - `TM-EFF-003`: exact retry replays a receipt, and retry after eviction cannot
   duplicate a committed activation.
@@ -52,6 +54,9 @@ Required for the initial vertical slice.
 - `TM-AUTH-001`: remote transport tests must prove authorization precedes
   receipt lookup and that two tenant scopes cannot observe each other's
   receipts; no remote transport exists yet.
+- `TM-AUTH-001`: namespace tests must show that discoverable process identity
+  is marked unauthenticated and cannot be modified through the memory mutation
+  API.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
 
