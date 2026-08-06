@@ -32,7 +32,7 @@ UNTRUSTED                         TRUSTED RUST CORE
 script / input / snapshot  --->  validation + limits + transaction
                                          |
                                          v
-                                  restricted Lua VM
+                                  restricted Lisp VM
                                          |
                                          v
                                 staged values and intents
@@ -41,7 +41,7 @@ script / input / snapshot  --->  validation + limits + transaction
                                   validate then commit
 ```
 
-The Lua VM executes untrusted content inside the trusted host process. Memory
+The Ketos VM executes untrusted content inside the trusted host process. Memory
 safety from Rust and interpreter sandboxing reduce risk but do not constitute a
 formal same-process isolation proof. A production deployment should add a Wasm
 or OS process boundary until stronger evidence exists.
@@ -78,16 +78,16 @@ The same ID appears in at least one focused test before status changes to
 
 | ID | Threat | Required control | Status |
 | --- | --- | --- | --- |
-| `TM-DOS-001` | Infinite or expensive guest computation monopolizes a worker | Per-activation interrupt budget plus independent wall-time containment | PARTIAL — interrupt test passes; outer wall time is caller-owned |
-| `TM-DOS-002` | Guest allocations exhaust host memory | VM memory cap and bounded conversion before allocation/commit | PARTIAL — heap and conversion tests pass; native defense in depth remains |
+| `TM-DOS-001` | Infinite or expensive guest computation monopolizes a worker | Per-activation execution deadline plus independent outer containment | PARTIAL — Ketos deadline test passes; deterministic fuel and an outer supervisor remain required |
+| `TM-DOS-002` | Guest allocations exhaust host memory | VM memory estimate and bounded conversion before allocation/commit | PARTIAL — guest-memory and conversion tests pass; the estimate is not an allocator byte cap |
 | `TM-DOS-003` | State, output, logs, scripts, or outbox grow without bound | Independent byte/count/depth limits with fail-closed accounting | PARTIAL — configured limits exist; aggregate output cases remain |
 | `TM-DOS-004` | Client request ids grow the control receipt cache without bound | Independent hard receipt-count maximum and eviction | MITIGATED for the in-memory controller |
 | `TM-DOS-005` | Oversized encoded control requests exhaust memory before value validation | Transport byte cap before deserialization plus decoded value limits | REQUIRED — no transport adapter exists |
-| `TM-ESC-001` | Guest reaches filesystem, network, environment, modules, FFI, or host processes | Fresh VM, explicit standard-library allowlist, sandbox mode, denied-entry-point tests | MITIGATED for the Svit Lua API |
-| `TM-ESC-002` | Malformed guest value exploits interpreter/Rust conversion | Total conversion over supported types, cycle detection, checked sizes, fuzzing | PARTIAL — adversarial tests pass; fuzzing remains |
+| `TM-ESC-001` | Guest reaches filesystem, network, environment, modules, FFI, or host processes | Fresh VM, null I/O, null module loader, typed host functions, and denial tests | MITIGATED for the Svit Lisp API |
+| `TM-ESC-002` | Malformed guest value exploits interpreter/Rust conversion | Immutable typed containers, total conversion over supported types, checked sizes, and fuzzing | PARTIAL — unsupported-function and boundary tests pass; fuzzing remains |
 | `TM-INF-001` | Diagnostics reveal host paths, backtraces, pointers, or dependency internals | Domain errors, source-level sanitization, and diagnostic byte cap | PARTIAL — focused test passes; broader fuzzing remains |
 | `TM-ISO-001` | State or globals leak between processes or activations | Fresh VM and process-owned committed root; cross-process invariant tests | MITIGATED for the in-memory process API |
-| `TM-EFF-001` | Failed activation leaves memory, scripts, or messages partially committed | One validation and commit point; rollback tests for every failure class | PARTIAL — runtime, conversion, script, tick, and heap rollback tests pass; panic containment remains |
+| `TM-EFF-001` | Failed activation leaves memory, scripts, or messages partially committed | One validation and commit point; rollback tests for every failure class | PARTIAL — runtime, conversion, script, deadline, and memory rollback tests pass; interpreter-panic containment needs focused evidence |
 | `TM-EFF-002` | Concurrent clients overwrite state derived from the same process version | Mandatory version CAS at the process serialization point | MITIGATED for the in-memory controller |
 | `TM-EFF-003` | Retrying after a lost response commits an activation twice | Scoped request id, bounded terminal receipts, and version CAS after eviction | MITIGATED for the in-memory controller; durable result replay is not implemented |
 | `TM-EFF-004` | Two hosts concurrently commit the same logical process version | Durable ownership lease and fencing token checked by storage | REQUIRED — the reference controller is single-host only |

@@ -21,7 +21,7 @@ examples:
     cargo run --locked -p svit --example fork_research
     cargo run --locked -p svit --example sandbox_limits
     cargo run --locked -p svit --example multi_client_control
-    cargo run --locked -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
+    cargo run --locked -p svit-cli -- run examples/cli_counter.ket '{"by": 3}'
 
 # Validate the OKF v0.2 knowledge bundle.
 check-okf:
@@ -52,7 +52,7 @@ audit:
 pre-pr: check examples audit
     @echo "Pre-PR checks passed"
 
-# Run a Lua file in a fresh CLI process. Example:
-# just run examples/cli_counter.lua '{"by": 3}'
+# Run a Lisp file in a fresh CLI process. Example:
+# just run examples/cli_counter.ket '{"by": 3}'
 run *args:
     cargo run --locked -p svit-cli -- run {{args}}

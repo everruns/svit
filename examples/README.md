@@ -12,10 +12,10 @@ cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 ```
 
-Run a standalone Svit Lua script through the CLI:
+Run a standalone Svit Lisp script through the CLI:
 
 ```console
-cargo run -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
+cargo run -p svit-cli -- run examples/cli_counter.ket '{"by": 3}'
 ```
 
 The CLI invocation creates a fresh process, stores the script as `main`, runs

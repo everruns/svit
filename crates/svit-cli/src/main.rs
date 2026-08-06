@@ -59,5 +59,5 @@ fn run() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: svit run <script.lua> [input-json]".into()
+    "usage: svit run <script.ket> [input-json]".into()
 }

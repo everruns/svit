@@ -7,9 +7,22 @@ allow = [
     "Unicode-3.0",
 ]
 confidence-threshold = 0.8
+exceptions = [
+    # Ketos 0.12 unconditionally declares its unused REPL dependencies. Keep
+    # these exceptions crate-specific; Svit does not build or expose that REPL.
+    { allow = ["BSD-2-Clause"], crate = "arrayref@0.3.9" },
+    { allow = ["CC0-1.0"], crate = "constant_time_eq@0.1.5" },
+    { allow = ["WTFPL"], crate = "terminfo@0.8.0" },
+]
 
 [advisories]
-ignore = []
+ignore = [
+    # Both crates enter through Ketos's unconditionally declared, unused REPL
+    # stack. They are not part of Svit's guest or host API. Remove these exact
+    # exceptions when Ketos is forked, replaced, or republishes its manifest.
+    { id = "RUSTSEC-2026-0214", reason = "unused Ketos REPL dependency; no fixed Ketos release" },
+    { id = "RUSTSEC-2026-0215", reason = "transitive unused Ketos REPL dependency; no fixed Ketos release" },
+]
 
 [bans]
 multiple-versions = "warn"

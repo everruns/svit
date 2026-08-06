@@ -15,7 +15,7 @@
 - **Snapshot**: versioned canonical encoding of committed state only.
 - **Fork**: a new process identity starting from committed parent state, with
   independent future mutation.
-- **Svit Lua**: the restricted, versioned guest language; not full Lua or Luau.
+- **Svit Lisp**: the restricted, versioned Ketos guest language; not full Scheme, Common Lisp, or unrestricted Ketos.
 
 The current implementation slice is local and in memory. Scheduling, message
 delivery, projections, external capabilities, distributed identity, and

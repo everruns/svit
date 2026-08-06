@@ -1,7 +1,7 @@
 # Svit
 
 Svit is a research-stage agent process runtime. It gives an agent one durable
-state tree, named restricted-Lua scripts, bounded transactional execution,
+state tree, named restricted-Lisp scripts, bounded transactional execution,
 snapshots, and forks—without giving guest code an operating system.
 
 The current implementation is a deliberately small vertical slice. It is
@@ -28,10 +28,11 @@ fn main() -> svit::Result<()> {
         .build()?;
 
     process.save_script("counter", r#"
-        function main(input)
-            memory.count = memory.count + input.by
-            return { count = memory.count }
-        end
+        (define (main input)
+          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+            (do
+              (memory-set! "/count" count)
+              (value-map "count" count))))
     "#)?;
 
     let activation = process.run("counter", value!({"by": 3}))?;
@@ -52,7 +53,7 @@ fn main() -> svit::Result<()> {
 Run one standalone script through the CLI:
 
 ```console
-cargo run -p svit-cli -- run examples/cli_counter.lua '{"by": 3}'
+cargo run -p svit-cli -- run examples/cli_counter.ket '{"by": 3}'
 ```
 
 The CLI creates a fresh process, installs the script as `main`, executes one
@@ -63,16 +64,16 @@ smoke-test tool, not a persistent process supervisor.
 
 - One committed state root containing `/memory`, `/lib`, and
   `/system/outbox`.
-- Named script installation and guest-side `scripts.list`, `scripts.read`, and
-  transactional `scripts.save`.
+- Named script installation and guest-side `scripts-list`, `scripts-read`, and
+  transactional `scripts-save!`.
 - Transactional activations: memory, staged scripts, and message intents all
   commit, or none do.
-- Structured `log.info` records and deterministic buffered `send` intents.
+- Structured `log-info!` records and deterministic buffered `send!` intents.
 - Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
 - Forks that copy committed memory and scripts into an independently mutable
   child without copying the parent's outbox.
-- Configurable execution, heap, value, text, script, log, message, and staged
-  script limits.
+- Configurable execution deadline, VM stack, namespace, syntax, integer,
+  estimated guest-memory, value, text, script, log, message, and staged-script limits.
 - Typed host activation hooks that may rewrite, deny, or observe activations.
 - Reflection over committed memory and the named script library.
 - Svit Control Protocol 1 with Versioned Atomic State Transitions (VAST)
@@ -84,30 +85,36 @@ smoke-test tool, not a persistent process supervisor.
 See [Controlling a Svit process](docs/control-protocol.md) for VAST semantics,
 the wire protocol, and its exact transaction boundary.
 
-## Svit Lua 1
+## Svit Lisp 1
 
 A named script defines `main(input)`. The initial guest surface is:
 
 ```text
-memory
 input
-scripts.list()
-scripts.read(name)
-scripts.save(name, source, documentation?)
-log.info(message, fields?)
-send(process_address, body)
+(value-get value path)
+(value-map key value ...)
+(value-array value ...)
+(value-null? value)
+(memory-get path)
+(memory-set! path value)
+(memory-remove! path)
+(scripts-list)
+(scripts-read name)
+(scripts-save! name source documentation?)
+(log-info! message fields?)
+(send! process-address body)
 ```
 
-Svit Lua is a versioned restricted language, not full Lua or Luau. It exposes
-selected base functions plus table, string, math, UTF-8, and bit operations.
-Randomness is removed from math. Guest code has no `os`, `io`, `debug`, package
-loader, `require`, `loadstring`, FFI, filesystem, network, environment, host
-process, wall clock, or ambient randomness access.
+Svit Lisp is a versioned restricted Ketos surface, not full Scheme, Common
+Lisp, or unrestricted Ketos. Guest code has core arithmetic, comparisons,
+lexical functions and immutable list/string operations. Null I/O and a module
+loader that rejects every module leave it without filesystem, network,
+environment, host process, wall clock, or ambient randomness access.
 
 Persistent values are null, booleans, signed integers, finite floats, text,
-arrays, and text-keyed maps. Functions, threads, userdata, cycles, sparse or
-mixed tables, non-text map keys, NaN, and infinity cannot cross a commit
-boundary.
+arrays, and text-keyed maps. Maps and arrays enter Lisp as immutable typed
+values. Ratios, oversized integers, paths, bytes, functions, lambdas, quotes,
+unrecognized foreign values, NaN, and infinity cannot cross a commit boundary.
 
 ## Executable examples
 
@@ -130,18 +137,18 @@ conflict. See [examples/README.md](examples/README.md), or run all of them with
 
 ## Current security status
 
-The runtime starts a fresh sandboxed Luau VM for every activation and builds
-the guest environment from an explicit allowlist. Guest heap growth and VM
-interrupt ticks are limited; persistent values and snapshots are bounded and
-validated; failures leave committed state unchanged; guest-visible interpreter
-diagnostics are capped.
+The runtime starts a fresh restricted Ketos VM for every activation, installs
+null I/O and rejects all modules. Ketos wall time, stacks, namespace, syntax,
+integer size, and estimated memory are limited; persistent values and snapshots
+are bounded and validated; failures leave committed state unchanged;
+guest-visible interpreter diagnostics are capped.
 
 Those controls do not establish a formal hostile-tenant isolation proof. The
-interpreter is native code in the host process, interrupt ticks are not an
-independent wall-clock deadline, and a SHA-256 snapshot hash provides integrity
-rather than provenance or authorization. Deploy untrusted tenants behind a
-Wasm or OS process boundary and enforce an outer deadline until stronger
-evidence exists.
+interpreter is native code in the host process, the deadline is not
+deterministic instruction fuel, estimated memory is not an allocator byte cap,
+and a SHA-256 snapshot hash provides integrity rather than provenance or
+authorization. Deploy untrusted tenants behind a Wasm or OS process boundary
+and enforce outer CPU, memory, and time limits until stronger evidence exists.
 
 See the canonical [threat model](knowledge/security/threat-model.md),
 [security-testing requirements](knowledge/security/security-testing.md), and

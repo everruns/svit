@@ -21,12 +21,13 @@ repository tooling, and documentation in this repository.
 
 ## Current security model
 
-Svit runs untrusted scripts in a fresh Luau VM per activation. The guest
-environment is constructed from an explicit allowlist and excludes ambient
-filesystem, network, environment, process, module-loading, debug, clock, and
-randomness access. Resource budgets bound guest heap growth, VM interrupt
-ticks, persistent values, scripts, logs, and message intents. Commit validation
-and rollback protect previously committed state from failed activations.
+Svit runs untrusted scripts in a fresh Ketos VM per activation. Null I/O, a
+module loader that rejects every module, and explicit typed host functions
+exclude ambient filesystem, network, environment, process, module, clock, and
+randomness access. Resource budgets bound wall time, VM stacks, namespace,
+syntax, integer size, estimated guest memory, persistent values, scripts, logs,
+and message intents. Commit validation and rollback protect previously
+committed state from failed activations.
 
 The CLI reading a script path is a host operation performed before guest
 execution. It does not mount that path or host filesystem into the guest.
@@ -44,10 +45,13 @@ decoded value limits enforced by the controller.
 ## Important limitations
 
 Svit is not yet a proven or production-grade hostile multi-tenant boundary.
-The embedded interpreter is native code in the host process, and VM interrupt
-ticks do not replace an independent supervisor deadline. Run hostile tenants
-behind a Wasm or OS process boundary and enforce outer CPU, memory, and time
-limits.
+The embedded interpreter is native code in the host process. Ketos wall-time
+checks are not deterministic instruction fuel, and its memory estimate is not
+an allocator byte cap. Ketos 0.12 also declares an obsolete REPL dependency
+stack even though Svit neither builds nor exposes the REPL; the repository
+records exact audit exceptions for those unused dependencies. Run hostile
+tenants behind a Wasm or OS process boundary and enforce outer CPU, memory, and
+time limits.
 
 Message delivery, external capabilities, authenticated identity,
 authorization, secrets, snapshot signatures, and distributed execution are

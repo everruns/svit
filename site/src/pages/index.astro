@@ -11,7 +11,7 @@ const model = [
   {
     number: "02",
     title: "Run one activation",
-    copy: "A named restricted-Lua script receives input and runs against a transactional working copy of the process state.",
+    copy: "A named restricted-Lisp script receives input and runs against a transactional working copy of the process state.",
     tag: "main(input)",
   },
   {
@@ -32,8 +32,8 @@ const works = [
   "Transactional memory, scripts, and outbox intents",
   "Deterministic JSON snapshots with integrity hashes",
   "Restore and fork with isolated future mutations",
-  "Fresh restricted-Lua VM for every activation",
-  "Configurable execution, heap, value, script, log, and message limits",
+  "Fresh restricted-Lisp interpreter for every activation",
+  "Configurable deadline, interpreter memory, stack, value, script, log, and message limits",
   "In-memory multi-client control with version checks and bounded retry receipts",
 ];
 
@@ -310,7 +310,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
             <p class="section-label section-label-light">03 / Guest boundary</p>
             <h2>No ambient authority.</h2>
             <p>
-              Guest scripts get an explicit, versioned language surface—not the host operating system. Every activation starts in a fresh VM built from an allowlist.
+              Guest scripts get an explicit, versioned language surface—not the host operating system. Every activation starts in a fresh Ketos interpreter with null I/O and module loading denied.
             </p>
             <p class="security-note">
               This is a tested runtime layer, not proof of hostile same-process multi-tenancy. Production isolation still needs a Wasm or OS boundary.
@@ -319,13 +319,15 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           <div class="surface-panel">
             <div class="surface-allowed">
               <p>VISIBLE TO GUEST</p>
-              <code>memory</code>
               <code>input</code>
-              <code>scripts.list()</code>
-              <code>scripts.read(name)</code>
-              <code>scripts.save(name, source)</code>
-              <code>log.info(message, fields)</code>
-              <code>send(address, message)</code>
+              <code>(value-null? value)</code>
+              <code>(memory-get path)</code>
+              <code>(memory-set! path value)</code>
+              <code>(scripts-list)</code>
+              <code>(scripts-read name)</code>
+              <code>(scripts-save! name source)</code>
+              <code>(log-info! message fields)</code>
+              <code>(send! address message)</code>
             </div>
             <div class="surface-denied">
               <p>ABSENT BY DEFAULT</p>
@@ -345,13 +347,14 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
         </div>
         <div class="code-window">
           <div class="code-heading">
-            <span>counter.lua</span>
-            <span>SVIT LUA 1</span>
+            <span>counter.ket</span>
+            <span>SVIT LISP 1</span>
           </div>
-          <pre><code><span class="code-dim">01</span>  <span class="code-keyword">function</span> <span class="code-call">main</span>(input)
-<span class="code-dim">02</span>    memory.count = (memory.count or 0) + input.by
-<span class="code-dim">03</span>    <span class="code-keyword">return</span> &#123; count = memory.count &#125;
-<span class="code-dim">04</span>  <span class="code-keyword">end</span></code></pre>
+          <pre><code><span class="code-dim">01</span>  (<span class="code-keyword">define</span> (<span class="code-call">main</span> input)
+<span class="code-dim">02</span>    (<span class="code-keyword">let</span> ((count (+ (memory-get "/count")
+<span class="code-dim">03</span>                    (value-get input "/by"))))
+<span class="code-dim">04</span>      (memory-set! "/count" count)
+<span class="code-dim">05</span>      (value-map "count" count)))</code></pre>
           <div class="code-result">
             <span>INPUT</span><code>&#123; by: 4 &#125;</code>
             <span>OUTPUT</span><code>&#123; count: 9 &#125;</code>

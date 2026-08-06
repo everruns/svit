@@ -1,38 +1,14 @@
 use svit::{Error, Limits, Process, Value, value};
 
-const INSPECT_SANDBOX: &str = r#"
-function main()
-    return {
-        debug = type(debug),
-        io = type(io),
-        loadstring = type(loadstring),
-        os = type(os),
-        package = type(package),
-        random = type(math.random),
-        require = type(require),
-    }
-end
-"#;
-
 fn main() -> svit::Result<()> {
     let mut inspector = Process::new("svit://local/examples/sandbox-inspector")?;
-    inspector.save_script("inspect", INSPECT_SANDBOX)?;
-    let inspection = inspector.run("inspect", Value::Null)?;
-    assert_eq!(
-        inspection.output,
-        value!({
-            "debug": "nil",
-            "io": "nil",
-            "loadstring": "nil",
-            "os": "nil",
-            "package": "nil",
-            "random": "nil",
-            "require": "nil"
-        })
-    );
+    assert!(matches!(
+        inspector.save_script("inspect", "(use random) (define (main input) true)"),
+        Err(Error::Script(_))
+    ));
 
     let limits = Limits {
-        max_interrupt_ticks: 10,
+        max_execution_millis: 1,
         ..Limits::default()
     };
     let mut bounded = Process::builder("svit://local/examples/bounded-loop")?
@@ -41,7 +17,10 @@ fn main() -> svit::Result<()> {
         .build()?;
     bounded.save_script(
         "loop",
-        "function main() memory.started = true while true do end end",
+        r#"
+        (define (spin) (spin))
+        (define (main input) (do (memory-set! "/started" true) (spin)))
+        "#,
     )?;
     let version_before = bounded.version();
 

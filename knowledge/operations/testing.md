@@ -34,7 +34,7 @@ The following scenarios execute with assertions and deterministic output under
 - a script that saves another named script and discovers it later;
 - atomic memory and outbox rollback after a deliberate error;
 - parent and two forks diverging without shared mutation;
-- denied host libraries and bounded infinite-loop termination;
+- denied modules and bounded infinite-loop termination;
 - two control clients contending on one version, then resolving the conflict.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
@@ -61,6 +61,8 @@ that only one commits the contested version. Retry tests cover exact receipt
 replay, request-id content mismatch, rejected requests, and receipt eviction.
 Wire tests pin exact request shapes, prove that known structures ignore additive
 fields within a major, and prove that unknown operations fail closed.
+Execution-deadline tests assert rollback but do not claim deterministic failure
+timing across hosts.
 
 ## Determinism checks
 

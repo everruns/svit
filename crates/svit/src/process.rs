@@ -1,13 +1,22 @@
-// The process root is the only durable guest state. Activations work on Lua
+// The process root is the only durable guest state. Activations work on Lisp
 // copies and replace the Arc root only after every value and staged script has
 // validated, providing rollback without a mutable undo log.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::any::Any;
+use std::collections::{BTreeMap, BTreeSet};
+use std::error::Error as StdError;
 use std::fmt;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::rc::Rc;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Duration;
 
-use mlua::{Function, Lua, LuaOptions, StdLib, Table, Value as LuaValue, VmState};
+use ketos::module::NullModuleLoader;
+use ketos::{
+    Builder as KetosBuilder, Context as KetosContext, Error as KetosError, ForeignValue, GlobalIo,
+    Integer as KetosInteger, Interpreter as KetosInterpreter, RestrictConfig, RestrictError,
+    Value as KetosValue,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -17,12 +26,8 @@ use crate::hooks::{
 };
 use crate::{Error, Limits, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 1;
+const SNAPSHOT_FORMAT: u32 = 2;
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
-const EXECUTION_LIMIT_SENTINEL: &str = "__svit_execution_limit__";
-const LOG_LIMIT_SENTINEL: &str = "__svit_log_limit__";
-const MESSAGE_LIMIT_SENTINEL: &str = "__svit_message_limit__";
-const SCRIPT_LIMIT_SENTINEL: &str = "__svit_script_limit__";
 
 /// Stable logical address of one agent process.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -99,8 +104,6 @@ pub struct Activation {
     pub version: u64,
     /// SHA-256 of the canonical committed root encoding.
     pub root_hash: String,
-    /// Number of Luau interrupt ticks consumed.
-    pub interrupt_ticks: u64,
 }
 
 /// Builder for a process with initial memory, limits, and frozen hooks.
@@ -410,50 +413,32 @@ impl Process {
             .expect("validated process root")
             .clone();
 
-        let lua = secure_lua(&self.limits)?;
-        let array_tags = Arc::new(Mutex::new(HashSet::new()));
-        let logs = Arc::new(Mutex::new(Vec::new()));
-        let messages = Arc::new(Mutex::new(Vec::<StagedMessage>::new()));
-        let staged_scripts = Arc::new(Mutex::new(Vec::<(String, Script)>::new()));
-        let interrupt_ticks = Arc::new(AtomicU64::new(0));
+        let state = RuntimeState::new(memory);
+        let interpreter =
+            secure_lisp(&state, &request.input, &self.script_records(), &self.limits)?;
+        let source_path = format!("/lib/{}.ket", request.script);
+        let output_lisp = catch_unwind(AssertUnwindSafe(|| {
+            let execution = (|| {
+                interpreter
+                    .run_code(script.source(), Some(source_path.clone()))
+                    .map_err(|error| map_ketos_error(&interpreter, error))?;
+                if interpreter.get_value("main").is_none() {
+                    return Err(Error::Script("script must define main(input)".into()));
+                }
+                interpreter
+                    .call("main", vec![persistent_to_ketos(&request.input)?])
+                    .map_err(|error| map_ketos_error(&interpreter, error))
+            })();
+            execution.map_err(|error| add_script_path(&source_path, error))
+        }))
+        .map_err(|_| Error::Script("Lisp interpreter failed".into()))??;
 
-        install_interrupt(&lua, &self.limits, Arc::clone(&interrupt_ticks));
-        let environment = build_environment(
-            &lua,
-            &memory,
-            &request.input,
-            &self.script_records(),
-            &self.limits,
-            Arc::clone(&array_tags),
-            Arc::clone(&logs),
-            Arc::clone(&messages),
-            Arc::clone(&staged_scripts),
-        )?;
-
-        lua.load(script.source())
-            .set_name(format!("@/lib/{}.lua", request.script))
-            .set_environment(environment.clone())
-            .exec()
-            .map_err(map_lua_error)?;
-        let main: Function = environment
-            .get("main")
-            .map_err(|_| Error::Script("script must define main(input)".into()))?;
-        let input_lua = environment
-            .get::<LuaValue>("input")
-            .map_err(map_lua_error)?;
-        let output_lua: LuaValue = main.call(input_lua).map_err(map_lua_error)?;
-
-        let tags = lock(&array_tags)?;
-        let output = persistent_from_lua(output_lua, &self.limits, &tags)?;
-        let memory_lua = environment
-            .get::<LuaValue>("memory")
-            .map_err(map_lua_error)?;
-        let new_memory = persistent_from_lua(memory_lua, &self.limits, &tags)?;
-        drop(tags);
+        let output = persistent_from_ketos(&output_lisp, &self.limits)?;
+        let new_memory = lock(&state.memory)?.clone();
         output.validate(&self.limits, false)?;
         new_memory.validate(&self.limits, false)?;
 
-        let staged_scripts = lock(&staged_scripts)?.clone();
+        let staged_scripts = lock(&state.staged_scripts)?.clone();
         for (name, script) in &staged_scripts {
             validate_script_name(name)?;
             script_value(script).validate(&self.limits, true)?;
@@ -461,7 +446,7 @@ impl Process {
         }
 
         let version = self.version + 1;
-        let staged_messages = lock(&messages)?.clone();
+        let staged_messages = lock(&state.messages)?.clone();
         let committed_messages = staged_messages
             .into_iter()
             .enumerate()
@@ -497,11 +482,10 @@ impl Process {
 
         Ok(Activation {
             output,
-            logs: lock(&logs)?.clone(),
+            logs: lock(&state.logs)?.clone(),
             messages: committed_messages,
             version,
             root_hash: self.root_hash(),
-            interrupt_ticks: interrupt_ticks.load(Ordering::Relaxed),
         })
     }
 
@@ -627,429 +611,572 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
     if source.len() > limits.max_script_bytes {
         return Err(Error::ResourceLimitExceeded("script source"));
     }
-    let lua = secure_lua(limits)?;
-    lua.load(source)
-        .set_name(format!("@/lib/{name}.lua"))
-        .into_function()
+    let state = RuntimeState::new(Value::empty_map());
+    let interpreter = secure_lisp(&state, &Value::Null, &BTreeMap::new(), limits)?;
+    interpreter
+        .compile_exprs(source)
         .map(|_| ())
-        .map_err(map_lua_error)
+        .map_err(|error| map_ketos_error(&interpreter, error))
+        .map_err(|error| match error {
+            Error::Script(message) => {
+                Error::Script(sanitize_diagnostic(format!("/lib/{name}.ket: {message}")))
+            }
+            other => other,
+        })
 }
 
-fn secure_lua(limits: &Limits) -> Result<Lua> {
-    // THREAT[TM-ESC-001]: Build the VM from an explicit library allowlist;
-    // guest chunks later receive a still smaller explicit environment.
-    let libraries = StdLib::TABLE | StdLib::STRING | StdLib::MATH | StdLib::UTF8 | StdLib::BIT;
-    // THREAT[TM-ISO-001]: A fresh VM per activation prevents mutable globals
-    // and interpreter objects from crossing process boundaries.
-    let lua = Lua::new_with(libraries, LuaOptions::default()).map_err(map_lua_error)?;
-    lua.sandbox(true).map_err(map_lua_error)?;
-    let absolute_limit = lua
-        .used_memory()
-        .checked_add(limits.max_heap_bytes)
-        .ok_or(Error::ResourceLimitExceeded("guest heap"))?;
-    // THREAT[TM-DOS-002]: mlua's allocator limit bounds guest VM growth.
-    lua.set_memory_limit(absolute_limit)
-        .map_err(map_lua_error)?;
-    Ok(lua)
-}
-
-fn install_interrupt(lua: &Lua, limits: &Limits, ticks: Arc<AtomicU64>) {
-    // THREAT[TM-DOS-001]: Luau interrupt ticks stop unbounded guest loops.
-    // The caller still owns an outer wall-time boundary for native defects.
-    let maximum = limits.max_interrupt_ticks;
-    lua.set_interrupt(move |_| {
-        let current = ticks.fetch_add(1, Ordering::Relaxed);
-        if current >= maximum {
-            return Err(mlua::Error::RuntimeError(EXECUTION_LIMIT_SENTINEL.into()));
-        }
-        Ok(VmState::Continue)
-    });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_environment(
-    lua: &Lua,
-    memory: &Value,
-    input: &Value,
-    scripts: &BTreeMap<String, Script>,
-    limits: &Limits,
-    array_tags: Arc<Mutex<HashSet<usize>>>,
+struct RuntimeState {
+    memory: Arc<Mutex<Value>>,
     logs: Arc<Mutex<Vec<LogRecord>>>,
     messages: Arc<Mutex<Vec<StagedMessage>>>,
     staged_scripts: Arc<Mutex<Vec<(String, Script)>>>,
-) -> Result<Table> {
-    let environment = lua.create_table().map_err(map_lua_error)?;
-    let globals = lua.globals();
+}
 
-    for name in [
-        "assert", "error", "ipairs", "next", "pairs", "select", "tonumber", "tostring", "type",
-    ] {
-        let value = globals.get::<LuaValue>(name).map_err(map_lua_error)?;
-        environment.set(name, value).map_err(map_lua_error)?;
-    }
-    for name in ["table", "string", "utf8", "bit32"] {
-        if let Ok(value) = globals.get::<LuaValue>(name) {
-            environment.set(name, value).map_err(map_lua_error)?;
+impl RuntimeState {
+    fn new(memory: Value) -> Self {
+        Self {
+            memory: Arc::new(Mutex::new(memory)),
+            logs: Arc::new(Mutex::new(Vec::new())),
+            messages: Arc::new(Mutex::new(Vec::new())),
+            staged_scripts: Arc::new(Mutex::new(Vec::new())),
         }
     }
-    environment
-        .set("math", filtered_math(lua, &globals)?)
-        .map_err(map_lua_error)?;
-    environment
-        .set("_VERSION", "Svit Lua 1")
-        .map_err(map_lua_error)?;
+}
 
-    let memory_lua = lua_from_persistent(lua, memory, false, &array_tags)?;
-    let input_lua = lua_from_persistent(lua, input, true, &array_tags)?;
-    environment
-        .set("memory", memory_lua)
-        .map_err(map_lua_error)?;
-    environment.set("input", input_lua).map_err(map_lua_error)?;
+#[derive(Clone, Debug)]
+struct GuestPersistent(Value);
 
-    let scripts_api = lua.create_table().map_err(map_lua_error)?;
-    let script_names = scripts.keys().cloned().collect::<Vec<_>>();
-    scripts_api
-        .set(
-            "list",
-            lua.create_function(move |lua, ()| {
-                let result = lua.create_table()?;
-                for (index, name) in script_names.iter().enumerate() {
-                    result.raw_set(index + 1, name.as_str())?;
-                }
-                result.set_readonly(true);
-                Ok(result)
-            })
-            .map_err(map_lua_error)?,
-        )
-        .map_err(map_lua_error)?;
+impl ForeignValue for GuestPersistent {
+    fn type_name(&self) -> &'static str {
+        "svit-value"
+    }
+
+    fn size(&self) -> usize {
+        serde_json::to_vec(&self.0.to_json()).map_or(1, |bytes| bytes.len().max(1))
+    }
+}
+
+#[derive(Clone, Debug)]
+enum GuestFailure {
+    InvalidPath(String),
+    InvalidValue(String),
+    Resource(&'static str),
+    Script(String),
+}
+
+impl fmt::Display for GuestFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidPath(message) | Self::InvalidValue(message) | Self::Script(message) => {
+                formatter.write_str(message)
+            }
+            Self::Resource(resource) => write!(formatter, "{resource} limit exceeded"),
+        }
+    }
+}
+
+impl StdError for GuestFailure {}
+
+fn secure_lisp(
+    state: &RuntimeState,
+    input: &Value,
+    scripts: &BTreeMap<String, Script>,
+    limits: &Limits,
+) -> Result<KetosInterpreter> {
+    // THREAT[TM-ESC-001]: Null I/O and a null module loader leave guest code
+    // without filesystem, environment, network, clock, randomness, or modules.
+    // THREAT[TM-ISO-001]: Every activation receives a fresh interpreter scope.
+    let restrictions = RestrictConfig {
+        execution_time: Some(Duration::from_millis(limits.max_execution_millis)),
+        call_stack_size: limits.max_call_stack,
+        value_stack_size: limits.max_value_stack,
+        namespace_size: limits.max_namespace_entries,
+        memory_limit: limits.max_guest_memory,
+        max_integer_size: limits.max_integer_bits,
+        max_syntax_nesting: limits.max_syntax_depth,
+    };
+    let interpreter = KetosBuilder::new()
+        .name("svit-lisp")
+        .restrict(restrictions)
+        .io(Rc::new(GlobalIo::null()))
+        .module_loader(Box::new(NullModuleLoader))
+        .finish();
+    interpreter
+        .scope()
+        .add_named_value("*svit-version*", KetosValue::from("Svit Lisp 1"));
+    install_guest_api(&interpreter, state, input, scripts, limits);
+    Ok(interpreter)
+}
+
+fn install_guest_api(
+    interpreter: &KetosInterpreter,
+    state: &RuntimeState,
+    input: &Value,
+    scripts: &BTreeMap<String, Script>,
+    limits: &Limits,
+) {
+    interpreter.scope().add_named_value(
+        "input",
+        persistent_to_ketos(input).expect("validated input"),
+    );
+
+    let value_limits = limits.clone();
+    install_guest_function(interpreter, "value-map", move |_, args| {
+        if args.len() % 2 != 0 {
+            return guest_error("value-map expects text/value pairs");
+        }
+        let mut values = BTreeMap::new();
+        for pair in args.chunks(2) {
+            let key = guest_string(&pair[0], "value-map key")?;
+            if values.contains_key(&key) {
+                return Err(KetosError::custom(GuestFailure::InvalidValue(format!(
+                    "duplicate map key: {key}"
+                ))));
+            }
+            values.insert(
+                key,
+                persistent_from_ketos(&pair[1], &value_limits).map_err(guest_from_svit)?,
+            );
+        }
+        let value = Value::Map(values);
+        value
+            .validate(&value_limits, false)
+            .map_err(guest_from_svit)?;
+        persistent_to_ketos(&value).map_err(guest_from_svit)
+    });
+
+    let array_limits = limits.clone();
+    install_guest_function(interpreter, "value-array", move |_, args| {
+        let value = Value::Array(
+            args.iter()
+                .map(|value| persistent_from_ketos(value, &array_limits))
+                .collect::<Result<Vec<_>>>()
+                .map_err(guest_from_svit)?,
+        );
+        value
+            .validate(&array_limits, false)
+            .map_err(guest_from_svit)?;
+        persistent_to_ketos(&value).map_err(guest_from_svit)
+    });
+
+    install_guest_function(interpreter, "value-null?", move |_, args| {
+        expect_arity(args, 1, "value-null?")?;
+        Ok(KetosValue::Bool(matches!(
+            &args[0],
+            KetosValue::Foreign(value)
+                if matches!(value.downcast_ref::<GuestPersistent>(), Some(GuestPersistent(Value::Null)))
+        )))
+    });
+
+    let get_limits = limits.clone();
+    install_guest_function(interpreter, "value-get", move |_, args| {
+        expect_arity(args, 2, "value-get")?;
+        let value = persistent_from_ketos(&args[0], &get_limits).map_err(guest_from_svit)?;
+        let path = guest_string(&args[1], "value-get path")?;
+        let found = read_value_path(&value, &path)
+            .map_err(guest_from_svit)?
+            .cloned()
+            .unwrap_or(Value::Null);
+        persistent_to_ketos(&found).map_err(guest_from_svit)
+    });
+
+    let memory_for_get = Arc::clone(&state.memory);
+    install_guest_function(interpreter, "memory-get", move |_, args| {
+        expect_arity(args, 1, "memory-get")?;
+        let path = guest_string(&args[0], "memory-get path")?;
+        let memory = memory_for_get.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        let found = read_value_path(&memory, &path)
+            .map_err(guest_from_svit)?
+            .cloned()
+            .unwrap_or(Value::Null);
+        persistent_to_ketos(&found).map_err(guest_from_svit)
+    });
+
+    let memory_for_set = Arc::clone(&state.memory);
+    let set_limits = limits.clone();
+    install_guest_function(interpreter, "memory-set!", move |_, args| {
+        expect_arity(args, 2, "memory-set!")?;
+        let path = guest_string(&args[0], "memory-set! path")?;
+        let value = persistent_from_ketos(&args[1], &set_limits).map_err(guest_from_svit)?;
+        value
+            .validate(&set_limits, false)
+            .map_err(guest_from_svit)?;
+        let mut memory = memory_for_set.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        set_value_path(&mut memory, &path, value).map_err(guest_from_svit)?;
+        memory
+            .validate(&set_limits, false)
+            .map_err(guest_from_svit)?;
+        Ok(KetosValue::Unit)
+    });
+
+    let memory_for_remove = Arc::clone(&state.memory);
+    install_guest_function(interpreter, "memory-remove!", move |_, args| {
+        expect_arity(args, 1, "memory-remove!")?;
+        let path = guest_string(&args[0], "memory-remove! path")?;
+        let mut memory = memory_for_remove.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        remove_value_path(&mut memory, &path).map_err(guest_from_svit)?;
+        Ok(KetosValue::Unit)
+    });
+
+    let script_names: Vec<Value> = scripts.keys().cloned().map(Value::String).collect();
+    install_guest_function(interpreter, "scripts-list", move |_, args| {
+        expect_arity(args, 0, "scripts-list")?;
+        persistent_to_ketos(&Value::Array(script_names.clone())).map_err(guest_from_svit)
+    });
 
     let readable_scripts = scripts.clone();
-    scripts_api
-        .set(
-            "read",
-            lua.create_function(move |lua, name: String| match readable_scripts.get(&name) {
-                Some(script) => {
-                    let record = lua.create_table()?;
-                    record.set("source", script.source())?;
-                    record.set("documentation", script.documentation())?;
-                    record.set_readonly(true);
-                    Ok(LuaValue::Table(record))
-                }
-                None => Ok(LuaValue::Nil),
-            })
-            .map_err(map_lua_error)?,
-        )
-        .map_err(map_lua_error)?;
+    install_guest_function(interpreter, "scripts-read", move |_, args| {
+        expect_arity(args, 1, "scripts-read")?;
+        let name = guest_string(&args[0], "scripts-read name")?;
+        let value = readable_scripts.get(&name).map_or(Value::Null, |script| {
+            Value::Map(BTreeMap::from([
+                (
+                    "documentation".into(),
+                    Value::String(script.documentation().into()),
+                ),
+                ("source".into(), Value::String(script.source().into())),
+            ]))
+        });
+        persistent_to_ketos(&value).map_err(guest_from_svit)
+    });
 
-    let staged_for_save = Arc::clone(&staged_scripts);
+    let staged_for_save = Arc::clone(&state.staged_scripts);
     let maximum_scripts = limits.max_staged_scripts;
     let maximum_script_bytes = limits.max_script_bytes;
-    scripts_api
-        .set(
-            "save",
-            lua.create_function(
-                move |_, (name, source, documentation): (String, String, Option<String>)| {
-                    if source.len() > maximum_script_bytes {
-                        return Err(mlua::Error::RuntimeError(
-                            "script source is too large".into(),
-                        ));
-                    }
-                    let mut staged = lock_lua(&staged_for_save)?;
-                    if staged.len() >= maximum_scripts {
-                        return Err(mlua::Error::RuntimeError(SCRIPT_LIMIT_SENTINEL.into()));
-                    }
-                    staged.push((
-                        name,
-                        Script::new(source).with_documentation(documentation.unwrap_or_default()),
-                    ));
-                    Ok(())
-                },
-            )
-            .map_err(map_lua_error)?,
-        )
-        .map_err(map_lua_error)?;
-    scripts_api.set_readonly(true);
-    environment
-        .set("scripts", scripts_api)
-        .map_err(map_lua_error)?;
+    install_guest_function(interpreter, "scripts-save!", move |_, args| {
+        if !(2..=3).contains(&args.len()) {
+            return guest_error("scripts-save! expects name, source, and optional documentation");
+        }
+        let name = guest_string(&args[0], "scripts-save! name")?;
+        let source = guest_string(&args[1], "scripts-save! source")?;
+        let documentation = args
+            .get(2)
+            .map(|value| guest_string(value, "scripts-save! documentation"))
+            .transpose()?
+            .unwrap_or_default();
+        if source.len() > maximum_script_bytes {
+            return Err(KetosError::custom(GuestFailure::Resource("script source")));
+        }
+        let mut staged = staged_for_save.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        if staged.len() >= maximum_scripts {
+            return Err(KetosError::custom(GuestFailure::Resource("staged scripts")));
+        }
+        staged.push((name, Script::new(source).with_documentation(documentation)));
+        Ok(KetosValue::Unit)
+    });
 
-    let log_api = lua.create_table().map_err(map_lua_error)?;
-    let logs_for_info = Arc::clone(&logs);
-    let tags_for_log = Arc::clone(&array_tags);
-    let limits_for_log = limits.clone();
+    let logs_for_info = Arc::clone(&state.logs);
+    let log_limits = limits.clone();
     let maximum_logs = limits.max_logs;
-    log_api
-        .set(
-            "info",
-            lua.create_function(move |_, (message, fields): (String, Option<LuaValue>)| {
-                let mut logs = lock_lua(&logs_for_info)?;
-                if logs.len() >= maximum_logs {
-                    return Err(mlua::Error::RuntimeError(LOG_LIMIT_SENTINEL.into()));
-                }
-                let fields = match fields {
-                    Some(fields) => {
-                        let tags = lock_lua(&tags_for_log)?;
-                        persistent_from_lua(fields, &limits_for_log, &tags)
-                            .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?
-                    }
-                    None => Value::Null,
-                };
-                logs.push(LogRecord { message, fields });
-                Ok(())
-            })
-            .map_err(map_lua_error)?,
-        )
-        .map_err(map_lua_error)?;
-    log_api.set_readonly(true);
-    environment.set("log", log_api).map_err(map_lua_error)?;
+    install_guest_function(interpreter, "log-info!", move |_, args| {
+        if !(1..=2).contains(&args.len()) {
+            return guest_error("log-info! expects a message and optional fields");
+        }
+        let message = guest_string(&args[0], "log-info! message")?;
+        let fields = args
+            .get(1)
+            .map(|value| persistent_from_ketos(value, &log_limits))
+            .transpose()
+            .map_err(guest_from_svit)?
+            .unwrap_or(Value::Null);
+        fields
+            .validate(&log_limits, false)
+            .map_err(guest_from_svit)?;
+        let mut logs = logs_for_info.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        if logs.len() >= maximum_logs {
+            return Err(KetosError::custom(GuestFailure::Resource("log records")));
+        }
+        logs.push(LogRecord { message, fields });
+        Ok(KetosValue::Unit)
+    });
 
-    let messages_for_send = Arc::clone(&messages);
-    let tags_for_send = Arc::clone(&array_tags);
-    let limits_for_send = limits.clone();
+    let messages_for_send = Arc::clone(&state.messages);
+    let send_limits = limits.clone();
     let maximum_messages = limits.max_messages;
-    environment
-        .set(
-            "send",
-            lua.create_function(move |_, (to, body): (String, LuaValue)| {
-                let to = ProcessId::new(to)
-                    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
-                let mut messages = lock_lua(&messages_for_send)?;
-                if messages.len() >= maximum_messages {
-                    return Err(mlua::Error::RuntimeError(MESSAGE_LIMIT_SENTINEL.into()));
-                }
-                let tags = lock_lua(&tags_for_send)?;
-                let body = persistent_from_lua(body, &limits_for_send, &tags)
-                    .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
-                messages.push(StagedMessage { to, body });
-                Ok(())
-            })
-            .map_err(map_lua_error)?,
-        )
-        .map_err(map_lua_error)?;
-
-    Ok(environment)
-}
-
-fn filtered_math(lua: &Lua, globals: &Table) -> Result<Table> {
-    let source: Table = globals.get("math").map_err(map_lua_error)?;
-    let result = lua.create_table().map_err(map_lua_error)?;
-    for pair in source.clone().pairs::<LuaValue, LuaValue>() {
-        let (key, value) = pair.map_err(map_lua_error)?;
-        let denied = matches!(&key, LuaValue::String(key) if matches!(key.to_str().ok().as_deref(), Some("random" | "randomseed")));
-        if !denied {
-            result.raw_set(key, value).map_err(map_lua_error)?;
+    install_guest_function(interpreter, "send!", move |_, args| {
+        expect_arity(args, 2, "send!")?;
+        let address = guest_string(&args[0], "send! address")?;
+        let to = ProcessId::new(address)
+            .map_err(|error| KetosError::custom(GuestFailure::Script(error.to_string())))?;
+        let body = persistent_from_ketos(&args[1], &send_limits).map_err(guest_from_svit)?;
+        body.validate(&send_limits, false)
+            .map_err(guest_from_svit)?;
+        let mut messages = messages_for_send.lock().map_err(|_| {
+            KetosError::custom(GuestFailure::Script("runtime state unavailable".into()))
+        })?;
+        if messages.len() >= maximum_messages {
+            return Err(KetosError::custom(GuestFailure::Resource(
+                "message intents",
+            )));
         }
-    }
-    result.set_readonly(true);
-    Ok(result)
+        messages.push(StagedMessage { to, body });
+        Ok(KetosValue::Unit)
+    });
 }
 
-fn lua_from_persistent(
-    lua: &Lua,
-    value: &Value,
-    readonly: bool,
-    array_tags: &Arc<Mutex<HashSet<usize>>>,
-) -> Result<LuaValue> {
+fn install_guest_function<F>(interpreter: &KetosInterpreter, name: &str, function: F)
+where
+    F: Any + Fn(&KetosContext, &mut [KetosValue]) -> std::result::Result<KetosValue, KetosError>,
+{
+    interpreter
+        .scope()
+        .add_value_with_name(name, |name| KetosValue::new_foreign_fn(name, function));
+}
+
+fn persistent_to_ketos(value: &Value) -> Result<KetosValue> {
     match value {
-        Value::Null => Ok(LuaValue::Nil),
-        Value::Bool(value) => Ok(LuaValue::Boolean(*value)),
-        Value::Integer(value) => Ok(LuaValue::Integer(*value)),
-        Value::Number(value) if value.is_finite() => Ok(LuaValue::Number(*value)),
+        Value::Bool(value) => Ok(KetosValue::Bool(*value)),
+        Value::Integer(value) => Ok(KetosValue::Integer(KetosInteger::from_i64(*value))),
+        Value::Number(value) if value.is_finite() => Ok(KetosValue::Float(*value)),
         Value::Number(_) => Err(Error::InvalidValue("numbers must be finite".into())),
-        Value::String(value) => lua
-            .create_string(value)
-            .map(LuaValue::String)
-            .map_err(map_lua_error),
-        Value::Array(values) => {
-            let table = lua.create_table().map_err(map_lua_error)?;
-            for (index, value) in values.iter().enumerate() {
-                table
-                    .raw_set(
-                        index + 1,
-                        lua_from_persistent(lua, value, readonly, array_tags)?,
-                    )
-                    .map_err(map_lua_error)?;
-            }
-            lock(array_tags)?.insert(table.to_pointer() as usize);
-            if readonly {
-                table.set_readonly(true);
-            }
-            Ok(LuaValue::Table(table))
-        }
-        Value::Map(values) => {
-            let table = lua.create_table().map_err(map_lua_error)?;
-            for (key, value) in values {
-                table
-                    .raw_set(
-                        key.as_str(),
-                        lua_from_persistent(lua, value, readonly, array_tags)?,
-                    )
-                    .map_err(map_lua_error)?;
-            }
-            if readonly {
-                table.set_readonly(true);
-            }
-            Ok(LuaValue::Table(table))
+        Value::String(value) => Ok(KetosValue::from(value.clone())),
+        Value::Null | Value::Array(_) | Value::Map(_) => {
+            Ok(KetosValue::new_foreign(GuestPersistent(value.clone())))
         }
         Value::Script(_) => Err(Error::InvalidValue(
-            "script records cannot be passed to Lua as data".into(),
+            "script records cannot be passed to Lisp as data".into(),
         )),
     }
 }
 
-fn persistent_from_lua(
-    value: LuaValue,
-    limits: &Limits,
-    array_tags: &HashSet<usize>,
-) -> Result<Value> {
-    let mut conversion = Conversion {
-        limits,
-        array_tags,
-        active_tables: HashSet::new(),
-        seen_tables: HashSet::new(),
-        entries: 0,
-        text_bytes: 0,
-    };
-    conversion.convert(value, 0)
-}
-
-struct Conversion<'a> {
-    limits: &'a Limits,
-    array_tags: &'a HashSet<usize>,
-    active_tables: HashSet<usize>,
-    seen_tables: HashSet<usize>,
-    entries: usize,
-    text_bytes: usize,
-}
-
-impl Conversion<'_> {
-    fn convert(&mut self, value: LuaValue, depth: usize) -> Result<Value> {
-        if depth > self.limits.max_value_depth {
-            return Err(Error::InvalidValue("maximum nesting depth exceeded".into()));
+fn persistent_from_ketos(value: &KetosValue, limits: &Limits) -> Result<Value> {
+    let result = match value {
+        KetosValue::Unit => Value::Null,
+        KetosValue::Bool(value) => Value::Bool(*value),
+        KetosValue::Float(value) if value.is_finite() => Value::Number(*value),
+        KetosValue::Float(_) => return Err(Error::InvalidValue("numbers must be finite".into())),
+        KetosValue::Integer(value) => {
+            Value::Integer(value.to_i64().ok_or_else(|| {
+                Error::InvalidValue("integer is outside signed 64-bit range".into())
+            })?)
         }
-        self.entries = self.entries.saturating_add(1);
-        if self.entries > self.limits.max_value_entries {
-            return Err(Error::InvalidValue("maximum value entries exceeded".into()));
-        }
-
-        match value {
-            LuaValue::Nil => Ok(Value::Null),
-            LuaValue::Boolean(value) => Ok(Value::Bool(value)),
-            LuaValue::Integer(value) => Ok(Value::Integer(value)),
-            LuaValue::Number(value) if value.is_finite() => Ok(Value::Number(value)),
-            LuaValue::Number(_) => Err(Error::InvalidValue("numbers must be finite".into())),
-            LuaValue::String(value) => {
-                let value = value
-                    .to_str()
-                    .map_err(|_| Error::InvalidValue("strings must be UTF-8".into()))?
-                    .to_string();
-                self.add_text(value.len())?;
-                Ok(Value::String(value))
-            }
-            LuaValue::Table(table) => self.convert_table(table, depth),
-            other => Err(Error::InvalidValue(format!(
-                "Lua {} values cannot be persisted",
-                other.type_name()
-            ))),
-        }
-    }
-
-    fn convert_table(&mut self, table: Table, depth: usize) -> Result<Value> {
-        let pointer = table.to_pointer() as usize;
-        if !self.seen_tables.insert(pointer) {
-            let kind = if self.active_tables.contains(&pointer) {
-                "cyclic"
-            } else {
-                "shared"
-            };
+        KetosValue::String(value) => Value::String(value.to_string()),
+        KetosValue::List(values) => Value::Array(
+            values
+                .iter()
+                .map(|value| persistent_from_ketos(value, limits))
+                .collect::<Result<Vec<_>>>()?,
+        ),
+        KetosValue::Foreign(value) => value
+            .downcast_ref::<GuestPersistent>()
+            .map(|value| value.0.clone())
+            .ok_or_else(|| Error::InvalidValue("foreign Lisp values cannot be persisted".into()))?,
+        other => {
             return Err(Error::InvalidValue(format!(
-                "{kind} table identity cannot be persisted"
+                "Lisp {} values cannot be persisted",
+                other.type_name()
             )));
         }
-        self.active_tables.insert(pointer);
+    };
+    result.validate(limits, false)?;
+    Ok(result)
+}
 
-        let mut integer_values = BTreeMap::<usize, LuaValue>::new();
-        let mut string_values = BTreeMap::<String, LuaValue>::new();
-        for pair in table.pairs::<LuaValue, LuaValue>() {
-            let (key, value) = pair.map_err(map_lua_error)?;
-            match key {
-                LuaValue::Integer(key) if key > 0 => {
-                    integer_values.insert(key as usize, value);
-                }
-                LuaValue::String(key) => {
-                    let key = key
-                        .to_str()
-                        .map_err(|_| Error::InvalidValue("map keys must be UTF-8".into()))?
-                        .to_string();
-                    self.add_text(key.len())?;
-                    string_values.insert(key, value);
-                }
-                _ => {
-                    return Err(Error::InvalidValue(
-                        "table keys must be text or contiguous positive integers".into(),
-                    ));
-                }
-            }
-        }
-
-        let tagged_array = self.array_tags.contains(&pointer);
-        let inferred_array = !integer_values.is_empty() && string_values.is_empty();
-        let result = if tagged_array || inferred_array {
-            if !string_values.is_empty()
-                || integer_values.keys().copied().ne(1..=integer_values.len())
-            {
-                return Err(Error::InvalidValue(
-                    "arrays must use contiguous integer keys starting at one".into(),
-                ));
-            }
-            Value::Array(
-                integer_values
-                    .into_values()
-                    .map(|value| self.convert(value, depth + 1))
-                    .collect::<Result<Vec<_>>>()?,
-            )
-        } else {
-            if !integer_values.is_empty() {
-                return Err(Error::InvalidValue(
-                    "tables cannot mix integer and text keys".into(),
-                ));
-            }
-            Value::Map(
-                string_values
-                    .into_iter()
-                    .map(|(key, value)| Ok((key, self.convert(value, depth + 1)?)))
-                    .collect::<Result<BTreeMap<_, _>>>()?,
-            )
-        };
-        self.active_tables.remove(&pointer);
-        Ok(result)
+fn read_value_path<'a>(value: &'a Value, path: &str) -> Result<Option<&'a Value>> {
+    if path.is_empty() || path == "/" {
+        return Ok(Some(value));
     }
-
-    fn add_text(&mut self, bytes: usize) -> Result<()> {
-        self.text_bytes = self.text_bytes.saturating_add(bytes);
-        if self.text_bytes > self.limits.max_text_bytes {
-            return Err(Error::InvalidValue("maximum text bytes exceeded".into()));
+    let path = path
+        .strip_prefix('/')
+        .ok_or_else(|| Error::InvalidPath(path.into()))?;
+    let mut current = value;
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(Error::InvalidPath(path.into()));
         }
-        Ok(())
+        current = match current {
+            Value::Map(values) => match values.get(segment) {
+                Some(value) => value,
+                None => return Ok(None),
+            },
+            Value::Array(values) => {
+                let index = segment
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidPath(path.into()))?;
+                match values.get(index) {
+                    Some(value) => value,
+                    None => return Ok(None),
+                }
+            }
+            _ => return Err(Error::InvalidPath(path.into())),
+        };
+    }
+    Ok(Some(current))
+}
+
+fn set_value_path(root: &mut Value, path: &str, value: Value) -> Result<()> {
+    let segments = path_segments(path)?;
+    if segments.is_empty() {
+        *root = value;
+        return Ok(());
+    }
+    let (parent, leaf) = parent_at_path(root, &segments)?;
+    match parent {
+        Value::Map(values) => {
+            values.insert(leaf, value);
+            Ok(())
+        }
+        Value::Array(values) => {
+            let index = leaf
+                .parse::<usize>()
+                .map_err(|_| Error::InvalidPath(path.into()))?;
+            let target = values
+                .get_mut(index)
+                .ok_or_else(|| Error::InvalidPath(path.into()))?;
+            *target = value;
+            Ok(())
+        }
+        _ => Err(Error::InvalidPath(path.into())),
     }
 }
 
-fn map_lua_error(error: mlua::Error) -> Error {
+fn remove_value_path(root: &mut Value, path: &str) -> Result<()> {
+    let segments = path_segments(path)?;
+    if segments.is_empty() {
+        return Err(Error::InvalidPath("cannot remove the memory root".into()));
+    }
+    let (parent, leaf) = parent_at_path(root, &segments)?;
+    match parent {
+        Value::Map(values) => {
+            values.remove(&leaf);
+            Ok(())
+        }
+        Value::Array(values) => {
+            let index = leaf
+                .parse::<usize>()
+                .map_err(|_| Error::InvalidPath(path.into()))?;
+            if index >= values.len() {
+                return Err(Error::InvalidPath(path.into()));
+            }
+            values.remove(index);
+            Ok(())
+        }
+        _ => Err(Error::InvalidPath(path.into())),
+    }
+}
+
+fn path_segments(path: &str) -> Result<Vec<&str>> {
+    if path.is_empty() || path == "/" {
+        return Ok(Vec::new());
+    }
+    let path = path
+        .strip_prefix('/')
+        .ok_or_else(|| Error::InvalidPath(path.into()))?;
+    let segments = path.split('/').collect::<Vec<_>>();
+    if segments
+        .iter()
+        .any(|segment| segment.is_empty() || matches!(*segment, "." | ".."))
+    {
+        return Err(Error::InvalidPath(path.into()));
+    }
+    Ok(segments)
+}
+
+fn parent_at_path<'a>(root: &'a mut Value, segments: &[&str]) -> Result<(&'a mut Value, String)> {
+    let (leaf, parents) = segments
+        .split_last()
+        .ok_or_else(|| Error::InvalidPath("missing path segment".into()))?;
+    let mut current = root;
+    for segment in parents {
+        current = match current {
+            Value::Map(values) => values
+                .get_mut(*segment)
+                .ok_or_else(|| Error::InvalidPath(segments.join("/")))?,
+            Value::Array(values) => {
+                let index = segment
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidPath(segments.join("/")))?;
+                values
+                    .get_mut(index)
+                    .ok_or_else(|| Error::InvalidPath(segments.join("/")))?
+            }
+            _ => return Err(Error::InvalidPath(segments.join("/"))),
+        };
+    }
+    Ok((current, (*leaf).to_owned()))
+}
+
+fn guest_string(value: &KetosValue, context: &str) -> std::result::Result<String, KetosError> {
+    match value {
+        KetosValue::String(value) => Ok(value.to_string()),
+        _ => guest_error(format!("{context} must be text")),
+    }
+}
+
+fn expect_arity(
+    args: &[KetosValue],
+    expected: usize,
+    name: &str,
+) -> std::result::Result<(), KetosError> {
+    if args.len() == expected {
+        Ok(())
+    } else {
+        guest_error(format!("{name} expects {expected} arguments"))
+    }
+}
+
+fn guest_error<T>(message: impl Into<String>) -> std::result::Result<T, KetosError> {
+    Err(KetosError::custom(GuestFailure::Script(message.into())))
+}
+
+fn guest_from_svit(error: Error) -> KetosError {
+    let failure = match error {
+        Error::InvalidPath(message) => GuestFailure::InvalidPath(message),
+        Error::InvalidValue(message) => GuestFailure::InvalidValue(message),
+        Error::ResourceLimitExceeded(resource) => GuestFailure::Resource(resource),
+        other => GuestFailure::Script(other.to_string()),
+    };
+    KetosError::custom(failure)
+}
+
+fn map_ketos_error(interpreter: &KetosInterpreter, error: KetosError) -> Error {
     match error {
-        mlua::Error::MemoryError(_) => Error::ResourceLimitExceeded("guest heap"),
-        error if error.to_string().contains(EXECUTION_LIMIT_SENTINEL) => {
+        KetosError::RestrictError(RestrictError::ExecutionTimeExceeded) => {
             Error::ExecutionLimitExceeded
         }
-        error if error.to_string().contains(LOG_LIMIT_SENTINEL) => {
-            Error::ResourceLimitExceeded("log records")
+        KetosError::RestrictError(RestrictError::MemoryLimitExceeded) => {
+            Error::ResourceLimitExceeded("guest memory")
         }
-        error if error.to_string().contains(MESSAGE_LIMIT_SENTINEL) => {
-            Error::ResourceLimitExceeded("message intents")
+        KetosError::RestrictError(RestrictError::CallStackExceeded) => {
+            Error::ResourceLimitExceeded("call stack")
         }
-        error if error.to_string().contains(SCRIPT_LIMIT_SENTINEL) => {
-            Error::ResourceLimitExceeded("staged scripts")
+        KetosError::RestrictError(RestrictError::ValueStackExceeded) => {
+            Error::ResourceLimitExceeded("value stack")
         }
-        error => Error::Script(sanitize_diagnostic(error)),
+        KetosError::RestrictError(RestrictError::NamespaceSizeExceeded) => {
+            Error::ResourceLimitExceeded("guest namespace")
+        }
+        KetosError::RestrictError(RestrictError::IntegerLimitExceeded) => {
+            Error::ResourceLimitExceeded("integer bits")
+        }
+        KetosError::RestrictError(RestrictError::MaxSyntaxNestingExceeded) => {
+            Error::ResourceLimitExceeded("syntax depth")
+        }
+        KetosError::Custom(error) => match error.downcast_ref::<GuestFailure>() {
+            Some(GuestFailure::InvalidPath(message)) => Error::InvalidPath(message.clone()),
+            Some(GuestFailure::InvalidValue(message)) => Error::InvalidValue(message.clone()),
+            Some(GuestFailure::Resource(resource)) => Error::ResourceLimitExceeded(resource),
+            Some(GuestFailure::Script(message)) => Error::Script(sanitize_diagnostic(message)),
+            None => Error::Script("guest function failed".into()),
+        },
+        error => Error::Script(sanitize_diagnostic(interpreter.format_error(&error))),
+    }
+}
+
+fn add_script_path(path: &str, error: Error) -> Error {
+    match error {
+        Error::Script(message) => Error::Script(sanitize_diagnostic(format!("{path}: {message}"))),
+        other => other,
     }
 }
 
@@ -1113,12 +1240,6 @@ fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
         .map_err(|_| Error::Script("runtime buffer lock poisoned".into()))
 }
 
-fn lock_lua<T>(value: &Mutex<T>) -> mlua::Result<MutexGuard<'_, T>> {
-    value
-        .lock()
-        .map_err(|_| mlua::Error::RuntimeError("runtime buffer lock poisoned".into()))
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -1127,11 +1248,12 @@ mod tests {
     use crate::value;
 
     const COUNTER: &str = r#"
-        function main(input)
-            memory.count = (memory.count or 0) + input.by
-            log.info("counted", { count = memory.count })
-            return { count = memory.count }
-        end
+        (define (main input)
+          (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+            (do
+              (memory-set! "/count" count)
+              (log-info! "counted" (value-map "count" count))
+              (value-map "count" count))))
     "#;
 
     #[test]
@@ -1166,11 +1288,12 @@ mod tests {
             .save_script(
                 "payment",
                 r#"
-                function main(input)
-                    memory.balance = memory.balance - input.amount
-                    send("svit://local/test/merchant", { amount = input.amount })
-                    error("declined")
-                end
+                (define (main input)
+                  (let ((amount (value-get input "/amount")))
+                    (do
+                      (memory-set! "/balance" (- (memory-get "/balance") amount))
+                      (send! "svit://local/test/merchant" (value-map "amount" amount))
+                      (panic "declined"))))
                 "#,
             )
             .unwrap();
@@ -1215,9 +1338,9 @@ mod tests {
 
     #[test]
     // THREAT[TM-DOS-001]
-    fn infinite_loop_exhausts_ticks_without_committing() {
+    fn infinite_loop_exhausts_execution_time_without_committing() {
         let limits = Limits {
-            max_interrupt_ticks: 10,
+            max_execution_millis: 1,
             ..Limits::default()
         };
         let mut process = Process::builder("svit://local/test/limits")
@@ -1229,7 +1352,11 @@ mod tests {
         process
             .save_script(
                 "loop",
-                "function main() memory.started = true while true do end end",
+                r#"
+                (define (spin) (spin))
+                (define (main input)
+                  (do (memory-set! "/started" true) (spin)))
+                "#,
             )
             .unwrap();
         let version = process.version();
@@ -1245,30 +1372,12 @@ mod tests {
 
     #[test]
     // THREAT[TM-ESC-001]
-    fn denied_ambient_libraries_are_not_in_the_script_environment() {
+    fn denied_ambient_modules_are_not_in_the_script_environment() {
         let mut process = Process::new("svit://local/test/sandbox").unwrap();
-        process
-            .save_script(
-                "inspect",
-                r#"
-                function main()
-                    return {
-                        os = type(os), io = type(io), debug = type(debug),
-                        package = type(package), require = type(require),
-                        random = type(math.random)
-                    }
-                end
-                "#,
-            )
-            .unwrap();
-        let activation = process.run("inspect", Value::Null).unwrap();
-        assert_eq!(
-            activation.output,
-            value!({
-                "debug": "nil", "io": "nil", "os": "nil",
-                "package": "nil", "random": "nil", "require": "nil"
-            })
-        );
+        assert!(matches!(
+            process.save_script("inspect", "(use random) (define (main input) true)"),
+            Err(Error::Script(_))
+        ));
     }
 
     #[test]
@@ -1277,16 +1386,15 @@ mod tests {
         process
             .save_script(
                 "teacher",
-                r#"
-                function main()
-                    scripts.save("greeter", [[
-                        function main(input)
-                            return "Hello, " .. input.name
-                        end
-                    ]], "Greets a person")
-                    return scripts.list()
-                end
-                "#,
+                r##"
+                (define (main input)
+                  (do
+                    (scripts-save!
+                      "greeter"
+                      "(define (main input) (concat \"Hello, \" (value-get input \"/name\")))"
+                      "Greets a person")
+                    (scripts-list)))
+                "##,
             )
             .unwrap();
 
@@ -1324,7 +1432,10 @@ mod tests {
             .build()
             .unwrap();
         process
-            .save_script("mutate", "function main() memory.changed = true end")
+            .save_script(
+                "mutate",
+                "(define (main input) (memory-set! \"/changed\" true))",
+            )
             .unwrap();
 
         assert!(matches!(

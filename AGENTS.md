@@ -19,7 +19,7 @@ activation, memory tree, script library, outbox, snapshot, and fork.
 
 The first slice is deliberately narrow:
 
-1. One isolated process owns one serializable memory tree and named Lua scripts.
+1. One isolated process owns one serializable memory tree and named Lisp scripts.
 2. One activation runs a named script against a transactional working copy.
 3. Success commits memory, scripts, and buffered message intents atomically.
 4. Any syntax, runtime, conversion, limit, or validation failure rolls back all
@@ -65,7 +65,7 @@ operational fact changes. Follow `knowledge/knowledge-contract.md` and run
 | --- | --- |
 | `foundations/architecture.md` | Trusted core and module boundaries |
 | `foundations/process-model.md` | Process, activation, commit, snapshot, and fork semantics |
-| `runtimes/lua-runtime.md` | Versioned Svit Lua guest contract |
+| `runtimes/lisp-runtime.md` | Versioned Svit Lisp guest contract |
 | `security/threat-model.md` | Assets, trust boundaries, stable threat IDs, controls |
 | `security/security-testing.md` | Adversarial and invariant test requirements |
 | `operations/testing.md` | Test and example organization |
@@ -122,7 +122,7 @@ At minimum, test:
 - snapshot round trips preserve canonical state and hash;
 - replay from the same snapshot and input is deterministic;
 - fork mutations do not affect parent or siblings;
-- separate processes do not share Lua globals;
+- separate processes do not share Lisp globals;
 - denied libraries and dynamic loading remain unavailable;
 - every configured resource limit fails closed.
 

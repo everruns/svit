@@ -30,7 +30,7 @@ Rust caller
 Process ----> transaction working copy ----> commit or rollback
     |                    |
     |                    v
-    |               restricted Lua VM
+    |               restricted Lisp VM
     |
     +----> snapshot / restore / fork
     +----> buffered message intents (not delivery)
@@ -38,7 +38,7 @@ Process ----> transaction working copy ----> commit or rollback
 
 The trusted core owns validation, resource accounting, transaction boundaries,
 canonical serialization, process identity, and state isolation. The embedded
-Lua interpreter is treated as a component inside that boundary, not as proof of
+Ketos interpreter is treated as a component inside that boundary, not as proof of
 the boundary.
 
 ## Initial module responsibilities
@@ -49,7 +49,7 @@ the boundary.
 | Process | Address, version, committed root, limits, and lifecycle operations |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
-| Lua adapter | Converts values and exposes only the versioned Svit Lua surface |
+| Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 
@@ -80,10 +80,10 @@ Wasm/OS isolation are outside this slice. See
 
 ## Alternatives considered
 
-- A single long-lived Lua global table was rejected because it couples durable
+- A single long-lived Lisp environment was rejected because it couples durable
   state to interpreter internals and makes rollback, serialization, and tenant
   isolation harder to state.
-- Serializing Lua stacks, closures, coroutines, or userdata was rejected. Only
+- Serializing Lisp stacks, closures, quotations, or foreign values was rejected. Only
   committed Svit values and script source cross activation boundaries.
 - Executing external effects inside the transaction was rejected because a
   rollback cannot undo them. The slice records message intents only.

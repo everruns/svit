@@ -1,16 +1,18 @@
 use svit::{Process, Value, value};
 
 const SCORE_EVIDENCE: &str = r#"
-function main(input)
-    local score = 0
-    for _, item in ipairs(memory.evidence) do
-        score = score
-            + item.impact * input.impact_weight
-            - item.cost * input.cost_weight
-    end
-    memory.analysis = { lens = input.lens, score = score }
-    return memory.analysis
-end
+(define (main input)
+  (let ((impact-weight (value-get input "/impact_weight"))
+        (cost-weight (value-get input "/cost_weight"))
+        (evidence (memory-get "/evidence")))
+    (let ((score (+ (- (* (value-get evidence "/0/impact") impact-weight)
+                        (* (value-get evidence "/0/cost") cost-weight))
+                    (- (* (value-get evidence "/1/impact") impact-weight)
+                        (* (value-get evidence "/1/cost") cost-weight)))))
+      (let ((analysis (value-map "lens" (value-get input "/lens") "score" score)))
+        (do
+          (memory-set! "/analysis" analysis)
+          analysis)))))
 "#;
 
 fn main() -> svit::Result<()> {

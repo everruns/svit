@@ -1,18 +1,14 @@
 use svit::{Process, Value, value};
 
-const TEACHER: &str = r#"
-function main()
-    scripts.save("greeter", [[
-function main(input)
-    return {
-        greeting = "Hello, " .. input.name .. "!",
-        library = scripts.list(),
-    }
-end
-]], "Greets a person and reports its discoverable script library")
-    return "greeter saved"
-end
-"#;
+const TEACHER: &str = r##"
+(define (main input)
+  (do
+    (scripts-save!
+      "greeter"
+      "(define (main input) (value-map \"greeting\" (concat \"Hello, \" (value-get input \"/name\") \"!\") \"library\" (scripts-list)))"
+      "Greets a person and reports its discoverable script library")
+    "greeter saved"))
+"##;
 
 fn main() -> svit::Result<()> {
     let mut process = Process::new("svit://local/examples/self-authoring")?;

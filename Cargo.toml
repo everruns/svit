@@ -12,11 +12,11 @@ license = "MIT"
 authors = ["Mykhailo Chalyi <mike@chaliy.name>", "Everruns"]
 repository = "https://github.com/everruns/svit"
 description = "In-memory agent process runtime"
-keywords = ["agent", "runtime", "lua", "sandbox", "memory"]
+keywords = ["agent", "runtime", "lisp", "sandbox", "memory"]
 categories = ["development-tools", "virtualization"]
 
 [workspace.dependencies]
-mlua = { version = "0.12.0", features = ["luau", "vendored"] }
+ketos = "0.12.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"

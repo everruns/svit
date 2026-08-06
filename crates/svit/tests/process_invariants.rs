@@ -16,11 +16,11 @@ fn invalid_staged_script_rolls_back_memory_scripts_outbox_and_version() {
         .save_script(
             "teacher",
             r#"
-            function main()
-                memory.changed = true
-                send("svit://local/tests/recipient", { accepted = true })
-                scripts.save("broken", "function main(")
-            end
+            (define (main input)
+              (do
+                (memory-set! "/changed" true)
+                (send! "svit://local/tests/recipient" (value-map "accepted" true))
+                (scripts-save! "broken" "(define (main input)")))
             "#,
         )
         .unwrap();
@@ -37,69 +37,118 @@ fn invalid_staged_script_rolls_back_memory_scripts_outbox_and_version() {
 
 #[test]
 // THREAT[TM-ESC-002] THREAT[TM-EFF-001]
-fn cyclic_and_shared_guest_tables_are_rejected_atomically() {
-    for (name, source) in [
-        (
-            "cycle",
-            "function main() memory.node = {}; memory.node.self = memory.node end",
-        ),
-        (
-            "alias",
-            r#"
-            function main()
-                local shared = { value = 1 }
-                memory.left = shared
-                memory.right = shared
-            end
-            "#,
-        ),
-    ] {
-        let mut process = Process::new(format!("svit://local/tests/{name}")).unwrap();
-        process.save_script(name, source).unwrap();
-        let before = unchanged(&process);
+fn guest_function_values_are_rejected_atomically() {
+    let mut process = Process::new("svit://local/tests/function-value").unwrap();
+    process
+        .save_script(
+            "function-value",
+            "(define (main input) (memory-set! \"/bad\" main))",
+        )
+        .unwrap();
+    let before = unchanged(&process);
 
-        assert!(matches!(
-            process.run(name, Value::Null),
-            Err(Error::InvalidValue(_))
-        ));
-        assert_eq!(process.snapshot().unwrap(), before);
-    }
+    assert!(matches!(
+        process.run("function-value", Value::Null),
+        Err(Error::InvalidValue(_))
+    ));
+    assert_eq!(process.snapshot().unwrap(), before);
 }
 
 #[test]
 // THREAT[TM-DOS-002] THREAT[TM-EFF-001]
-fn guest_heap_limit_fails_closed() {
+fn guest_memory_limit_fails_closed() {
     let limits = Limits {
-        max_heap_bytes: 128 * 1024,
+        max_guest_memory: 128,
         ..Limits::default()
     };
-    let mut process = Process::builder("svit://local/tests/heap")
+    let mut process = Process::builder("svit://local/tests/guest-memory")
         .unwrap()
         .limits(limits)
         .build()
         .unwrap();
+    let items = std::iter::repeat_n("\"xxxxxxxx\"", 256)
+        .collect::<Vec<_>>()
+        .join(" ");
     process
         .save_script(
             "allocate",
-            r#"
-            function main()
-                memory.large = string.rep("x", 1024 * 1024)
-            end
-            "#,
+            format!("(define (main input) (value-array {items}))"),
         )
         .unwrap();
     let before = unchanged(&process);
 
     assert!(matches!(
         process.run("allocate", Value::Null),
-        Err(Error::ResourceLimitExceeded("guest heap"))
+        Err(Error::ResourceLimitExceeded("guest memory"))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
 }
 
 #[test]
+// THREAT[TM-DOS-001] THREAT[TM-DOS-003] THREAT[TM-EFF-001]
+fn ketos_activation_limits_fail_without_committing() {
+    let cases = [
+        (
+            "call-stack",
+            Limits {
+                max_call_stack: 8,
+                ..Limits::default()
+            },
+            r#"(define (descend n)
+                 (if (= n 0) 0 (+ 1 (descend (- n 1)))))
+               (define (main input)
+                 (do (memory-set! "/changed" true) (descend 100)))"#
+                .to_owned(),
+            "call stack",
+        ),
+        (
+            "value-stack",
+            Limits {
+                max_value_stack: 16,
+                ..Limits::default()
+            },
+            format!(
+                "(define (main input) (do (memory-set! \"/changed\" true) (value-array {})))",
+                std::iter::repeat_n("1", 64).collect::<Vec<_>>().join(" ")
+            ),
+            "value stack",
+        ),
+        (
+            "namespace",
+            Limits {
+                max_namespace_entries: 16,
+                ..Limits::default()
+            },
+            r#"(define a 1) (define b 2) (define c 3) (define d 4)
+               (define e 5) (define f 6) (define g 7) (define h 8)
+               (define (main input)
+                 (do (memory-set! "/changed" true) true))"#
+                .to_owned(),
+            "guest namespace",
+        ),
+    ];
+
+    for (name, limits, source, expected_limit) in cases {
+        let mut process = Process::builder(format!("svit://local/tests/{name}"))
+            .unwrap()
+            .limits(limits)
+            .memory(value!({"changed": false}))
+            .build()
+            .unwrap();
+        process.save_script("exercise", source).unwrap();
+        let before = unchanged(&process);
+
+        assert!(matches!(
+            process.run("exercise", Value::Null),
+            Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
+        ));
+        assert_eq!(process.snapshot().unwrap(), before);
+    }
+}
+
+#[test]
 // THREAT[TM-SNAP-001]
-fn restore_rejects_unknown_format_tampering_and_trailing_data() {
+fn restore_rejects_lua_format_unknown_format_tampering_and_trailing_data() {
     let process = Process::builder("svit://local/tests/snapshot")
         .unwrap()
         .memory(value!({"count": 1}))
@@ -107,9 +156,11 @@ fn restore_rejects_unknown_format_tampering_and_trailing_data() {
         .unwrap();
     let snapshot = process.snapshot().unwrap();
 
-    let mut unknown: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
-    unknown["format"] = serde_json::json!(999);
-    assert!(Process::restore(&serde_json::to_vec(&unknown).unwrap()).is_err());
+    for format in [1, 999] {
+        let mut unsupported: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
+        unsupported["format"] = serde_json::json!(format);
+        assert!(Process::restore(&serde_json::to_vec(&unsupported).unwrap()).is_err());
+    }
 
     let mut tampered: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
     tampered["root"]["value"]["memory"]["value"]["count"]["value"] = serde_json::json!(2);
@@ -136,12 +187,13 @@ fn replay_from_the_same_snapshot_is_deterministic() {
         .save_script(
             "add",
             r#"
-            function main(input)
-                memory.total = memory.total + input.amount
-                log.info("added", { total = memory.total })
-                send("svit://local/tests/sink", { total = memory.total })
-                return memory.total
-            end
+            (define (main input)
+              (let ((total (+ (memory-get "/total") (value-get input "/amount"))))
+                (do
+                  (memory-set! "/total" total)
+                  (log-info! "added" (value-map "total" total))
+                  (send! "svit://local/tests/sink" (value-map "total" total))
+                  total)))
             "#,
         )
         .unwrap();
@@ -161,21 +213,24 @@ fn replay_from_the_same_snapshot_is_deterministic() {
 
 #[test]
 // THREAT[TM-ISO-001]
-fn lua_globals_do_not_cross_activation_boundaries() {
+fn lisp_globals_do_not_cross_activation_boundaries() {
     let mut process = Process::new("svit://local/tests/globals").unwrap();
     process
         .save_script(
             "write",
-            "rogue = 'visible'; function main() return true end",
+            "(define rogue \"write\") (define (main input) rogue)",
         )
         .unwrap();
     process
-        .save_script("read", "function main() return type(rogue) end")
+        .save_script(
+            "read",
+            "(define rogue \"read\") (define (main input) rogue)",
+        )
         .unwrap();
 
     process.run("write", Value::Null).unwrap();
     let observed = process.run("read", Value::Null).unwrap();
-    assert_eq!(observed.output, Value::String("nil".into()));
+    assert_eq!(observed.output, Value::String("read".into()));
 }
 
 #[test]
@@ -190,10 +245,11 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
         .save_script(
             "emit",
             r#"
-            function main(input)
-                memory.value = input.value
-                send("svit://local/tests/sink", { value = input.value })
-            end
+            (define (main input)
+              (let ((value (value-get input "/value")))
+                (do
+                  (memory-set! "/value" value)
+                  (send! "svit://local/tests/sink" (value-map "value" value)))))
             "#,
         )
         .unwrap();
@@ -220,13 +276,17 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
 // THREAT[TM-INF-001]
 fn diagnostics_are_capped_and_use_virtual_source_paths() {
     let mut process = Process::new("svit://local/tests/diagnostic").unwrap();
+    let message = "x".repeat(4096);
     process
-        .save_script("fail", "function main() error(string.rep('x', 4096)) end")
+        .save_script(
+            "fail",
+            format!("(define (main input) (panic \"{message}\"))"),
+        )
         .unwrap();
 
     let diagnostic = process.run("fail", Value::Null).unwrap_err().to_string();
     assert!(diagnostic.len() <= 1100);
-    assert!(diagnostic.contains("/lib/fail.lua"));
+    assert!(diagnostic.contains("/lib/fail.ket"));
     assert!(!diagnostic.contains(env!("CARGO_MANIFEST_DIR")));
     assert!(!diagnostic.contains("backtrace"));
 }
@@ -255,7 +315,7 @@ fn buffered_resource_limits_fail_without_committing() {
                 max_logs: 0,
                 ..Limits::default()
             },
-            "function main() memory.changed = true log.info('x') end",
+            "(define (main input) (do (memory-set! \"/changed\" true) (log-info! \"x\")))",
             "log records",
         ),
         (
@@ -264,10 +324,10 @@ fn buffered_resource_limits_fail_without_committing() {
                 max_messages: 0,
                 ..Limits::default()
             },
-            r#"function main()
-                memory.changed = true
-                send("svit://local/tests/sink", {})
-            end"#,
+            r#"(define (main input)
+                (do
+                  (memory-set! "/changed" true)
+                  (send! "svit://local/tests/sink" (value-map))))"#,
             "message intents",
         ),
         (
@@ -276,10 +336,10 @@ fn buffered_resource_limits_fail_without_committing() {
                 max_staged_scripts: 0,
                 ..Limits::default()
             },
-            r#"function main()
-                memory.changed = true
-                scripts.save("child", "function main() end")
-            end"#,
+            r#"(define (main input)
+                (do
+                  (memory-set! "/changed" true)
+                  (scripts-save! "child" "(define (main input) ())")))"#,
             "staged scripts",
         ),
     ];
@@ -331,6 +391,19 @@ fn persistent_value_and_script_limits_fail_at_the_host_boundary() {
         Err(Error::InvalidValue(_))
     ));
 
+    let depth_limits = Limits {
+        max_value_depth: 2,
+        ..Limits::default()
+    };
+    assert!(matches!(
+        Process::builder("svit://local/tests/depth")
+            .unwrap()
+            .limits(depth_limits)
+            .memory(value!({"a": {"b": {"c": true}}}))
+            .build(),
+        Err(Error::InvalidValue(_))
+    ));
+
     let script_limits = Limits {
         max_script_bytes: 8,
         ..Limits::default()
@@ -341,20 +414,60 @@ fn persistent_value_and_script_limits_fail_at_the_host_boundary() {
         .build()
         .unwrap();
     assert!(matches!(
-        process.save_script("large", "function main() end"),
+        process.save_script("large", "(define (main input) ())"),
         Err(Error::ResourceLimitExceeded("script source"))
     ));
     assert_eq!(process.version(), 0);
 }
 
 #[test]
+// THREAT[TM-DOS-003]
+fn ketos_parse_limits_fail_at_the_script_boundary() {
+    let cases = [
+        (
+            "syntax-depth",
+            Limits {
+                max_syntax_depth: 4,
+                ..Limits::default()
+            },
+            "(define (main input) ((((((identity true)))))))",
+            "syntax depth",
+        ),
+        (
+            "integer-bits",
+            Limits {
+                max_integer_bits: 8,
+                ..Limits::default()
+            },
+            "(define (main input) 65536)",
+            "integer bits",
+        ),
+    ];
+
+    for (name, limits, source, expected_limit) in cases {
+        let mut process = Process::builder(format!("svit://local/tests/{name}"))
+            .unwrap()
+            .limits(limits)
+            .build()
+            .unwrap();
+
+        assert!(matches!(
+            process.save_script("rejected", source),
+            Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
+        ));
+        assert_eq!(process.version(), 0);
+        assert!(process.script("rejected").is_none());
+    }
+}
+
+#[test]
 // THREAT[TM-ESC-001] THREAT[TM-EFF-001]
-fn activation_input_is_immutable() {
+fn activation_input_has_no_mutation_primitive() {
     let mut process = Process::new("svit://local/tests/input").unwrap();
     process
         .save_script(
             "mutate_input",
-            "function main(input) input.value = 2 memory.changed = true end",
+            "(define (main input) (value-set! input \"/value\" 2))",
         )
         .unwrap();
     let before = unchanged(&process);

@@ -1,17 +1,16 @@
 use svit::{Error, Process, Value, value};
 
 const PAYMENT: &str = r#"
-function main(input)
-    memory.balance = memory.balance - input.amount
-    send("svit://local/examples/merchant", {
-        kind = "payment",
-        amount = input.amount,
-    })
-    if input.fail then
-        error("payment declined")
-    end
-    return memory.balance
-end
+(define (main input)
+  (let ((amount (value-get input "/amount"))
+        (balance (- (memory-get "/balance") (value-get input "/amount"))))
+    (do
+      (memory-set! "/balance" balance)
+      (send! "svit://local/examples/merchant"
+             (value-map "kind" "payment" "amount" amount))
+      (if (value-get input "/fail")
+          (panic "payment declined")
+          balance))))
 "#;
 
 fn main() -> svit::Result<()> {

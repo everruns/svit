@@ -23,7 +23,7 @@ Required for the initial vertical slice.
 3. Property tests generate nested values and assert conversion, snapshot round
    trips, and fork isolation invariants.
 4. Fuzz targets feed arbitrary bytes to snapshot decoding and arbitrary guest
-   tables to conversion boundaries where practical.
+   Lisp values to conversion boundaries where practical.
 5. Outer-process tests cover hangs or memory failures that cannot be contained
    reliably inside the test process.
 
@@ -31,8 +31,8 @@ Required for the initial vertical slice.
 
 - `TM-EFF-001`: syntax, runtime, conversion, invalid staged script, memory
   limit, execution limit, and panic failures preserve the full committed root.
-- `TM-ESC-001`: `os`, `io`, `debug`, package loaders, FFI, and representative
-  dynamic-load aliases are absent.
+- `TM-ESC-001`: module loading fails closed, I/O is discarded, and no host
+  filesystem, network, environment, process, clock, or randomness function is installed.
 - `TM-ISO-001`: globals and memory never cross activation or process identity.
 - `TM-FORK-001`: parent and sibling hashes remain unchanged after child writes.
 - `TM-SNAP-001`: truncation, unknown versions, excessive nesting, oversized
