@@ -13,7 +13,7 @@ fn main() -> svit::Result<()> {
     };
     let mut bounded = Process::builder("svit://local/examples/bounded-loop")?
         .limits(limits)
-        .memory(value!({"started": false}))
+        .memory("started", value!(false))
         .build()?;
     bounded.save_script(
         "loop",
@@ -24,10 +24,10 @@ fn main() -> svit::Result<()> {
     )?;
     let version_before = bounded.version();
 
-    let failure = bounded.run("loop", Value::Null);
+    let failure = bounded.exec("loop", Value::Null);
     assert!(matches!(failure, Err(Error::ExecutionLimitExceeded)));
     assert_eq!(bounded.version(), version_before);
-    assert_eq!(bounded.read("/memory/started")?, Some(&Value::Bool(false)));
+    assert_eq!(bounded.get("/memory/started")?, Some(&Value::Bool(false)));
 
     println!("sandbox_limits ambient=denied loop=stopped state=unchanged");
     Ok(())

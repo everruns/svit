@@ -8,18 +8,18 @@
 //! rejected requests leave committed state unchanged.
 //!
 //! ```
-//! use svit::{Process, value};
+//! use svit::{Process, Script, value};
 //!
 //! let mut process = Process::builder("svit://local/example/counter")?
-//!     .memory(value!({"count": 0}))
+//!     .memory("count", value!(0))
+//!     .script("counter", Script::new(r#"
+//!         (define (main input)
+//!           (let ((count (+ (memory-get "/count") (value-get input "/by"))))
+//!             (do (memory-set! "/count" count) count)))
+//!     "#))
 //!     .build()?;
-//! process.save_script("counter", r#"
-//!     (define (main input)
-//!       (let ((count (+ (memory-get "/count") (value-get input "/by"))))
-//!         (do (memory-set! "/count" count) count)))
-//! "#)?;
 //!
-//! let activation = process.run("counter", value!({"by": 2}))?;
+//! let activation = process.exec("counter", value!({"by": 2}))?;
 //! assert_eq!(activation.output, value!(2));
 //! # Ok::<(), svit::Error>(())
 //! ```

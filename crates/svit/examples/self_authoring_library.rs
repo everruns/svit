@@ -14,9 +14,9 @@ fn main() -> svit::Result<()> {
     let mut process = Process::new("svit://local/examples/self-authoring")?;
     process.save_script("teacher", TEACHER)?;
 
-    let taught = process.run("teacher", Value::Null)?;
+    let taught = process.exec("teacher", Value::Null)?;
     assert_eq!(taught.output, Value::String("greeter saved".into()));
-    assert_eq!(process.script_names(), ["greeter", "teacher"]);
+    assert_eq!(process.discover("/lib")?, ["greeter", "teacher"]);
     assert_eq!(
         process
             .script("greeter")
@@ -25,7 +25,7 @@ fn main() -> svit::Result<()> {
         "Greets a person and reports its discoverable script library"
     );
 
-    let greeting = process.run("greeter", value!({"name": "Ada"}))?;
+    let greeting = process.exec("greeter", value!({"name": "Ada"}))?;
     assert_eq!(
         greeting.output,
         value!({

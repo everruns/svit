@@ -4,7 +4,7 @@ use svit::{Process, Value, value};
 fn lisp_activation_commits_memory_and_returns_a_map() {
     let mut process = Process::builder("svit://local/tests/lisp-counter")
         .unwrap()
-        .memory(value!({"count": 0}))
+        .memory("count", value!(0))
         .build()
         .unwrap();
     process
@@ -23,7 +23,7 @@ fn lisp_activation_commits_memory_and_returns_a_map() {
         )
         .unwrap();
 
-    let activation = process.run("counter", value!({"by": 2})).unwrap();
+    let activation = process.exec("counter", value!({"by": 2})).unwrap();
 
     assert_eq!(
         activation.output,
@@ -31,7 +31,7 @@ fn lisp_activation_commits_memory_and_returns_a_map() {
     );
     assert_eq!(activation.logs[0].fields, value!({"count": 2}));
     assert_eq!(
-        process.read("/memory/count").unwrap(),
+        process.get("/memory/count").unwrap(),
         Some(&Value::Integer(2))
     );
 }

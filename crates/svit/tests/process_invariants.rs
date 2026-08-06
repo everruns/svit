@@ -9,7 +9,7 @@ fn unchanged(process: &Process) -> Vec<u8> {
 fn invalid_staged_script_rolls_back_memory_scripts_outbox_and_version() {
     let mut process = Process::builder("svit://local/tests/staged-script")
         .unwrap()
-        .memory(value!({"changed": false}))
+        .memory("changed", value!(false))
         .build()
         .unwrap();
     process
@@ -27,7 +27,7 @@ fn invalid_staged_script_rolls_back_memory_scripts_outbox_and_version() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.run("teacher", Value::Null),
+        process.exec("teacher", Value::Null),
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -48,7 +48,7 @@ fn guest_function_values_are_rejected_atomically() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.run("function-value", Value::Null),
+        process.exec("function-value", Value::Null),
         Err(Error::InvalidValue(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -78,7 +78,7 @@ fn guest_memory_limit_fails_closed() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.run("allocate", Value::Null),
+        process.exec("allocate", Value::Null),
         Err(Error::ResourceLimitExceeded("guest memory"))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -132,14 +132,14 @@ fn ketos_activation_limits_fail_without_committing() {
         let mut process = Process::builder(format!("svit://local/tests/{name}"))
             .unwrap()
             .limits(limits)
-            .memory(value!({"changed": false}))
+            .memory("changed", value!(false))
             .build()
             .unwrap();
         process.save_script("exercise", source).unwrap();
         let before = unchanged(&process);
 
         assert!(matches!(
-            process.run("exercise", Value::Null),
+            process.exec("exercise", Value::Null),
             Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
         ));
         assert_eq!(process.snapshot().unwrap(), before);
@@ -151,7 +151,7 @@ fn ketos_activation_limits_fail_without_committing() {
 fn restore_rejects_lua_format_unknown_format_tampering_and_trailing_data() {
     let process = Process::builder("svit://local/tests/snapshot")
         .unwrap()
-        .memory(value!({"count": 1}))
+        .memory("count", value!(1))
         .build()
         .unwrap();
     let snapshot = process.snapshot().unwrap();
@@ -180,7 +180,7 @@ fn restore_rejects_lua_format_unknown_format_tampering_and_trailing_data() {
 fn replay_from_the_same_snapshot_is_deterministic() {
     let mut original = Process::builder("svit://local/tests/replay")
         .unwrap()
-        .memory(value!({"total": 0}))
+        .memory("total", value!(0))
         .build()
         .unwrap();
     original
@@ -201,8 +201,8 @@ fn replay_from_the_same_snapshot_is_deterministic() {
     let mut first = Process::restore(&snapshot).unwrap();
     let mut second = Process::restore(&snapshot).unwrap();
 
-    let first_result = first.run("add", value!({"amount": 4})).unwrap();
-    let second_result = second.run("add", value!({"amount": 4})).unwrap();
+    let first_result = first.exec("add", value!({"amount": 4})).unwrap();
+    let second_result = second.exec("add", value!({"amount": 4})).unwrap();
 
     assert_eq!(first_result.output, second_result.output);
     assert_eq!(first_result.logs, second_result.logs);
@@ -228,8 +228,8 @@ fn lisp_globals_do_not_cross_activation_boundaries() {
         )
         .unwrap();
 
-    process.run("write", Value::Null).unwrap();
-    let observed = process.run("read", Value::Null).unwrap();
+    process.exec("write", Value::Null).unwrap();
+    let observed = process.exec("read", Value::Null).unwrap();
     assert_eq!(observed.output, Value::String("read".into()));
 }
 
@@ -238,7 +238,7 @@ fn lisp_globals_do_not_cross_activation_boundaries() {
 fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
     let mut parent = Process::builder("svit://local/tests/parent")
         .unwrap()
-        .memory(value!({"value": 0}))
+        .memory("value", value!(0))
         .build()
         .unwrap();
     parent
@@ -253,19 +253,19 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
             "#,
         )
         .unwrap();
-    parent.run("emit", value!({"value": 1})).unwrap();
+    parent.exec("emit", value!({"value": 1})).unwrap();
 
     let mut child = parent.fork("svit://local/tests/child").unwrap();
     assert_eq!(parent.outbox().unwrap().len(), 1);
     assert!(child.outbox().unwrap().is_empty());
 
-    child.run("emit", value!({"value": 2})).unwrap();
+    child.exec("emit", value!({"value": 2})).unwrap();
     assert_eq!(
-        parent.read("/memory/value").unwrap(),
+        parent.get("/memory/value").unwrap(),
         Some(&Value::Integer(1))
     );
     assert_eq!(
-        child.read("/memory/value").unwrap(),
+        child.get("/memory/value").unwrap(),
         Some(&Value::Integer(2))
     );
     assert_eq!(parent.outbox().unwrap().len(), 1);
@@ -284,7 +284,7 @@ fn diagnostics_are_capped_and_use_virtual_source_paths() {
         )
         .unwrap();
 
-    let diagnostic = process.run("fail", Value::Null).unwrap_err().to_string();
+    let diagnostic = process.exec("fail", Value::Null).unwrap_err().to_string();
     assert!(diagnostic.len() <= 1100);
     assert!(diagnostic.contains("/lib/fail.svit-script"));
     assert!(!diagnostic.contains(env!("CARGO_MANIFEST_DIR")));
@@ -348,14 +348,14 @@ fn buffered_resource_limits_fail_without_committing() {
         let mut process = Process::builder(format!("svit://local/tests/{name}"))
             .unwrap()
             .limits(limits)
-            .memory(value!({"changed": false}))
+            .memory("changed", value!(false))
             .build()
             .unwrap();
         process.save_script("exercise", source).unwrap();
         let before = unchanged(&process);
 
         assert!(matches!(
-            process.run("exercise", Value::Null),
+            process.exec("exercise", Value::Null),
             Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
         ));
         assert_eq!(process.snapshot().unwrap(), before);
@@ -373,7 +373,7 @@ fn persistent_value_and_script_limits_fail_at_the_host_boundary() {
         Process::builder("svit://local/tests/text")
             .unwrap()
             .limits(text_limits)
-            .memory(value!({"key": "too long"}))
+            .memory("key", value!("too long"))
             .build(),
         Err(Error::InvalidValue(_))
     ));
@@ -386,7 +386,8 @@ fn persistent_value_and_script_limits_fail_at_the_host_boundary() {
         Process::builder("svit://local/tests/entries")
             .unwrap()
             .limits(entry_limits)
-            .memory(value!({"a": 1, "b": 2}))
+            .memory("a", value!(1))
+            .memory("b", value!(2))
             .build(),
         Err(Error::InvalidValue(_))
     ));
@@ -399,7 +400,7 @@ fn persistent_value_and_script_limits_fail_at_the_host_boundary() {
         Process::builder("svit://local/tests/depth")
             .unwrap()
             .limits(depth_limits)
-            .memory(value!({"a": {"b": {"c": true}}}))
+            .memory("a", value!({"b": {"c": true}}))
             .build(),
         Err(Error::InvalidValue(_))
     ));
@@ -473,7 +474,7 @@ fn activation_input_has_no_mutation_primitive() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.run("mutate_input", value!({"value": 1})),
+        process.exec("mutate_input", value!({"value": 1})),
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);

@@ -106,18 +106,25 @@ pub struct Activation {
     pub root_hash: String,
 }
 
-/// Builder for a process with initial memory, limits, and frozen hooks.
+/// Builder for a process with initial memory, scripts, limits, and frozen hooks.
 pub struct ProcessBuilder {
     id: ProcessId,
-    memory: Value,
+    memory: BTreeMap<String, Value>,
+    scripts: BTreeMap<String, Script>,
     limits: Limits,
     hooks: Vec<SharedHook>,
 }
 
 impl ProcessBuilder {
-    /// Replaces the initial `/memory` value.
-    pub fn memory(mut self, memory: Value) -> Self {
-        self.memory = memory;
+    /// Adds or replaces a named value in the initial `/memory` map.
+    pub fn memory(mut self, name: impl Into<String>, value: Value) -> Self {
+        self.memory.insert(name.into(), value);
+        self
+    }
+
+    /// Adds or replaces a named script in the initial `/lib` value.
+    pub fn script(mut self, name: impl Into<String>, script: Script) -> Self {
+        self.scripts.insert(name.into(), script);
         self
     }
 
@@ -136,11 +143,13 @@ impl ProcessBuilder {
     /// Validates the initial state and constructs the process.
     pub fn build(self) -> Result<Process> {
         self.limits.validate()?;
-        self.memory.validate(&self.limits, false)?;
+        // Builder scripts are version-zero state; only post-build saves commit a version.
+        let root = initial_root(self.memory, self.scripts);
+        validate_root(&root, &self.limits)?;
         Ok(Process {
             id: self.id,
             version: 0,
-            root: Arc::new(initial_root(self.memory)),
+            root: Arc::new(root),
             limits: self.limits,
             hooks: self.hooks.into(),
         })
@@ -161,7 +170,8 @@ impl Process {
     pub fn builder(id: impl Into<String>) -> Result<ProcessBuilder> {
         Ok(ProcessBuilder {
             id: ProcessId::new(id)?,
-            memory: Value::empty_map(),
+            memory: BTreeMap::new(),
+            scripts: BTreeMap::new(),
             limits: Limits::default(),
             hooks: Vec::new(),
         })
@@ -195,8 +205,8 @@ impl Process {
         root_hash(self.root.as_ref()).expect("validated process roots serialize")
     }
 
-    /// Reads a committed value by slash-separated path.
-    pub fn read(&self, path: &str) -> Result<Option<&Value>> {
+    /// Gets a committed value by slash-separated path.
+    pub fn get(&self, path: &str) -> Result<Option<&Value>> {
         if path.is_empty() || path == "/" {
             return Ok(Some(self.root.as_ref()));
         }
@@ -228,6 +238,42 @@ impl Process {
         Ok(Some(current))
     }
 
+    /// Discovers the deterministic child names below a map or array path.
+    pub fn discover(&self, path: &str) -> Result<Vec<String>> {
+        let value = self
+            .get(path)?
+            .ok_or_else(|| Error::InvalidPath(path.into()))?;
+        match value {
+            Value::Map(values) => Ok(values.keys().cloned().collect()),
+            Value::Array(values) => Ok((0..values.len()).map(|index| index.to_string()).collect()),
+            _ => Err(Error::InvalidPath(path.into())),
+        }
+    }
+
+    /// Sets a committed value at or below `/memory`.
+    pub fn set(&mut self, path: &str, value: Value) -> Result<()> {
+        let Some(memory_path) = path.strip_prefix("/memory") else {
+            return Err(Error::InvalidPath(path.into()));
+        };
+        if !memory_path.is_empty() && !memory_path.starts_with('/') {
+            return Err(Error::InvalidPath(path.into()));
+        }
+
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let memory = root
+            .get_mut("memory")
+            .expect("validated process root has memory");
+        set_value_path(memory, memory_path, value)?;
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.limits)?;
+
+        // THREAT[TM-EFF-001]: Validate the complete replacement root before
+        // the single committed-root assignment.
+        self.root = Arc::new(new_root);
+        self.version += 1;
+        Ok(())
+    }
+
     /// Saves or replaces a named script and commits a new process version.
     pub fn save_script(&mut self, name: &str, source: impl Into<String>) -> Result<()> {
         self.save_script_record(name, Script::new(source))
@@ -257,16 +303,6 @@ impl Process {
         }
     }
 
-    /// Lists stored script names in deterministic order.
-    pub fn script_names(&self) -> Vec<String> {
-        root_map(self.root.as_ref())
-            .ok()
-            .and_then(|root| root.get("lib"))
-            .and_then(|lib| root_map(lib).ok())
-            .map(|lib| lib.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
     /// Returns every committed but not externally acknowledged message intent.
     pub fn outbox(&self) -> Result<Vec<MessageIntent>> {
         let root = root_map(self.root.as_ref())?;
@@ -283,7 +319,7 @@ impl Process {
     ///
     /// The script must define `main(input)`. Any error leaves memory, scripts,
     /// outbox, and version unchanged.
-    pub fn run(&mut self, script: &str, input: Value) -> Result<Activation> {
+    pub fn exec(&mut self, script: &str, input: Value) -> Result<Activation> {
         let version_before = self.version;
         let mut request = Ok(ActivationRequest {
             script: script.into(),
@@ -307,7 +343,7 @@ impl Process {
             .as_ref()
             .map(|request| request.script.clone())
             .unwrap_or_else(|_| script.into());
-        let result = request.and_then(|request| self.run_inner(request));
+        let result = request.and_then(|request| self.exec_inner(request));
 
         if !self.hooks.is_empty() {
             let status = match &result {
@@ -402,14 +438,14 @@ impl Process {
         })
     }
 
-    fn run_inner(&mut self, request: ActivationRequest) -> Result<Activation> {
+    fn exec_inner(&mut self, request: ActivationRequest) -> Result<Activation> {
         request.input.validate(&self.limits, false)?;
         let script = self
             .script(&request.script)
             .cloned()
             .ok_or_else(|| Error::ScriptNotFound(request.script.clone()))?;
         let memory = self
-            .read("/memory")?
+            .get("/memory")?
             .expect("validated process root")
             .clone();
 
@@ -492,7 +528,8 @@ impl Process {
     }
 
     fn script_records(&self) -> BTreeMap<String, Script> {
-        self.script_names()
+        self.discover("/lib")
+            .expect("validated process root has a script library")
             .into_iter()
             .filter_map(|name| self.script(&name).cloned().map(|script| (name, script)))
             .collect()
@@ -516,10 +553,18 @@ struct StagedMessage {
     body: Value,
 }
 
-fn initial_root(memory: Value) -> Value {
+fn initial_root(memory: BTreeMap<String, Value>, scripts: BTreeMap<String, Script>) -> Value {
     Value::Map(BTreeMap::from([
-        ("lib".into(), Value::empty_map()),
-        ("memory".into(), memory),
+        (
+            "lib".into(),
+            Value::Map(
+                scripts
+                    .into_iter()
+                    .map(|(name, script)| (name, Value::Script(script)))
+                    .collect(),
+            ),
+        ),
+        ("memory".into(), Value::Map(memory)),
         (
             "system".into(),
             Value::Map(BTreeMap::from([(
@@ -1262,17 +1307,17 @@ mod tests {
     fn activation_commits_memory_output_logs_and_version() {
         let mut process = Process::builder("svit://local/test/counter")
             .unwrap()
-            .memory(value!({"count": 0}))
+            .memory("count", value!(0))
             .build()
             .unwrap();
         process.save_script("counter", COUNTER).unwrap();
 
-        let activation = process.run("counter", value!({"by": 2})).unwrap();
+        let activation = process.exec("counter", value!({"by": 2})).unwrap();
 
         assert_eq!(activation.output, value!({"count": 2}));
         assert_eq!(activation.logs[0].message, "counted");
         assert_eq!(
-            process.read("/memory/count").unwrap(),
+            process.get("/memory/count").unwrap(),
             Some(&Value::Integer(2))
         );
         assert_eq!(activation.version, 2);
@@ -1280,10 +1325,49 @@ mod tests {
 
     #[test]
     // THREAT[TM-EFF-001]
+    fn host_set_commits_once() {
+        let mut process = Process::builder("svit://local/test/set")
+            .unwrap()
+            .memory("count", value!(0))
+            .build()
+            .unwrap();
+
+        process.set("/memory/count", value!(2)).unwrap();
+
+        assert_eq!(process.version(), 1);
+        assert_eq!(
+            process.get("/memory/count").unwrap(),
+            Some(&Value::Integer(2))
+        );
+    }
+
+    #[test]
+    // THREAT[TM-EFF-001]
+    fn rejected_host_set_preserves_committed_root() {
+        let mut process = Process::builder("svit://local/test/set-rollback")
+            .unwrap()
+            .memory("count", value!(0))
+            .build()
+            .unwrap();
+        let before = process.snapshot().unwrap();
+
+        assert!(matches!(
+            process.set(
+                "/memory/count",
+                Value::Script(Script::new("(define (main input) input)")),
+            ),
+            Err(Error::InvalidValue(_))
+        ));
+        assert_eq!(process.version(), 0);
+        assert_eq!(process.snapshot().unwrap(), before);
+    }
+
+    #[test]
+    // THREAT[TM-EFF-001]
     fn runtime_error_rolls_back_memory_and_outbox() {
         let mut process = Process::builder("svit://local/test/rollback")
             .unwrap()
-            .memory(value!({"balance": 10}))
+            .memory("balance", value!(10))
             .build()
             .unwrap();
         process
@@ -1301,10 +1385,10 @@ mod tests {
             .unwrap();
         let version = process.version();
 
-        assert!(process.run("payment", value!({"amount": 3})).is_err());
+        assert!(process.exec("payment", value!({"amount": 3})).is_err());
         assert_eq!(process.version(), version);
         assert_eq!(
-            process.read("/memory/balance").unwrap(),
+            process.get("/memory/balance").unwrap(),
             Some(&Value::Integer(10))
         );
         assert!(process.outbox().unwrap().is_empty());
@@ -1315,25 +1399,25 @@ mod tests {
     fn snapshot_restore_and_fork_are_independent() {
         let mut parent = Process::builder("svit://local/test/parent")
             .unwrap()
-            .memory(value!({"count": 0}))
+            .memory("count", value!(0))
             .build()
             .unwrap();
         parent.save_script("counter", COUNTER).unwrap();
         let snapshot = parent.snapshot().unwrap();
         let restored = Process::restore(&snapshot).unwrap();
         assert_eq!(
-            restored.read("/memory").unwrap(),
-            parent.read("/memory").unwrap()
+            restored.get("/memory").unwrap(),
+            parent.get("/memory").unwrap()
         );
 
         let mut child = parent.fork("svit://local/test/child").unwrap();
-        child.run("counter", value!({"by": 5})).unwrap();
+        child.exec("counter", value!({"by": 5})).unwrap();
         assert_eq!(
-            parent.read("/memory/count").unwrap(),
+            parent.get("/memory/count").unwrap(),
             Some(&Value::Integer(0))
         );
         assert_eq!(
-            child.read("/memory/count").unwrap(),
+            child.get("/memory/count").unwrap(),
             Some(&Value::Integer(5))
         );
     }
@@ -1348,7 +1432,7 @@ mod tests {
         let mut process = Process::builder("svit://local/test/limits")
             .unwrap()
             .limits(limits)
-            .memory(value!({"started": false}))
+            .memory("started", value!(false))
             .build()
             .unwrap();
         process
@@ -1363,11 +1447,11 @@ mod tests {
             .unwrap();
         let version = process.version();
 
-        let error = process.run("loop", Value::Null).unwrap_err();
+        let error = process.exec("loop", Value::Null).unwrap_err();
         assert!(matches!(error, Error::ExecutionLimitExceeded));
         assert_eq!(process.version(), version);
         assert_eq!(
-            process.read("/memory/started").unwrap(),
+            process.get("/memory/started").unwrap(),
             Some(&Value::Bool(false))
         );
     }
@@ -1400,12 +1484,12 @@ mod tests {
             )
             .unwrap();
 
-        process.run("teacher", Value::Null).unwrap();
+        process.exec("teacher", Value::Null).unwrap();
         assert_eq!(
             process.script("greeter").unwrap().documentation(),
             "Greets a person"
         );
-        let greeting = process.run("greeter", value!({"name": "Svit"})).unwrap();
+        let greeting = process.exec("greeter", value!({"name": "Svit"})).unwrap();
         assert_eq!(greeting.output, Value::String("Hello, Svit".into()));
     }
 
@@ -1441,10 +1525,10 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            process.run("mutate", Value::Null),
+            process.exec("mutate", Value::Null),
             Err(Error::HookCancelled(_))
         ));
-        assert_eq!(process.read("/memory/changed").unwrap(), None);
+        assert_eq!(process.get("/memory/changed").unwrap(), None);
         assert!(matches!(
             seen.lock().unwrap()[0].status,
             ActivationStatus::Failed { .. }

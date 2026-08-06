@@ -3,7 +3,7 @@ use svit::{ControlOutcome, ControlRequest, Process, ProcessController, ProcessId
 fn main() -> svit::Result<()> {
     let process_id = "svit://local/example/shared-counter";
     let mut process = Process::builder(process_id)?
-        .memory(value!({"count": 0}))
+        .memory("count", value!(0))
         .build()?;
     process.save_script(
         "counter",
@@ -50,7 +50,7 @@ fn main() -> svit::Result<()> {
 
     let observation = controller.observe()?;
     let restored = Process::restore(&controller.snapshot()?)?;
-    assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(3)));
+    assert_eq!(restored.get("/memory/count")?, Some(&Value::Integer(3)));
     assert_eq!(observation.version, 3);
 
     println!(
