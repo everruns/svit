@@ -63,7 +63,9 @@ the activation's transactional view; nested `exec` shares its transaction,
 deadline, output limits, and independent nesting-depth limit.
 Builders, snapshot, restore, and fork are
 lifecycle operations outside this agent contract. Adapters preserve these five
-names and semantics rather than introducing another vocabulary.
+names and semantics rather than introducing another vocabulary. A host may
+attenuate an agent integration to a subset of operations and named scripts;
+that host policy is not stored in or forgeable through process memory.
 
 Addresses are validated identifiers. In the initial local-only slice they name
 message destinations and fork identities but do not imply global routing,

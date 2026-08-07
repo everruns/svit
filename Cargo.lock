@@ -1523,6 +1523,7 @@ dependencies = [
  "async-trait",
  "serde_json",
  "svit",
+ "tokio",
 ]
 
 [[package]]
@@ -1541,6 +1542,7 @@ dependencies = [
  "serde_json",
  "svit",
  "svit-agentyk",
+ "thiserror 2.0.19",
  "tokio",
 ]
 

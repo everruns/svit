@@ -97,6 +97,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-SNAP-002` | Snapshot hash is mistaken for authenticity | Document hash as integrity only; future authenticity requires host signatures | OPEN |
 | `TM-FORK-001` | Child writes mutate parent or sibling | Isolated committed roots, empty child outbox, and fork tests | MITIGATED for the in-memory process API |
 | `TM-CAP-001` | A string or reflected value forges authority | No external capabilities in the slice; future references use unforgeable host handles | NOT APPLICABLE to the current slice |
+| `TM-CAP-002` | An untrusted model uses generic mutation or an unintended script beyond its domain workflow | Host-selected tool attenuation and script allowlisting before process activation | MITIGATED for the Agentyk read/exec capability mode |
 | `TM-AUTH-001` | Client-controlled identifiers are mistaken for authenticated identity or a tenant boundary | API and docs distinguish identifiers from identity; a future transport authenticates and authorizes before tenant-scoped receipt lookup | REQUIRED |
 | `TM-INT-001` | Panic crosses the activation boundary or poisons committed state | Panic containment outside guest transaction and unchanged-state tests | REQUIRED |
 | `TM-SUP-001` | Vulnerable interpreter or dependency compromises the boundary | Lockfile, pinned toolchain, audit/deny/vet gates, and defense-in-depth isolation plan | REQUIRED |

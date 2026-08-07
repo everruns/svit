@@ -1,5 +1,6 @@
 //! Generic Agentyk tools for one Svit process.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 
 use agentyk::{Capability, FnTool, SystemPromptContext, Tool, ToolOutput};
@@ -11,6 +12,13 @@ use svit::{Process, Value};
 #[derive(Clone)]
 pub struct SvitCapability {
     process: Arc<Mutex<Process>>,
+    access: Access,
+}
+
+#[derive(Clone)]
+enum Access {
+    Full,
+    ReadExec(Arc<BTreeSet<String>>),
 }
 
 impl SvitCapability {
@@ -18,6 +26,24 @@ impl SvitCapability {
     pub fn new(process: Process) -> Self {
         Self {
             process: Arc::new(Mutex::new(process)),
+            access: Access::Full,
+        }
+    }
+
+    /// Wraps one process with read-only discovery plus an allowlist of scripts.
+    ///
+    /// The returned capability exposes only `discover`, `read`, and `exec`.
+    /// Calls to `exec` fail before activation when the script is not listed.
+    pub fn read_exec<I, S>(process: Process, allowed_scripts: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            process: Arc::new(Mutex::new(process)),
+            access: Access::ReadExec(Arc::new(
+                allowed_scripts.into_iter().map(Into::into).collect(),
+            )),
         }
     }
 
@@ -67,11 +93,18 @@ impl Capability for SvitCapability {
     }
 
     async fn system_prompt_contribution(&self, _context: &SystemPromptContext) -> Option<String> {
-        Some(
-            "Use absolute Svit paths with discover, read, write, and remove. Scripts are under \
-             /lib and run through exec. Writes, removes, and script executions are transactional."
-                .into(),
-        )
+        Some(match &self.access {
+            Access::Full => {
+                "Use absolute Svit paths with discover, read, write, and remove. Scripts are under \
+                 /lib and run through exec. Writes, removes, and script executions are transactional."
+                    .into()
+            }
+            Access::ReadExec(allowed_scripts) => format!(
+                "Use absolute Svit paths with discover and read. Run only these transactional \
+                 scripts through exec: {}.",
+                allowed_scripts.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+        })
     }
 
     async fn tools(&self) -> agentyk::Result<Vec<Arc<dyn Tool>>> {
@@ -102,6 +135,10 @@ impl Capability for SvitCapability {
         ));
 
         let exec_process = self.process.clone();
+        let allowed_scripts = match &self.access {
+            Access::Full => None,
+            Access::ReadExec(scripts) => Some(Arc::clone(scripts)),
+        };
         let exec_tool: Arc<dyn Tool> = Arc::new(FnTool::new(
             "exec",
             "Run a named Svit script transactionally.",
@@ -112,8 +149,17 @@ impl Capability for SvitCapability {
             }),
             move |arguments| {
                 let process = exec_process.clone();
+                let allowed_scripts = allowed_scripts.clone();
                 async move {
                     let script = arguments["script"].as_str().unwrap_or_default();
+                    // THREAT[TM-CAP-002]: Check host-selected script authority
+                    // before guest input conversion or process activation.
+                    if allowed_scripts
+                        .as_ref()
+                        .is_some_and(|scripts| !scripts.contains(script))
+                    {
+                        return ToolOutput::error(format!("script is not allowed: {script}"));
+                    }
                     exec(&process, script, arguments["input"].clone())
                 }
             },
@@ -210,6 +256,61 @@ impl Capability for SvitCapability {
             },
         ));
 
-        Ok(vec![discover, read, write, remove, exec_tool])
+        Ok(match self.access {
+            Access::Full => vec![discover, read, write, remove, exec_tool],
+            Access::ReadExec(_) => vec![discover, read, exec_tool],
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agentyk::{Capability, SessionId, ToolContext, TurnId};
+    use serde_json::json;
+    use svit::{Process, Script};
+
+    use super::SvitCapability;
+
+    #[tokio::test]
+    async fn restricted_capability_omits_mutators_and_denies_unlisted_scripts() {
+        // THREAT[TM-CAP-002]: An untrusted model receives only the operations
+        // and script authority selected by its host.
+        let process = Process::builder("svit://local/restricted-agent")
+            .unwrap()
+            .library("allowed", Script::new("(define (main input) input)"))
+            .library("denied", Script::new("(define (main input) input)"))
+            .build()
+            .unwrap();
+        let capability = SvitCapability::read_exec(process, ["allowed"]);
+        let tools = capability.tools().await.unwrap();
+        let names = tools
+            .iter()
+            .map(|tool| tool.definition().name)
+            .collect::<Vec<_>>();
+
+        assert_eq!(names, ["discover", "read", "exec"]);
+
+        let exec = tools
+            .iter()
+            .find(|tool| tool.definition().name == "exec")
+            .unwrap();
+        let output = exec
+            .execute(
+                json!({"script": "denied", "input": null}),
+                &ToolContext::new(SessionId::new(), TurnId::new()),
+            )
+            .await;
+        assert!(output.is_error);
+        assert_eq!(output.content, "script is not allowed: denied");
+        assert_eq!(capability.process().lock().unwrap().version(), 0);
+
+        let output = exec
+            .execute(
+                json!({"script": "allowed", "input": {"value": 1}}),
+                &ToolContext::new(SessionId::new(), TurnId::new()),
+            )
+            .await;
+        assert!(!output.is_error);
+        assert_eq!(capability.process().lock().unwrap().version(), 1);
     }
 }
