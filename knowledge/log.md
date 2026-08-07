@@ -1,5 +1,11 @@
 # Svit Knowledge Update Log
 
+## 2026-08-06
+
+* **Agent authority**: Added an attenuated Agentyk capability mode that exposes discovery, reads, and only host-allowlisted scripts; generic mutation remains available only through the explicit full-access constructor.
+* **Support commit contract**: Bound support retrieval and commit to a host-issued request ID, derived source and ticket data from process state, rejected duplicate or policy-invalid commits atomically, and made the validated committed answer authoritative over model final text.
+* **Security evidence**: Added `TM-CAP-002` with focused adapter and deterministic simulated-agent tests for tool attenuation, script denial, request-binding rollback, idempotency, provenance, deterministic ticket policy, and committed response rendering.
+
 ## 2026-08-05
 
 * **Process namespace**: Adopted the conventional `/memory`, `/lib`, `/tasks`, `/inbox`, `/children`, `/mounts`, and `/system` hierarchy. Deferred top-level nodes are validated as empty and read-only rather than claiming unimplemented behavior.

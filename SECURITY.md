@@ -42,6 +42,11 @@ The typed control API receives an already-decoded request. Any network or IPC
 adapter must cap request bytes before deserialization, then apply the same
 decoded value limits enforced by the controller.
 
+The Agentyk adapter's full-access constructor exposes all five generic process
+operations. Domain agents should use its attenuated read/exec mode to omit
+generic mutation tools and allow only host-selected scripts. Prompt instructions
+are not an authorization boundary.
+
 ## Important limitations
 
 Svit is not yet a proven or production-grade hostile multi-tenant boundary.

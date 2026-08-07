@@ -18,21 +18,22 @@ retry against the observed version commits exactly once.
 
 ## Agentyk support-agent demo
 
-`support-agent/` runs `gpt-5.6-terra` through Agentyk. The model sees five
-generic Svit tools:
+`support-agent/` runs `gpt-5.6-terra` through Agentyk. The support model sees an
+attenuated Svit tool surface:
 
 - `discover`: list children under any Svit process path;
 - `read`: read a value by absolute process path;
-- `write`: transactionally write memory or a library entry;
-- `remove`: transactionally remove memory or a library entry;
-- `exec`: execute a named script transactionally;
+- `exec`: transactionally execute `search_support_docs` or
+  `commit_support_result`.
 
 `search_support_docs` and `commit_support_result` are Svit scripts, not agent
-tools. Search reads documents from Svit memory. Commit writes the result to
-Svit memory and appends a ticket message to the Svit outbox. There is no turn
-counter or custom agent framework.
+tools. The host places the question and request ID in process memory. Search
+records its source IDs and ticket policy there. Commit derives those fields
+from committed state, writes the result exactly once, and atomically appends an
+authorized ticket intent. Generic writes, removes, and other scripts are not
+available to the model.
 
-The process exposes these values under `/memory/docs` and `/memory/requests`,
+The process exposes these values under `/memory/docs` and `/memory/request`,
 the scripts under `/lib`, and the queued ticket under `/system/outbox`.
 `/system/identity`, `/system/api`, `/system/limits`, `/system/lineage`, and
 `/system/runtime` are discoverable runtime metadata. Reserved `/tasks`,
@@ -46,4 +47,6 @@ doppler run --project PROJECT --config CONFIG -- \
 ```
 
 The demo does not contact Jira, Linear, or another production system. It only
-shows the committed ticket intent in the Svit outbox.
+shows the committed ticket intent in the Svit outbox. The displayed answer is
+loaded from the validated committed result; independent final text from the
+model is ignored.

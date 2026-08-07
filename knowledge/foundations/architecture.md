@@ -55,8 +55,10 @@ the boundary.
 
 The current workspace implements these responsibilities in the `svit` crate,
 provides a thin `svit-cli` crate, and keeps the Agentyk integration in the
-separate `svit-agentyk` adapter crate. The core does not depend on an agent
-framework. Module names may evolve; the boundaries are the decision.
+separate `svit-agentyk` adapter crate. The adapter can expose the complete
+generic process surface or attenuate a model to discovery, reads, and a
+host-selected script allowlist. The core does not depend on an agent framework.
+Module names may evolve; the boundaries are the decision.
 
 ## Trusted-boundary rules
 

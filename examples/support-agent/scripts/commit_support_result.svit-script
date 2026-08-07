@@ -1,16 +1,45 @@
+(define (result-value request-id answer source-ids ticket-queued)
+  (value-map
+    "request_id" request-id
+    "answer" answer
+    "source_ids" source-ids
+    "ticket_queued" ticket-queued))
+
 (define (main input)
-  (let ((result
-          (value-map
-            "request_id" (value-get input "/request_id")
-            "answer" (value-get input "/answer")
-            "source_ids" (value-get input "/source_ids"))))
-    (do
-      (write "/memory/requests/latest" result)
-      (if (value-get input "/create_ticket")
-          (send! "svit://local/support-tickets"
-                 (value-map
-                   "request_id" (value-get input "/request_id")
-                   "title" (value-get input "/ticket_title")
-                   "description" (value-get input "/ticket_description")))
-          ())
-      result)))
+  (let ((request-id (value-get input "/request_id"))
+        (expected-id (read "/memory/request/id"))
+        (answer (value-get input "/answer"))
+        (retrieval (read "/memory/request/retrieval"))
+        (existing-result (read "/memory/request/result")))
+    (if (not (= request-id expected-id))
+        (panic "request id mismatch")
+        (if (not (value-null? existing-result))
+            (panic "support result already committed")
+            (if (value-null? retrieval)
+                (panic "support documents were not retrieved")
+                (if (null (chars answer))
+                    (panic "answer must not be empty")
+                    (let ((source-ids (value-get retrieval "/source_ids"))
+                          (required-ticket
+                            (value-get retrieval "/required_ticket")))
+                      (if (value-null? required-ticket)
+                          (let ((result
+                                  (result-value
+                                    request-id answer source-ids false)))
+                            (do
+                              (write "/memory/request/result" result)
+                              result))
+                          (let ((result
+                                  (result-value
+                                    request-id answer source-ids true)))
+                            (do
+                              (write "/memory/request/result" result)
+                              (send! "svit://local/support-tickets"
+                                     (value-map
+                                       "request_id" request-id
+                                       "kind" required-ticket
+                                       "unavailable_factors"
+                                         (value-array
+                                           "verified-email"
+                                           "authenticator")))
+                              result))))))))))

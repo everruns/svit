@@ -2,49 +2,25 @@ use std::env;
 use std::error::Error;
 
 use agentyk::{Agent, ModelSpec, OpenAiDriver};
-use serde_json::json;
-use svit::{Process, Script, Value};
 use svit_agentyk::SvitCapability;
+use svit_support_agent::{run_support_turn, support_process};
 
+const REQUEST_ID: &str = "support-request-001";
 const QUESTION: &str =
     "I lost access to my verified email and my authenticator. Can support restore access?";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let process = Process::builder("svit://local/support-agent")?
-        .memory(
-            "docs",
-            Value::from_json(json!([
-                {"id": "account-recovery", "content": include_str!("../docs/account-recovery.md")},
-                {"id": "password-reset", "content": include_str!("../docs/password-reset.md")},
-                {"id": "refunds", "content": include_str!("../docs/refunds.md")}
-            ]))?,
-        )
-        .memory("requests", Value::empty_map())
-        .library(
-            "search_support_docs",
-            Script::new(include_str!("../scripts/search_support_docs.svit-script"))
-                .with_documentation(
-                    "Search support docs. Input: {query}. Returns the two best matches.",
-                ),
-        )
-        .library(
-            "commit_support_result",
-            Script::new(include_str!("../scripts/commit_support_result.svit-script"))
-                .with_documentation(
-                    "Commit an answer and optional ticket intent. Input: {request_id, answer, \
-                     source_ids, create_ticket, ticket_title, ticket_description}.",
-                ),
-        )
-        .build()?;
+    let process = support_process(REQUEST_ID, QUESTION)?;
 
-    let svit_capability = SvitCapability::new(process);
+    let svit_capability =
+        SvitCapability::read_exec(process, ["search_support_docs", "commit_support_result"]);
     let process_handle = svit_capability.process();
     let agent = Agent::builder()
         .system_prompt(
             "You are a support agent. Discover and execute the Svit scripts needed to answer. \
-             Commit the result before replying. A ticket intent is queued, not delivered; never \
-             say a ticket was opened or created.",
+             The host owns the active question and request ID in process memory. Commit the result \
+             exactly once. A ticket intent is queued, not delivered; describe it only as queued.",
         )
         .model(
             ModelSpec::openai("gpt-5.6-terra")
@@ -53,12 +29,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
         )
         .driver(OpenAiDriver::new())
         .capability(svit_capability)
+        .max_iterations(8)
         .build()?;
 
-    let turn = agent.run(QUESTION).await?;
-    println!("{}", turn.response);
+    let result = run_support_turn(&agent, &process_handle, REQUEST_ID).await?;
+    println!("{}", result.answer);
+    println!("sources={}", result.source_ids.join(","));
+    println!("ticket_queued={}", result.ticket_queued);
     let committed_process = process_handle.lock().unwrap();
     println!("svit version={}", committed_process.version());
+    println!("svit root_hash={}", committed_process.root_hash());
     for message in committed_process.outbox()? {
         println!("queued={} to={}", message.message_id, message.to);
     }

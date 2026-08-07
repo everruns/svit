@@ -57,6 +57,8 @@ Required for the initial vertical slice.
 - `TM-AUTH-001`: namespace tests must show that discoverable process identity
   is marked unauthenticated and cannot be modified through the memory mutation
   API.
+- `TM-CAP-002`: an attenuated agent capability omits generic mutation tools,
+  denies unlisted scripts before activation, and still executes an allowed script.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
 

@@ -673,12 +673,19 @@ version in the Agentyk event stream. Svit keeps its own typed state history;
 Agentyk keeps conversation and turn history. Forking both is allowed only at
 compatible committed boundaries.
 
+Domain agents may receive an attenuated view of the same vocabulary. The
+support workflow exposes discovery, reads, and `exec` for a host-selected
+script allowlist; generic writes, removes, and unintended scripts remain
+unavailable to the model.
+
 The first executable integration is intentionally a private workspace adapter
 rather than a published integration crate. It maps those five generic tools to
 one in-memory process. The support search and result commit live in
 discoverable Svit scripts; the latter appends a ticket intent to the committed
-outbox. It demonstrates the ownership boundary without adding production
-delivery or persistence.
+outbox. A host-issued request ID binds retrieval and commit, and the host emits
+only the validated committed answer rather than the model's independent final
+text. It demonstrates the ownership boundary without adding production delivery
+or persistence.
 
 ### Yolop
 
