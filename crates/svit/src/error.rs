@@ -19,6 +19,10 @@ pub enum Error {
     #[error("invalid persistent value: {0}")]
     InvalidValue(String),
 
+    /// A host-provided snapshot mount could not be imported or validated.
+    #[error("invalid snapshot mount: {0}")]
+    InvalidMount(String),
+
     /// A host-supplied resource configuration exceeds the runtime's hard
     /// safety envelope.
     #[error("invalid process limits: {0}")]

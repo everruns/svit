@@ -8,12 +8,25 @@ const REQUEST_ID: &str = "support-request-001";
 const QUESTION: &str =
     "I lost access to my verified email and my authenticator. Can support restore access?";
 
-#[test]
-fn commit_is_idempotent_and_uses_retrieved_sources() {
-    let mut process = support_process(REQUEST_ID, QUESTION).unwrap();
+#[tokio::test]
+async fn commit_is_idempotent_and_uses_retrieved_sources() {
+    let mut process = support_process(REQUEST_ID, QUESTION).await.unwrap();
     process
         .exec("search_support_docs", value!({"request_id": REQUEST_ID}))
         .unwrap();
+    assert_eq!(
+        process
+            .read("/memory/request/retrieval/account/recovery_method")
+            .unwrap(),
+        Some(&value!("identity-support-review"))
+    );
+    assert!(matches!(
+        process
+            .read("/mounts/support_docs/data/account-recovery.md")
+            .unwrap(),
+        Some(svit::Value::String(document))
+            if document.contains("identity verification is required")
+    ));
     let root_hash = process.root_hash();
     let version = process.version();
     let mismatched_request = process.exec(
@@ -62,12 +75,13 @@ fn commit_is_idempotent_and_uses_retrieved_sources() {
     assert_eq!(process.outbox().unwrap().len(), 1);
 }
 
-#[test]
-fn ticket_policy_does_not_queue_an_unneeded_intent() {
+#[tokio::test]
+async fn ticket_policy_does_not_queue_an_unneeded_intent() {
     let mut process = support_process(
         REQUEST_ID,
         "How do I reset my password using my verified email?",
     )
+    .await
     .unwrap();
     process
         .exec("search_support_docs", value!({"request_id": REQUEST_ID}))
@@ -88,7 +102,7 @@ fn ticket_policy_does_not_queue_an_unneeded_intent() {
 
 #[tokio::test]
 async fn user_reply_is_loaded_from_the_committed_result() {
-    let process = support_process(REQUEST_ID, QUESTION).unwrap();
+    let process = support_process(REQUEST_ID, QUESTION).await.unwrap();
     let capability =
         SvitCapability::read_exec(process, ["search_support_docs", "commit_support_result"]);
     let process_handle = capability.process();

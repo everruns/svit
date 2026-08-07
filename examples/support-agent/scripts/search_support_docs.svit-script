@@ -19,14 +19,16 @@
 (define (has-keyword query keyword)
   (contains (chars query) (chars keyword)))
 
-(define (commit-retrieval source-ids required-ticket documents)
+(define (commit-retrieval account source-ids required-ticket documents)
   (let ((retrieval
           (value-map
+            "account" account
             "source_ids" source-ids
             "required_ticket" required-ticket)))
     (do
       (write "/memory/request/retrieval" retrieval)
       (value-map
+        "account" account
         "documents" documents
         "source_ids" source-ids
         "required_ticket" required-ticket))))
@@ -36,9 +38,19 @@
         (expected-id (read "/memory/request/id"))
         (query (read "/memory/request/question"))
         (result (read "/memory/request/result"))
-        (account-recovery (read "/memory/docs/0"))
-        (password-reset (read "/memory/docs/1"))
-        (refunds (read "/memory/docs/2")))
+        (account (read "/mounts/account_context/data/0"))
+        (account-recovery
+          (value-map
+            "id" "account-recovery"
+            "content" (read "/mounts/support_docs/data/account-recovery.md")))
+        (password-reset
+          (value-map
+            "id" "password-reset"
+            "content" (read "/mounts/support_docs/data/password-reset.md")))
+        (refunds
+          (value-map
+            "id" "refunds"
+            "content" (read "/mounts/support_docs/data/refunds.md"))))
     (if (not (= request-id expected-id))
         (panic "request id mismatch")
         (if (not (value-null? result))
@@ -47,16 +59,19 @@
                     (has-keyword query "purchase")
                     (has-keyword query "billing"))
                 (commit-retrieval
+                  account
                   (value-array "refunds" "account-recovery")
                   ()
                   (value-array refunds account-recovery))
                 (if (or (has-keyword query "password")
                         (has-keyword query "reset"))
                     (commit-retrieval
+                      account
                       (value-array "password-reset" "account-recovery")
                       ()
                       (value-array password-reset account-recovery))
                     (commit-retrieval
+                      account
                       (value-array "account-recovery" "password-reset")
                       "account-recovery"
                       (value-array account-recovery password-reset))))))))

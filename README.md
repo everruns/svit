@@ -77,8 +77,9 @@ agent-operation vocabulary.
 ## What works now
 
 - One discoverable process namespace containing mutable `/memory`, named
-  `/lib` scripts, reserved `/tasks`, `/inbox`, `/children`, and `/mounts`
-  nodes, plus read-only `/system` metadata and the outbox.
+  `/lib` scripts, read-only folder and Turso query snapshots under `/mounts`,
+  reserved `/tasks`, `/inbox`, and `/children` nodes, plus read-only `/system`
+  metadata and the outbox.
 - Named script installation, inspection, replacement, and removal through the
   same generic path operations used for memory.
 - Transactional activations: memory, staged scripts, and message intents all
@@ -151,13 +152,14 @@ cargo run -p svit --example atomic_outbox
 cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
+cargo run -p svit --example mounted_resources
 ```
 
 They cover persistence and restore, functional self-reflection, rollback of a
-state-plus-message transaction, isolated forks, denied ambient APIs, and a
-bounded infinite loop, plus two clients resolving an optimistic concurrency
-conflict. See [examples/README.md](examples/README.md), or run all of them with
-`just examples`.
+state-plus-message transaction, isolated forks, denied ambient APIs, a bounded
+infinite loop, two clients resolving an optimistic concurrency conflict, and
+bounded snapshots of a real folder and a Turso query. See
+[examples/README.md](examples/README.md), or run all of them with `just examples`.
 
 ## Current security status
 
@@ -183,8 +185,8 @@ described in [SECURITY.md](SECURITY.md).
 
 Svit does not yet provide scheduling, timers, background activations, message
 delivery, retries, global routing, authenticated identity, authorization,
-external capabilities, filesystem or network projections, secrets, durable
-database storage, distributed migration, exactly-once effects, snapshot
+live or writable external capabilities, filesystem or network read-through
+projections, secrets, durable process storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
 

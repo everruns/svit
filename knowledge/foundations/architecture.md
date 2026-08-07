@@ -34,6 +34,7 @@ Process ----> transaction working copy ----> commit or rollback
     |
     +----> snapshot / restore / fork
     +----> buffered message intents (not delivery)
+    +----> bounded folder / Turso snapshot import
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -49,6 +50,7 @@ the boundary.
 | Process | Address, version, committed root, limits, and lifecycle operations |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
+| Snapshot mounts | Bounded read-only folder trees and host-selected Turso query rows |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
@@ -73,12 +75,14 @@ Module names may evolve; the boundaries are the decision.
    as newly created state.
 7. Every mutating control request carries an expected process version and is
    checked at the same serialization point as commit.
+8. External data enters only through a host-created bounded snapshot mount;
+   activations receive persistent values, never filesystem or database handles.
 
 ## Deferred architecture
 
-Schedulers, external effect adapters, projections, durable databases,
-distributed routing, auth services, migrations between hosts, and production
-Wasm/OS isolation are outside this slice. See
+Schedulers, external effect adapters, read-through or writable projections,
+durable process databases, distributed routing, auth services, migrations
+between hosts, and production Wasm/OS isolation are outside this slice. See
 [Limitations](../operations/limitations.md).
 
 ## Alternatives considered

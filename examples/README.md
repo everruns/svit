@@ -10,11 +10,17 @@ cargo run -p svit --example atomic_outbox
 cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
+cargo run -p svit --example mounted_resources
 ```
 
 `multi_client_control` demonstrates two clients using optimistic version
 preconditions: one commits, a stale request conflicts without mutation, and a
 retry against the observed version commits exactly once.
+
+`mounted_resources` imports a real UTF-8 folder and the result of a host-chosen
+Turso query as bounded, read-only snapshots. The script reads both through the
+ordinary `/mounts` hierarchy. No host path, database connection, or SQL
+authority enters the activation.
 
 ## Agentyk support-agent demo
 
@@ -28,16 +34,19 @@ attenuated Svit tool surface:
 
 `search_support_docs` and `commit_support_result` are Svit scripts, not agent
 tools. The host places the question and request ID in process memory. Search
-records its source IDs and ticket policy there. Commit derives those fields
-from committed state, writes the result exactly once, and atomically appends an
-authorized ticket intent. Generic writes, removes, and other scripts are not
-available to the model.
+reads documents from a real folder snapshot and account context from a Turso
+query snapshot, then records source IDs and ticket policy in process memory.
+Commit derives those fields from committed state, writes the result exactly
+once, and atomically appends an authorized ticket intent. Generic writes,
+removes, and other scripts are not available to the model.
 
-The process exposes these values under `/memory/docs` and `/memory/request`,
-the scripts under `/lib`, and the queued ticket under `/system/outbox`.
+The process exposes imported data under `/mounts/support_docs` and
+`/mounts/account_context`, request and committed result state under
+`/memory/request`, scripts under `/lib`, and the queued ticket under
+`/system/outbox`.
 `/system/identity`, `/system/api`, `/system/limits`, `/system/lineage`, and
 `/system/runtime` are discoverable runtime metadata. Reserved `/tasks`,
-`/inbox`, `/children`, and `/mounts` nodes remain empty in this example.
+`/inbox`, and `/children` remain empty in this example.
 
 Run the live path with `OPENAI_API_KEY` injected by Doppler:
 

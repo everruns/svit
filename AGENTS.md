@@ -27,19 +27,21 @@ The first slice is deliberately narrow:
 5. A committed process can be snapshotted, restored, and forked.
 6. Guest code has no ambient filesystem, network, environment, process, module
    loader, native extension, clock, or randomness access.
+7. The host may import bounded folder or Turso query data as a read-only
+   snapshot mount before activation.
 
-Scheduling, message delivery, projections, durable storage adapters,
-distributed identity, and production multi-tenant deployment are not part of
-this slice. Record pressure to add them in
+Scheduling, message delivery, live or writable projections, durable storage
+adapters, distributed identity, and production multi-tenant deployment are not
+part of this slice. Record pressure to add them in
 `knowledge/operations/limitations.md`; do not add speculative abstractions.
 
 ### Security invariants
 
-- Treat every guest script, input value, snapshot, address, and message as
-  untrusted.
+- Treat every guest script, input value, snapshot, address, message, and mount
+  source as untrusted.
 - Guest-visible references are typed values, never authority-bearing strings.
-- Host access requires an explicit typed capability. The initial slice grants
-  none.
+- Host access requires an explicit typed capability. Snapshot mounts contain
+  imported values and never grant live authority.
 - Resource limits are semantics, not optional hardening.
 - Validate guest values before commit: bounded depth and size, text map keys,
   acyclic collections, and finite floating-point values.

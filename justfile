@@ -21,6 +21,7 @@ examples:
     cargo run --locked -p svit --example fork_research
     cargo run --locked -p svit --example sandbox_limits
     cargo run --locked -p svit --example multi_client_control
+    cargo run --locked -p svit --example mounted_resources
     cargo run --locked -p svit-cli -- exec crates/svit-cli/tests/fixtures/counter.svit-script '{"by": 3}'
 
 # Validate the OKF v0.2 knowledge bundle.

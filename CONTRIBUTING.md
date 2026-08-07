@@ -51,9 +51,9 @@ just pre-pr       # Complete local quality gate
 an invariant, process or language semantics, limitation, threat, or testing
 requirement, update the corresponding concept and `knowledge/log.md`.
 
-Keep planned features honest. Scheduling, delivery, projections, capabilities,
-distributed identity, production isolation, and formal verification remain
-limitations until implementation and evidence land.
+Keep planned features honest. Scheduling, delivery, live or writable
+projections, capabilities, distributed identity, production isolation, and
+formal verification remain limitations until implementation and evidence land.
 
 ## Testing security-sensitive changes
 

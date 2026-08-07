@@ -459,6 +459,7 @@ fn failure(error: Error) -> ControlFailure {
         Error::ScriptNotFound(_) => "script_not_found",
         Error::InvalidPath(_) => "invalid_path",
         Error::InvalidValue(_) => "invalid_value",
+        Error::InvalidMount(_) => "invalid_mount",
         Error::InvalidLimits(_) => "invalid_limits",
         Error::ExecutionLimitExceeded => "execution_limit_exceeded",
         Error::ResourceLimitExceeded(_) => "resource_limit_exceeded",
