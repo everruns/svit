@@ -65,6 +65,11 @@ Required for the initial vertical slice.
   denies unlisted scripts before activation, and still executes an allowed script.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
+- `TM-AUD-001`: host commits to `/agent` succeed atomically, guest writes fail
+  without mutation, invalid host replacement values preserve the root and
+  version, and message projection must match canonical events on resume.
+- `TM-MSG-002`: inbox enqueue and exact-head acknowledgement commit once;
+  rejected values, mismatched acknowledgement, and guest writes preserve state.
 
 ## Status rule
 

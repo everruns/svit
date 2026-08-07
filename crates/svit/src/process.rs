@@ -26,7 +26,7 @@ use crate::hooks::{
 };
 use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
 
-const SNAPSHOT_FORMAT: u32 = 3;
+const SNAPSHOT_FORMAT: u32 = 4;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
@@ -316,6 +316,80 @@ impl Process {
         Ok(())
     }
 
+    /// Appends one host-supplied value to the durable process inbox.
+    pub fn enqueue_inbox(&mut self, value: Value) -> Result<()> {
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let Value::Array(inbox) = root
+            .get_mut("inbox")
+            .expect("validated process root has inbox")
+        else {
+            return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
+        };
+        inbox.push(value);
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.id, &self.limits)?;
+
+        // THREAT[TM-MSG-002]: Inbox delivery becomes visible only after the
+        // complete replacement root validates.
+        self.root = Arc::new(new_root);
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Returns the oldest committed inbox value without removing it.
+    pub fn inbox_front(&self) -> Result<Option<&Value>> {
+        let Value::Array(inbox) = self
+            .read("/inbox")?
+            .expect("validated process root has inbox")
+        else {
+            return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
+        };
+        Ok(inbox.first())
+    }
+
+    /// Removes the oldest inbox value if it still matches the completed turn.
+    pub fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()> {
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let Value::Array(inbox) = root
+            .get_mut("inbox")
+            .expect("validated process root has inbox")
+        else {
+            return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
+        };
+        if inbox.first() != Some(expected) {
+            return Err(Error::InboxConflict);
+        }
+        inbox.remove(0);
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.id, &self.limits)?;
+
+        // THREAT[TM-MSG-002]: A completed turn acknowledges only the exact
+        // inbox head it observed, preventing silent drop or reordering.
+        self.root = Arc::new(new_root);
+        self.version += 1;
+        Ok(())
+    }
+
+    /// Replaces host-managed durable agent-loop state under `/agent`.
+    ///
+    /// Guest scripts and generic agent tools may inspect this node through
+    /// `read` and `discover`, but cannot write or remove it. Agent adapters use
+    /// this boundary for replay and audit state that untrusted model output
+    /// must not rewrite.
+    pub fn replace_agent_state(&mut self, value: Value) -> Result<()> {
+        value.validate(&self.limits, false)?;
+        let mut root = root_map(self.root.as_ref())?.clone();
+        root.insert("agent".into(), value);
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.id, &self.limits)?;
+
+        // THREAT[TM-AUD-001]: Only the trusted host receives this mutation
+        // boundary; guest write/remove paths deliberately exclude `/agent`.
+        self.root = Arc::new(new_root);
+        self.version += 1;
+        Ok(())
+    }
+
     /// Returns every committed but not externally acknowledged message intent.
     pub fn outbox(&self) -> Result<Vec<MessageIntent>> {
         let root = root_map(self.root.as_ref())?;
@@ -570,6 +644,7 @@ fn initial_root(
     mounts: BTreeMap<String, SnapshotMount>,
 ) -> Value {
     Value::Map(BTreeMap::from([
+        ("agent".into(), Value::Null),
         ("children".into(), Value::empty_map()),
         ("inbox".into(), Value::Array(Vec::new())),
         (
@@ -600,7 +675,7 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
         != BTreeSet::from([
-            "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
+            "agent", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
         ])
     {
         return Err(Error::InvalidSnapshot(
@@ -608,13 +683,23 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
         ));
     }
     validate_reserved_root(root, "children", Value::empty_map())?;
-    validate_reserved_root(root, "inbox", Value::Array(Vec::new()))?;
+    let Value::Array(inbox) = root
+        .get("inbox")
+        .ok_or_else(|| Error::InvalidSnapshot("missing /inbox".into()))?
+    else {
+        return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
+    };
+    Value::Array(inbox.clone()).validate(limits, false)?;
     crate::mounts::validate_mounts(
         root.get("mounts")
             .ok_or_else(|| Error::InvalidSnapshot("missing /mounts".into()))?,
         limits,
     )?;
     validate_reserved_root(root, "tasks", Value::empty_map())?;
+
+    root.get("agent")
+        .ok_or_else(|| Error::InvalidSnapshot("missing /agent".into()))?
+        .validate(limits, false)?;
 
     let memory = root
         .get("memory")
@@ -1800,6 +1885,49 @@ mod tests {
             Err(Error::InvalidPath(_))
         ));
         assert_eq!(process.version(), 0);
+        assert_eq!(process.snapshot().unwrap(), before);
+    }
+
+    #[test]
+    // THREAT[TM-MSG-002]
+    fn inbox_enqueue_and_acknowledgement_are_atomic() {
+        let mut process = Process::new("svit://local/test/inbox").unwrap();
+        let message = value!({"role": "user", "content": "hello"});
+
+        process.enqueue_inbox(message.clone()).unwrap();
+        assert_eq!(process.version(), 1);
+        assert_eq!(process.inbox_front().unwrap(), Some(&message));
+
+        process.acknowledge_inbox(&message).unwrap();
+        assert_eq!(process.version(), 2);
+        assert_eq!(process.inbox_front().unwrap(), None);
+    }
+
+    #[test]
+    // THREAT[TM-MSG-002]
+    fn rejected_inbox_transition_preserves_committed_state() {
+        let mut process = Process::new("svit://local/test/inbox-rollback").unwrap();
+        let message = value!({"role": "user", "content": "hello"});
+        process.enqueue_inbox(message).unwrap();
+        let before = process.snapshot().unwrap();
+
+        assert!(matches!(
+            process.acknowledge_inbox(&value!("different")),
+            Err(Error::InboxConflict)
+        ));
+        assert_eq!(process.version(), 1);
+        assert_eq!(process.snapshot().unwrap(), before);
+
+        assert!(matches!(
+            process.enqueue_inbox(Value::Number(f64::NAN)),
+            Err(Error::InvalidValue(_))
+        ));
+        assert_eq!(process.version(), 1);
+        assert_eq!(process.snapshot().unwrap(), before);
+        assert!(matches!(
+            process.write("/inbox/0", value!("tampered")),
+            Err(Error::InvalidPath(_))
+        ));
         assert_eq!(process.snapshot().unwrap(), before);
     }
 

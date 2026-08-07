@@ -18,8 +18,8 @@ ready for hostile production multi-tenancy.
 
 ## Actors and assets
 
-Threat actors are malicious or buggy guest scripts, inputs, snapshots,
-messages, and callers attempting cross-process access.
+Threat actors are malicious or buggy guest scripts, model output, agent-event
+payloads, inputs, snapshots, messages, and callers attempting cross-process access.
 
 Protected assets are host CPU and memory, host filesystem and network,
 environment and credentials, runtime availability, process state, other
@@ -72,6 +72,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-FORK` | Fork isolation and authority inheritance |
 | `TM-EFF` | Atomicity and external-effect ordering |
 | `TM-INT` | Panics and diagnostic disclosure |
+| `TM-AUD` | Audit and replay integrity |
 | `TM-SUP` | Interpreter and dependency supply chain |
 
 ## Initial threats
@@ -94,6 +95,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-EFF-003` | Retrying after a lost response commits an activation twice | Scoped request id, bounded terminal receipts, and version CAS after eviction | MITIGATED for the in-memory controller; durable result replay is not implemented |
 | `TM-EFF-004` | Two hosts concurrently commit the same logical process version | Durable ownership lease and fencing token checked by storage | REQUIRED — the reference controller is single-host only |
 | `TM-MSG-001` | Guest forges sender identity or nondeterministic message IDs | Host-derived sender and deterministic IDs; delivery remains out of scope | MITIGATED for buffered intents |
+| `TM-MSG-002` | Failed or concurrent inbox acknowledgement drops or reorders input | Host-only enqueue plus exact-head acknowledgement after a successful turn, with complete-root validation before commit | MITIGATED for the in-memory process API |
 | `TM-SNAP-001` | Malformed snapshot bypasses state invariants | Versioned decoder, complete revalidation, size cap, and fuzzing | PARTIAL — format, hash, limit, trailing-data, and size controls exist; fuzzing remains |
 | `TM-SNAP-002` | Snapshot hash is mistaken for authenticity | Document hash as integrity only; future authenticity requires host signatures | OPEN |
 | `TM-FORK-001` | Child writes mutate parent or sibling | Isolated committed roots, empty child outbox, and fork tests | MITIGATED for the in-memory process API |
@@ -102,6 +104,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-CAP-003` | A folder mount escapes its configured root through a link or special file | Host-only root selection, link and special-file rejection, bounded UTF-8 import, and no guest-visible handles | PARTIAL — encountered links are rejected; concurrent source-tree replacement is caller-controlled |
 | `TM-AUTH-001` | Client-controlled identifiers are mistaken for authenticated identity or a tenant boundary | API and docs distinguish identifiers from identity; a future transport authenticates and authorizes before tenant-scoped receipt lookup | REQUIRED |
 | `TM-INT-001` | Panic crosses the activation boundary or poisons committed state | Panic containment outside guest transaction and unchanged-state tests | REQUIRED |
+| `TM-AUD-001` | Guest code or model tools rewrite durable agent history or diverge its message projection from canonical events | Host-managed `/agent` mutation boundary, event-derived messages, and projection validation on resume | MITIGATED for the in-memory process API |
 | `TM-SUP-001` | Vulnerable interpreter or dependency compromises the boundary | Lockfile, pinned toolchain, audit/deny/vet gates, and defense-in-depth isolation plan | REQUIRED |
 
 ## Security claims for the initial slice

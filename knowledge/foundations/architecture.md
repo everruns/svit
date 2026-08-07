@@ -16,25 +16,29 @@ Initial executable vertical slice implemented. Hardening remains in progress.
 
 ## Decision
 
-Svit is a Rust library for running isolated agent processes. A process is an
-actor-like state machine: it handles one activation at a time and owns one
-committed state root. Parallelism comes from independent processes, not shared
-guest memory.
+Svit is a Rust library for running isolated agents. A Svit agent owns one
+process and its durable conversation thread. A process is an actor-like state
+machine: it handles one transition at a time and owns one committed state root.
+Agentyk implements the current host-side reason/act loop behind `svit::Svit`.
+Parallelism comes from independent processes, not shared guest memory.
 
 The first executable slice contains:
 
 ```text
-Rust caller
-    |
-    v
-Process ----> transaction working copy ----> commit or rollback
-    |                    |
-    |                    v
-    |               restricted Lisp VM
-    |
-    +----> snapshot / restore / fork
-    +----> buffered message intents (not delivery)
-    +----> bounded folder / Turso snapshot import
+Rust caller ----> Svit Agent
+                      |
+                      +----> Agentyk reason/act loop
+                      |
+                      v
+                  Process ----> transaction working copy ----> commit or rollback
+                      |                    |
+                      |                    v
+                      |               restricted Lisp VM
+                      |
+                      +----> snapshot / restore / fork
+                      +----> durable inbox / live turn outbox
+                      +----> buffered message intents (not delivery)
+                      +----> bounded folder / Turso snapshot import
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -48,6 +52,7 @@ the boundary.
 | --- | --- |
 | Value model | Bounded serializable guest values with deterministic encoding |
 | Process | Address, version, committed root, limits, and lifecycle operations |
+| Agent loop | Agentyk `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/agent` |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
 | Snapshot mounts | Bounded read-only folder trees and host-selected Turso query rows |
@@ -55,12 +60,12 @@ the boundary.
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 
-The current workspace implements these responsibilities in the `svit` crate,
-provides a thin `svit-cli` crate, and keeps the Agentyk integration in the
-separate `svit-agentyk` adapter crate. The adapter can expose the complete
-generic process surface or attenuate a model to discovery, reads, and a
-host-selected script allowlist. The core does not depend on an agent framework.
-Module names may evolve; the boundaries are the decision.
+The current workspace implements the process and process-owned agent loop in
+the `svit` crate and provides a thin `svit-cli` crate. `svit::Svit` assembles
+the Agentyk engine internally and can expose the complete generic process
+surface or attenuate a model to discovery, reads, and a host-selected script
+allowlist. Agentyk is an implementation dependency, not the owner of the agent
+or process. Module names may evolve; the ownership boundary is the decision.
 
 ## Trusted-boundary rules
 
@@ -77,6 +82,11 @@ Module names may evolve; the boundaries are the decision.
    checked at the same serialization point as commit.
 8. External data enters only through a host-created bounded snapshot mount;
    activations receive persistent values, never filesystem or database handles.
+9. Durable loop and replay state is host-managed under `/agent`; untrusted
+   scripts and model tools can inspect the configured prompt, derived message
+   history, and canonical events but cannot rewrite them.
+10. Inbox messages commit before loop notification and are acknowledged only
+    after the corresponding turn succeeds.
 
 ## Deferred architecture
 

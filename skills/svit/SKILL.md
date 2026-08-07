@@ -24,6 +24,8 @@ Load only the reference needed:
 
 - Call the isolated unit a **Svit process** and the Rust executor the **Svit
   runtime**.
+- Call the process-owned reason/act loop a **Svit agent**; describe Agentyk as
+  its current loop implementation, not as the owner of a Svit capability.
 - Describe a single script invocation as an **activation**.
 - Call the controlled concurrency and commit model **VAST: Versioned Atomic
   State Transitions**. Keep `svit-control@1` as the wire protocol identifier.

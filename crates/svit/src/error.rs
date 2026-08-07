@@ -23,6 +23,10 @@ pub enum Error {
     #[error("invalid snapshot mount: {0}")]
     InvalidMount(String),
 
+    /// The committed inbox head changed before the runtime acknowledged it.
+    #[error("inbox head changed before acknowledgement")]
+    InboxConflict,
+
     /// A host-supplied resource configuration exceeds the runtime's hard
     /// safety envelope.
     #[error("invalid process limits: {0}")]

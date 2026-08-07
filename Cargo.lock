@@ -2571,6 +2571,8 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 name = "svit"
 version = "0.1.0"
 dependencies = [
+ "agentyk",
+ "async-trait",
  "ketos",
  "serde",
  "serde_json",
@@ -2610,6 +2612,15 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "turso",
+]
+
+[[package]]
+name = "svit-support-agent-v2"
+version = "0.1.0"
+dependencies = [
+ "agentyk",
+ "svit",
+ "tokio",
 ]
 
 [[package]]

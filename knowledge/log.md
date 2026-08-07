@@ -1,5 +1,34 @@
 # Svit Knowledge Update Log
 
+## 2026-08-07
+
+* **Agent ownership**: Added `svit::Svit` as the process-owning reason/act
+  API, with Agentyk as its internal loop engine rather than an external agent
+  that consumes Svit as a capability.
+* **Process lifetime**: Added `Svit::start`, cloneable `Inbox` handles,
+  completed-turn outbox listeners, and blocking drain/join. There is no
+  separate entrypoint message.
+* **Durable inbox**: Host sends commit to `/inbox` before waking the loop;
+  successful turns acknowledge the exact observed head and failures retain it.
+* **Message envelope**: Inbox and live outbox use Agentyk `Message` values with
+  ordered `ContentPart` values rather than plain input and `TurnResult` output.
+* **Runtime projection**: `/agent` now exposes the configured system prompt,
+  event-derived message history, and canonical Agentyk events through the
+  ordinary read-only runtime surface. Agent state format advanced to
+  `svit-agent@2`.
+* **Durable thread**: Added host-managed, guest-readable `/agent` state so
+  snapshots, restores, and forks carry the committed conversation event log.
+* **Subagents**: Defined a subagent as a Svit agent built around a forked child
+  process; child turns inherit committed history and isolate future mutation.
+* **Consumer example**: Added credentialed `support-agent-v2`, using
+  `gpt-5.6-terra` through one process-owned Svit inbox and outbox. Deterministic
+  lifecycle, snapshot, and fork evidence remains in the test suite.
+* **Audit boundary**: Added `TM-AUD-001` and executable evidence preventing
+  guest scripts and model tools from rewriting durable replay state.
+* **Compatibility**: Bumped snapshots to format 4 for the `/agent` root node.
+* **Limitations**: Recorded the one-thread-per-process constraint and the
+  non-atomic boundary between agent event commits and external model/tool calls.
+
 ## 2026-08-06
 
 * **Agent authority**: Added an attenuated Agentyk capability mode that exposes discovery, reads, and only host-allowlisted scripts; generic mutation remains available only through the explicit full-access constructor.

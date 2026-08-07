@@ -23,7 +23,7 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     assert_eq!(
         process.discover("/").unwrap(),
         [
-            "children", "inbox", "lib", "memory", "mounts", "system", "tasks"
+            "agent", "children", "inbox", "lib", "memory", "mounts", "system", "tasks"
         ]
     );
     assert_eq!(
@@ -63,6 +63,41 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
         Err(Error::InvalidPath(_))
     ));
     assert_eq!(process.version(), 0);
+}
+
+#[test]
+// THREAT[TM-AUD-001]
+fn agent_runtime_state_is_host_managed_and_guest_read_only() {
+    let mut process = Process::builder("svit://local/tests/agent-state")
+        .unwrap()
+        .library(
+            "forge-history",
+            svit::Script::new(r#"(define (main input) (write "/agent/events" input))"#),
+        )
+        .build()
+        .unwrap();
+
+    process
+        .replace_agent_state(value!({"format": "test@1", "events": []}))
+        .unwrap();
+    let committed = unchanged(&process);
+    let version = process.version();
+
+    assert!(process.exec("forge-history", value!(["forged"])).is_err());
+    assert_eq!(process.snapshot().unwrap(), committed);
+    assert_eq!(process.version(), version);
+    assert_eq!(
+        process.read("/agent/format").unwrap(),
+        Some(&value!("test@1"))
+    );
+
+    let oversized = Value::String("x".repeat(process.limits().max_text_bytes + 1));
+    assert!(matches!(
+        process.replace_agent_state(oversized),
+        Err(Error::InvalidValue(message)) if message == "maximum text bytes exceeded"
+    ));
+    assert_eq!(process.snapshot().unwrap(), committed);
+    assert_eq!(process.version(), version);
 }
 
 #[test]
@@ -264,7 +299,7 @@ fn restore_rejects_old_or_unknown_formats_schema_tampering_and_trailing_data() {
         .unwrap();
     let snapshot = process.snapshot().unwrap();
 
-    for format in [1, 2, 999] {
+    for format in [1, 2, 3, 999] {
         let mut unsupported: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
         unsupported["format"] = serde_json::json!(format);
         assert!(Process::restore(&serde_json::to_vec(&unsupported).unwrap()).is_err());

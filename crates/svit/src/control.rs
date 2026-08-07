@@ -469,6 +469,7 @@ fn failure(error: Error) -> ControlFailure {
         Error::InvalidControlId(_) => "invalid_control_id",
         Error::InvalidControlConfiguration(_) => "invalid_control_configuration",
         Error::ControlUnavailable => "control_unavailable",
+        Error::InboxConflict => "inbox_conflict",
     };
     ControlFailure {
         code: code.into(),
