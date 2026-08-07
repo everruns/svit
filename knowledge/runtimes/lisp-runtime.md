@@ -51,7 +51,7 @@ and converts all results to bounded Svit values before commit.
 | `(value-array value ...)` | Construct a persistent array, including an empty array |
 | `(value-null? value)` | Test whether a value is the persistent null value |
 | `(discover path)` | List immediate children at an absolute process path |
-| `(read path)` | Read from the transactional process hierarchy |
+| `(read path)` | Read from the transactional process hierarchy, including mount snapshots |
 | `(write path value)` | Stage a `/memory` or typed `/lib/<name>` update |
 | `(remove path)` | Stage a `/memory` or `/lib/<name>` removal |
 | `(exec script input)` | Execute a named script inside the same activation transaction |
@@ -80,7 +80,8 @@ by Svit. Script records never enter the guest data model.
 ## Process operation semantics
 
 All process operations use absolute paths. `discover` and `read` traverse the
-transactional hierarchy. `write` and `remove` mutate `/memory` values or one
+transactional hierarchy. Folder and Turso query data below `/mounts` is a
+recorded, read-only snapshot. `write` and `remove` mutate `/memory` values or one
 typed `/lib/<name>` entry; `/system` and reserved nodes are read-only. A
 library write is a map with required text `source` and optional text
 `documentation`.
@@ -95,7 +96,8 @@ failure before commit discards the complete activation working copy.
 ## Isolation and authority
 
 The runtime installs `GlobalIo::null()` and `NullModuleLoader`, and creates a
-fresh interpreter for every activation. Guest code receives no filesystem,
+fresh interpreter for every activation. Guest code may read imported mount
+values but receives no live filesystem or database authority and no ambient filesystem,
 network, environment, host process, module, clock, or randomness capability.
 Rust functions capture only the process working copy and bounded activation
 buffers.

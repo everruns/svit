@@ -5,6 +5,17 @@
 * **Agent authority**: Added an attenuated Agentyk capability mode that exposes discovery, reads, and only host-allowlisted scripts; generic mutation remains available only through the explicit full-access constructor.
 * **Support commit contract**: Bound support retrieval and commit to a host-issued request ID, derived source and ticket data from process state, rejected duplicate or policy-invalid commits atomically, and made the validated committed answer authoritative over model final text.
 * **Security evidence**: Added `TM-CAP-002` with focused adapter and deterministic simulated-agent tests for tool attenuation, script denial, request-binding rollback, idempotency, provenance, deterministic ticket policy, and committed response rendering.
+* **Snapshot mounts**: Added bounded, read-only construction-time imports for
+  real UTF-8 folders and host-selected Turso query rows under `/mounts`.
+* **Authority boundary**: Mounts persist values, kind, and mode but never host
+  paths, database connections, query capability, or other live authority.
+  Folder imports reject symbolic links and special files.
+* **Evidence**: Added focused link-rejection and read-only rollback tests plus
+  an executable example that reads both mount kinds and verifies deterministic
+  results.
+* **Consumer example**: Moved support documents from embedded process memory to
+  a real folder snapshot and added Turso-backed account context; the support
+  search script consumes both mounts before the model commits its response.
 
 ## 2026-08-05
 

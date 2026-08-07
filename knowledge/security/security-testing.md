@@ -46,6 +46,10 @@ Required for the initial vertical slice.
   the transport byte cap remains required.
 - `TM-DOS-006`: nested `exec` shares the outer activation deadline, stops at
   the configured nesting depth, and rolls back the complete activation.
+- `TM-DOS-007`: folder entry/text and Turso row/text limits stop materializing
+  data at their configured bounds; query execution still needs an outer deadline.
+- `TM-CAP-003`: folder imports reject symbolic links and special files, and
+  mounted data remains read-only through host and guest path operations.
 - `TM-EFF-002`: concurrent clients cannot both commit from one process version.
 - `TM-EFF-003`: exact retry replays a receipt, and retry after eviction cannot
   duplicate a committed activation.

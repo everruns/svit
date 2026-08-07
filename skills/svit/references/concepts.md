@@ -19,11 +19,12 @@
   generic process operations as host callers and agent tools; not full Scheme,
   Common Lisp, or unrestricted Ketos.
 
-The current implementation slice is local and in memory. Scheduling, message
-delivery, projections, external capabilities, distributed identity, and
-production isolation are deferred.
+The current implementation slice is local and in memory. It supports bounded,
+read-only snapshot mounts imported from a folder or host-selected Turso query.
+Scheduling, message delivery, live projections, external capabilities,
+distributed identity, and production isolation are deferred.
 
-The namespace reserves `/tasks`, `/inbox`, `/children`, and `/mounts`, but
-those nodes are empty and read-only in the current slice. `/system/identity`
+The namespace reserves `/tasks`, `/inbox`, and `/children`. `/mounts` contains
+read-only snapshot records with `kind`, `mode`, and `data`. `/system/identity`
 contains a logical address marked `authenticated: false`; it grants no
 authority.

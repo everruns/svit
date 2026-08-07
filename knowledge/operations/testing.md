@@ -36,6 +36,7 @@ The following scenarios execute with assertions and deterministic output under
 - parent and two forks diverging without shared mutation;
 - denied modules and bounded infinite-loop termination;
 - two control clients contending on one version, then resolving the conflict.
+- a real folder and Turso query imported together as read-only snapshot mounts.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
 CLI smoke inputs live under `crates/svit-cli/tests/fixtures/`; they are internal

@@ -24,7 +24,7 @@ use crate::error::sanitize_diagnostic;
 use crate::hooks::{
     ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction, SharedHook,
 };
-use crate::{Error, Limits, Result, Script, Value};
+use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
 
 const SNAPSHOT_FORMAT: u32 = 3;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
@@ -113,6 +113,7 @@ pub struct ProcessBuilder {
     id: ProcessId,
     memory: BTreeMap<String, Value>,
     scripts: BTreeMap<String, Script>,
+    mounts: BTreeMap<String, SnapshotMount>,
     limits: Limits,
     hooks: Vec<SharedHook>,
 }
@@ -127,6 +128,14 @@ impl ProcessBuilder {
     /// Adds or replaces a named script in the initial `/lib` library.
     pub fn library(mut self, name: impl Into<String>, script: Script) -> Self {
         self.scripts.insert(name.into(), script);
+        self
+    }
+
+    /// Adds or replaces a named read-only snapshot below `/mounts`.
+    pub fn mount(mut self, name: impl Into<String>, mount: SnapshotMount) -> Self {
+        // THREAT[TM-CAP-001]: Accept only the host-created snapshot domain
+        // type; guest-visible names and values cannot construct live authority.
+        self.mounts.insert(name.into(), mount);
         self
     }
 
@@ -146,7 +155,13 @@ impl ProcessBuilder {
     pub fn build(self) -> Result<Process> {
         self.limits.validate()?;
         // Builder scripts are version-zero state; only post-build saves commit a version.
-        let root = initial_root(&self.id, &self.limits, self.memory, self.scripts);
+        let root = initial_root(
+            &self.id,
+            &self.limits,
+            self.memory,
+            self.scripts,
+            self.mounts,
+        );
         validate_root(&root, &self.id, &self.limits)?;
         Ok(Process {
             id: self.id,
@@ -174,6 +189,7 @@ impl Process {
             id: ProcessId::new(id)?,
             memory: BTreeMap::new(),
             scripts: BTreeMap::new(),
+            mounts: BTreeMap::new(),
             limits: Limits::default(),
             hooks: Vec::new(),
         })
@@ -551,6 +567,7 @@ fn initial_root(
     limits: &Limits,
     memory: BTreeMap<String, Value>,
     scripts: BTreeMap<String, Script>,
+    mounts: BTreeMap<String, SnapshotMount>,
 ) -> Value {
     Value::Map(BTreeMap::from([
         ("children".into(), Value::empty_map()),
@@ -565,7 +582,15 @@ fn initial_root(
             ),
         ),
         ("memory".into(), Value::Map(memory)),
-        ("mounts".into(), Value::empty_map()),
+        (
+            "mounts".into(),
+            Value::Map(
+                mounts
+                    .into_iter()
+                    .map(|(name, mount)| (name, mount.into_value()))
+                    .collect(),
+            ),
+        ),
         ("system".into(), system_value(id, limits, None)),
         ("tasks".into(), Value::empty_map()),
     ]))
@@ -584,7 +609,11 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     }
     validate_reserved_root(root, "children", Value::empty_map())?;
     validate_reserved_root(root, "inbox", Value::Array(Vec::new()))?;
-    validate_reserved_root(root, "mounts", Value::empty_map())?;
+    crate::mounts::validate_mounts(
+        root.get("mounts")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /mounts".into()))?,
+        limits,
+    )?;
     validate_reserved_root(root, "tasks", Value::empty_map())?;
 
     let memory = root
@@ -886,7 +915,13 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
         return Err(Error::ResourceLimitExceeded("script source"));
     }
     let validation_id = ProcessId::new("svit://local/validation")?;
-    let root = initial_root(&validation_id, limits, BTreeMap::new(), BTreeMap::new());
+    let root = initial_root(
+        &validation_id,
+        limits,
+        BTreeMap::new(),
+        BTreeMap::new(),
+        BTreeMap::new(),
+    );
     let state = RuntimeState::new(
         root,
         Value::empty_map(),

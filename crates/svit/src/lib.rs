@@ -28,6 +28,7 @@ pub mod control;
 mod error;
 pub mod hooks;
 mod limits;
+pub mod mounts;
 mod process;
 pub mod value;
 
@@ -38,5 +39,6 @@ pub use control::{
 pub use error::{Error, Result};
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
+pub use mounts::SnapshotMount;
 pub use process::{Activation, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId};
 pub use value::{Script, Value};

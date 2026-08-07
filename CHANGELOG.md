@@ -31,6 +31,8 @@ All notable changes to Svit will be documented here.
 - One absolute-path `discover`, `read`, `write`, `remove`, and `exec` contract
   shared by Rust, agent tools, and Svit Lisp 2, including transactional,
   deadline-sharing, depth-bounded nested script execution.
+- Bounded, read-only snapshot mounts for real UTF-8 folders and host-selected
+  Turso query results, with a deterministic example covering both sources.
 
 ### Security
 
@@ -38,6 +40,8 @@ All notable changes to Svit will be documented here.
   and a module loader that rejects every module.
 - Ambient host APIs, modules, and randomness are unavailable to guest scripts.
 - Guest diagnostics are sanitized and capped before crossing the public API.
+- Folder snapshot imports reject symbolic links and special files; mount data
+  is validated against process value limits and grants no live host authority.
 
 No release has been published. The current API and snapshot format may change
 without compatibility guarantees.

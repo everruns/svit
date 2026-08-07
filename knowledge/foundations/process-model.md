@@ -25,7 +25,7 @@ The initial process exposes one conventional namespace:
 ├── tasks/                  reserved; empty in this slice
 ├── inbox/                  reserved; empty in this slice
 ├── children/               reserved; empty in this slice
-├── mounts/                 reserved; empty in this slice
+├── mounts/                 bounded read-only external snapshots
 └── system/                 read-only runtime metadata
     ├── identity            logical address, explicitly unauthenticated
     ├── capabilities        empty in this slice
@@ -36,14 +36,18 @@ The initial process exposes one conventional namespace:
     └── outbox              committed message intents
 ```
 
-`memory`, scripts, system metadata, and outbox form one committed logical root.
-The reserved nodes establish the namespace without claiming scheduler,
-delivery, child-supervision, or projection behavior. They remain empty and
-read-only until those semantics are implemented. The guest may reflect over
-memory and scripts. Enforcement state and host secrets never appear there.
+`memory`, scripts, mounts, system metadata, and outbox form one committed
+logical root. `/tasks`, `/inbox`, and `/children` remain reserved and empty.
+Each mount contains `kind`, `mode: snapshot-read-only`, and bounded `data`.
+Folder mounts contain nested maps with UTF-8 file leaves; Turso mounts contain
+maps for the rows returned by one host-selected query. The guest may reflect
+over memory, scripts, and imported mount data. Host paths, SQL authority,
+connections, enforcement state, and host secrets never appear there.
 The process builder assembles initial memory from separately named items into a
 text-keyed map and initial scripts through `library(name, script)` so both
-durable namespaces are explicit at the setup boundary.
+durable namespaces are explicit at the setup boundary. It attaches a prepared
+`SnapshotMount` through `mount(name, mount)`; import finishes before process
+construction and activation.
 Rust callers, agent integrations, and Svit Lisp use the same five generic
 process operations:
 
@@ -56,9 +60,9 @@ exec(script, input)
 ```
 
 `discover` returns deterministic immediate child names across memory, scripts,
-reserved nodes, and system state at every map or array depth. `read` returns a
+mount snapshots, reserved nodes, and system state at every map or array depth. `read` returns a
 value. `write` and `remove` modify `/memory` or one typed `/lib/<name>` entry.
-`exec` runs a named script activation. Inside Svit Lisp these operations use
+`/mounts` is read-only. `exec` runs a named script activation. Inside Svit Lisp these operations use
 the activation's transactional view; nested `exec` shares its transaction,
 deadline, output limits, and independent nesting-depth limit.
 Builders, snapshot, restore, and fork are

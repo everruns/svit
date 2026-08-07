@@ -1,10 +1,11 @@
 //! Transactional support-agent workflow used by the executable example.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use agentyk::Agent;
 use serde_json::json;
-use svit::{Process, Script, Value};
+use svit::{Limits, Process, Script, SnapshotMount, Value};
 use thiserror::Error;
 
 const TICKET_DESTINATION: &str = "svit://local/support-tickets";
@@ -31,6 +32,10 @@ pub enum SupportError {
     #[error(transparent)]
     Agent(#[from] agentyk::Error),
 
+    /// Turso could not construct or query the account-context database.
+    #[error(transparent)]
+    Turso(#[from] turso::Error),
+
     /// The shared process lock is poisoned.
     #[error("support process is unavailable")]
     ProcessUnavailable,
@@ -41,16 +46,38 @@ pub enum SupportError {
 }
 
 /// Builds one support process around a host-issued request identifier and question.
-pub fn support_process(request_id: &str, question: &str) -> Result<Process, SupportError> {
-    Ok(Process::builder("svit://local/support-agent")?
-        .memory(
-            "docs",
-            Value::from_json(json!([
-                {"id": "account-recovery", "content": include_str!("../docs/account-recovery.md")},
-                {"id": "password-reset", "content": include_str!("../docs/password-reset.md")},
-                {"id": "refunds", "content": include_str!("../docs/refunds.md")}
-            ]))?,
+pub async fn support_process(request_id: &str, question: &str) -> Result<Process, SupportError> {
+    let limits = Limits::default();
+    let docs_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs");
+    let support_docs = SnapshotMount::folder(docs_path, &limits)?;
+
+    let database = turso::Builder::new_local(":memory:").build().await?;
+    let connection = database.connect()?;
+    connection
+        .execute_batch(
+            "CREATE TABLE account_context (\n\
+                 account_id TEXT,\n\
+                 email_verified INTEGER,\n\
+                 authenticator_enrolled INTEGER,\n\
+                 recovery_method TEXT\n\
+             );\n\
+             INSERT INTO account_context VALUES\n\
+                 ('demo-account', 1, 1, 'identity-support-review');",
         )
+        .await?;
+    let account_context = SnapshotMount::turso_query(
+        &connection,
+        "SELECT account_id, email_verified, authenticator_enrolled, recovery_method \
+         FROM account_context",
+        (),
+        &limits,
+    )
+    .await?;
+
+    Ok(Process::builder("svit://local/support-agent")?
+        .limits(limits)
+        .mount("support_docs", support_docs)
+        .mount("account_context", account_context)
         .memory(
             "request",
             Value::from_json(json!({
@@ -64,7 +91,8 @@ pub fn support_process(request_id: &str, question: &str) -> Result<Process, Supp
             "search_support_docs",
             Script::new(include_str!("../scripts/search_support_docs.svit-script"))
                 .with_documentation(
-                    "Search support docs for the active host request. Input: {request_id}.",
+                    "Search mounted support docs and account context for the active host request. \
+                     Input: {request_id}.",
                 ),
         )
         .library(

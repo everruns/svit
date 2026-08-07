@@ -12,3 +12,4 @@ svit = { path = "../../crates/svit" }
 svit-agentyk = { path = "../../crates/svit-agentyk" }
 thiserror.workspace = true
 tokio.workspace = true
+turso.workspace = true
