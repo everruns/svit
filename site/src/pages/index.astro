@@ -1,44 +1,26 @@
 ---
 import "../styles/global.css";
 
-const model = [
-  {
-    number: "01",
-    title: "Own one memory tree",
-    copy: "A process keeps bounded, serializable state that survives across activations and can be read by its scripts.",
-    tag: "/memory",
-  },
-  {
-    number: "02",
-    title: "Run one activation",
-    copy: "A named restricted-Lisp script receives input and runs against a transactional working copy of the process state.",
-    tag: "main(input)",
-  },
-  {
-    number: "03",
-    title: "Commit as one change",
-    copy: "Memory, staged scripts, and buffered message intents commit together. A rejected activation leaves the prior state untouched.",
-    tag: "v → v + 1",
-  },
-  {
-    number: "04",
-    title: "Snapshot or fork",
-    copy: "Capture canonical committed state, restore it later, or fork an independently mutable child for another line of work.",
-    tag: "sha256(root)",
-  },
+const operations = [
+  { name: "discover(path)", copy: "List immediate children" },
+  { name: "read(path)", copy: "Read a process value" },
+  { name: "write(path, value)", copy: "Transactionally update memory or library" },
+  { name: "remove(path)", copy: "Transactionally remove memory or library data" },
+  { name: "exec(script, input)", copy: "Run a named script transactionally" },
 ];
 
 const works = [
-  "Transactional memory, scripts, and outbox intents",
-  "Deterministic JSON snapshots with integrity hashes",
-  "Restore and fork with isolated future mutations",
-  "Fresh restricted-Lisp interpreter for every activation",
-  "Configurable deadline, interpreter memory, stack, value, script, log, and message limits",
-  "In-memory multi-client control with version checks and bounded retry receipts",
+  "One namespace for memory, scripts, mount snapshots, system metadata, and outbox",
+  "One process protocol across host callers, agent tools, and Svit Lisp",
+  "Atomic memory, script, and outbox commits with complete rollback",
+  "Bounded Svit Lisp 2 execution with no ambient host authority",
+  "Deterministic snapshots, restore, and isolated forks",
+  "In-memory VAST control with version checks and bounded retry receipts",
+  "Bounded read-only folder and Turso query snapshots under /mounts",
 ];
 
 const later = [
-  "Project the outside world into the same structured value space",
+  "Live and writable projections of the outside world",
   "Addressable communication between runtimes",
   "Runtime-native identity, authentication, and capabilities",
   "Durable storage, scheduling, and message delivery",
@@ -54,7 +36,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width" />
-    <meta name="theme-color" content="#f3f0e8" />
+    <meta name="theme-color" content="#fafafa" />
     <meta
       name="description"
       content="Svit gives agents a structured space to remember, act, and evolve: memory and executable behavior together, changed through bounded transactions."
@@ -113,7 +95,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           <svg class="space-map" viewBox="0 0 560 500" role="img" aria-labelledby="space-map-title space-map-description">
             <title id="space-map-title">One evolving agent space</title>
             <desc id="space-map-description">
-              An agent activates a Svit process containing memory and behaviors. A projected view of the world is a research direction. The process changes transactionally and can be snapshotted, restored, or forked.
+              An agent activates a Svit process containing memory, behaviors, and read-only external snapshots. The process changes transactionally and can be snapshotted, restored, or forked.
             </desc>
             <defs>
               <marker id="space-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
@@ -154,15 +136,15 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
               </g>
               <g class="space-node world-node">
                 <circle cx="402" cy="302" r="42"></circle>
-                <text x="402" y="298" text-anchor="middle">WORLD</text>
-                <text x="402" y="321" text-anchor="middle" class="space-map-note">REACH</text>
-                <text x="402" y="358" text-anchor="middle" class="space-map-direction">RESEARCH DIRECTION</text>
+                <text x="402" y="298" text-anchor="middle">MOUNTS</text>
+                <text x="402" y="321" text-anchor="middle" class="space-map-note">READ</text>
+                <text x="402" y="358" text-anchor="middle" class="space-map-direction">SNAPSHOT VALUES</text>
               </g>
             </g>
 
             <path d="M445 292 C466 284 473 266 488 249" class="projection-line" marker-end="url(#projection-arrow)"></path>
-            <text x="475" y="278" text-anchor="middle" class="space-map-note">TYPED</text>
-            <text x="475" y="290" text-anchor="middle" class="space-map-note">PROJECTION</text>
+            <text x="475" y="278" text-anchor="middle" class="space-map-note">SNAPSHOT</text>
+            <text x="475" y="290" text-anchor="middle" class="space-map-note">IMPORT</text>
             <g class="external-node">
               <rect x="492" y="202" width="58" height="78"></rect>
               <text x="521" y="235" text-anchor="middle">EXTERNAL</text>
@@ -183,7 +165,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
         <div class="hero-index" aria-hidden="true">
           <span>SVIT / 001</span>
           <span>RESEARCH-STAGE</span>
-          <span>JUL · 2026</span>
+          <span>AUG · 2026</span>
         </div>
       </section>
 
@@ -199,30 +181,76 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
 
       <section id="model" class="model page-shell section-rule">
         <div class="section-intro">
-          <p class="section-label">01 / Process model</p>
-          <h2>Small enough to reason about.</h2>
-          <p>One process. One committed root. One activation at a time.</p>
+          <p class="section-label">01 / Process space</p>
+          <h2>One root. One shared protocol.</h2>
+          <p>Five operations address memory, scripts, mount snapshots, runtime metadata, and outbox through one committed process namespace.</p>
         </div>
-        <div class="model-grid">
-          {model.map((item) => (
-            <article class="model-card">
-              <div class="model-card-top">
-                <span>{item.number}</span>
-                <code>{item.tag}</code>
+        <div class="process-space-visual">
+          <div class="protocol-entry">
+            <p>THE SHARED PROCESS PROTOCOL</p>
+            <div class="protocol-operations" aria-label="Five shared process protocol operations">
+              {operations.map((operation) => <code>{operation.name}</code>)}
+            </div>
+            <div class="protocol-entry-line" aria-hidden="true">
+              <span>OPERATES ON ONE ROOT</span>
+              <strong>↓</strong>
+            </div>
+          </div>
+
+          <article class="process-root-visual">
+            <div class="process-root-heading">
+              <span>ONE COMMITTED PROCESS SPACE</span>
+              <code>/</code>
+            </div>
+            <div class="process-zones">
+              <div class="process-zone process-zone-memory">
+                <div class="process-zone-heading"><span>REMEMBER</span><code>/memory</code></div>
+                <h3>A navigable tree of durable values.</h3>
+                <div class="memory-tree" aria-label="Illustrative paths in the process memory tree">
+                  <div class="memory-root"><code>/memory</code><small>&#123;…&#125;</small></div>
+                  <div class="memory-branches">
+                    <div><code>context</code><small>&#123;…&#125;</small></div>
+                    <div><code>plans</code><small>[…]</small></div>
+                    <div><code>history</code><small>[…]</small></div>
+                  </div>
+                </div>
+                <p>Illustrative paths into structured values—not host files.</p>
               </div>
-              <h3>{item.title}</h3>
-              <p>{item.copy}</p>
-            </article>
-          ))}
+              <div class="process-zone process-zone-library">
+                <div class="process-zone-heading"><span>ACT</span><code>/lib</code></div>
+                <h3>What the agent can execute and revise.</h3>
+                <p>Named Svit Lisp scripts stored with process state.</p>
+              </div>
+              <div class="process-zone process-zone-mounts">
+                <div class="process-zone-heading"><span>IMPORT</span><code>/mounts</code></div>
+                <h3>Recorded views of external data.</h3>
+                <p>Bounded read-only folder trees and host-selected Turso query rows. No live handles.</p>
+              </div>
+              <div class="process-zone process-zone-system">
+                <div class="process-zone-heading"><span>ORIENT</span><code>/system</code></div>
+                <h3>How the agent understands the runtime.</h3>
+                <p>Identity, API, limits, lineage, runtime, and committed outbox.</p>
+              </div>
+            </div>
+            <div class="reserved-strip">
+              <span>RESERVED IN THIS SLICE</span>
+              <code>/tasks · /inbox · /children</code>
+              <p>Names exist; behavior does not yet.</p>
+            </div>
+            <div class="root-lifecycle">
+              <p>The whole committed root moves together.</p>
+              <strong>SNAPSHOT · RESTORE · FORK</strong>
+            </div>
+          </article>
         </div>
       </section>
 
       <section class="transaction page-shell section-rule">
         <div class="transaction-copy">
-          <p class="section-label">02 / Transaction boundary</p>
+          <p class="section-label">02 / VAST transaction</p>
           <h2>Success commits once. Rejection commits nothing.</h2>
           <p>
-            Each activation works on a private copy. Syntax, runtime, conversion, validation, and limit failures all roll back memory, scripts, outbox, and version together.
+            Versioned Atomic State Transitions check the version a client observed at the same serialization point as commit. Syntax, runtime, conversion, validation, and limit failures all roll back memory, scripts, outbox, and version together.
           </p>
           <div class="invariant">
             <span class="invariant-mark">✓</span>
@@ -265,40 +293,57 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
             <p class="section-label">02B / Multi-client control</p>
             <h3>Many clients. One commit point.</h3>
             <p>
-              Each request names the process version it observed. If two clients activate the same version, at most one commits the next version. The other receives a conflict and must reconsider its input against current state.
+              If two valid requests race from the same version and one commits, the stale request receives a conflict. VAST never merges concurrent activations.
             </p>
-            <p>An exact retry returns its retained result instead of running the activation again.</p>
+            <p>While its bounded receipt is retained, an exact retry returns the original result without running the activation again.</p>
             <aside class="control-scope">
               <strong>Current scope</strong>
               <span>Transport-neutral and in memory. Network transport, authentication, durable receipts, and distributed process ownership remain research directions.</span>
             </aside>
           </div>
 
-          <div
-            class="control-flow"
-            role="img"
-            aria-label="Client A expects version 12 and commits version 13. Client B also expects version 12 and receives a version conflict. An exact retry by Client A replays the retained receipt."
-          >
-            <div class="control-row">
-              <div class="control-step"><small>CLIENT A</small><strong>expects v12</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step"><small>PROCESS</small><strong>version check</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step control-committed"><small>COMMITTED</small><strong>v13</strong></div>
+          <div class="control-flow" role="img" aria-label="Two clients race from version 12. At the serialization point, Client A commits version 13 first. Client B then conflicts because version 12 is stale. An exact retry by Client A replays the retained receipt without another activation.">
+            <div class="race-heading">
+              <span>ONE PROCESS</span>
+              <strong>v12</strong>
             </div>
-            <div class="control-row">
-              <div class="control-step"><small>CLIENT B</small><strong>expects v12</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step"><small>PROCESS</small><strong>current v13</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step control-conflict"><small>CONFLICT</small><strong>reconsider input</strong></div>
+            <div class="race-lanes">
+              <div class="race-request">
+                <span>CLIENT A</span>
+                <strong>expected v12</strong>
+                <small>activation α</small>
+              </div>
+              <div class="race-gate">
+                <span>01</span>
+                <strong>v12 = v12</strong>
+                <small>SERIALIZATION POINT</small>
+              </div>
+              <div class="race-result race-result-commit">
+                <span>COMMIT</span>
+                <strong>v13</strong>
+                <small>state changes once</small>
+              </div>
+
+              <div class="race-request">
+                <span>CLIENT B</span>
+                <strong>expected v12</strong>
+                <small>activation β</small>
+              </div>
+              <div class="race-gate">
+                <span>02</span>
+                <strong>v12 ≠ v13</strong>
+                <small>SERIALIZATION POINT</small>
+              </div>
+              <div class="race-result race-result-conflict">
+                <span>CONFLICT</span>
+                <strong>still v13</strong>
+                <small>activation never runs</small>
+              </div>
             </div>
-            <div class="control-row">
-              <div class="control-step"><small>EXACT RETRY</small><strong>Client A</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step"><small>RECEIPT</small><strong>retained result</strong></div>
-              <span class="control-arrow" aria-hidden="true">→</span>
-              <div class="control-step control-replayed"><small>REPLAYED</small><strong>no activation</strong></div>
+            <div class="retry-receipt">
+              <div><span>EXACT RETRY · CLIENT A</span><strong>same request id + digest</strong></div>
+              <b aria-hidden="true">→</b>
+              <div><span>RETAINED RECEIPT</span><strong>replay committed result · no activation</strong></div>
             </div>
           </div>
         </div>
@@ -307,10 +352,10 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
       <section id="runtime" class="sandbox">
         <div class="page-shell sandbox-inner">
           <div class="sandbox-copy">
-            <p class="section-label section-label-light">03 / Guest boundary</p>
+            <p class="section-label section-label-light">03 / Svit Lisp boundary</p>
             <h2>No ambient authority.</h2>
             <p>
-              Guest scripts get an explicit, versioned language surface—not the host operating system. Every activation starts in a fresh Ketos interpreter with null I/O and module loading denied.
+              Svit Lisp 2 scripts use the same process protocol exposed to host callers and agent tools. Every activation starts in a fresh interpreter with null I/O and module loading denied.
             </p>
             <p class="security-note">
               This is a tested runtime layer, not proof of hostile same-process multi-tenancy. Production isolation still needs a Wasm or OS boundary.
@@ -318,9 +363,7 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           </div>
           <div class="surface-panel">
             <div class="surface-allowed">
-              <p>VISIBLE TO GUEST</p>
-              <code>input</code>
-              <code>(value-null? value)</code>
+              <p>PROCESS PROTOCOL</p>
               <code>(discover path)</code>
               <code>(read path)</code>
               <code>(write path value)</code>
@@ -339,11 +382,52 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
         </div>
       </section>
 
+      <section class="agent-context page-shell">
+        <div class="section-intro agent-context-intro">
+          <p class="section-label">04 / Agent in context</p>
+          <h2>The agent works through the process.</h2>
+          <p>The runnable Agentyk example gives a model only discover, read, exec, and two allowlisted scripts.</p>
+        </div>
+
+        <div class="agent-trace">
+          <div class="agent-question">
+            <span>SUPPORT REQUEST</span>
+            <blockquote>“I lost access to my verified email and my authenticator.”</blockquote>
+            <p>The example instructs the agent to discover process scripts, execute them, and commit its result before replying.</p>
+          </div>
+          <div class="trace-steps">
+            <div class="trace-row">
+              <span>01</span>
+              <code>discover("/lib")</code>
+              <p>Find <strong>search_support_docs</strong> and <strong>commit_support_result</strong>.</p>
+            </div>
+            <div class="trace-row">
+              <span>02</span>
+              <code>exec("search_support_docs", input)</code>
+              <p>Read support knowledge and account context from <strong>/mounts</strong> snapshots.</p>
+            </div>
+            <div class="trace-row">
+              <span>03</span>
+              <code>exec("commit_support_result", input)</code>
+              <p>Write the authoritative answer to <strong>/memory/request/result</strong>.</p>
+            </div>
+            <div class="trace-row trace-row-outbox">
+              <span>04</span>
+              <code>/system/outbox</code>
+              <p>Commit a ticket intent with the answer. <strong>Queued, not delivered.</strong></p>
+            </div>
+          </div>
+        </div>
+        <a class="example-link" href="https://github.com/everruns/svit/tree/main/examples/support-agent">
+          Explore the support-agent example <span aria-hidden="true">↗</span>
+        </a>
+      </section>
+
       <section class="example page-shell">
         <div class="section-intro example-intro">
-          <p class="section-label">04 / The smallest useful script</p>
+          <p class="section-label">05 / The smallest useful script</p>
           <h2>State in. State out.</h2>
-          <p>A named script defines <code>main(input)</code>. The runtime owns the transition around it.</p>
+          <p>A named script defines <code>(main input)</code>. The runtime owns the transition around it.</p>
         </div>
         <div class="code-window">
           <div class="code-heading">
@@ -353,8 +437,9 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
           <pre><code><span class="code-dim">01</span>  (<span class="code-keyword">define</span> (<span class="code-call">main</span> input)
 <span class="code-dim">02</span>    (<span class="code-keyword">let</span> ((count (+ (read "/memory/count")
 <span class="code-dim">03</span>                    (value-get input "/by"))))
-<span class="code-dim">04</span>      (write "/memory/count" count)
-<span class="code-dim">05</span>      (value-map "count" count)))</code></pre>
+<span class="code-dim">04</span>      (<span class="code-keyword">do</span>
+<span class="code-dim">05</span>        (write "/memory/count" count)
+<span class="code-dim">06</span>        (value-map "count" count))))</code></pre>
           <div class="code-result">
             <span>INPUT</span><code>&#123; by: 4 &#125;</code>
             <span>OUTPUT</span><code>&#123; count: 9 &#125;</code>
@@ -370,9 +455,9 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
 
       <section id="status" class="status page-shell section-rule">
         <div class="section-intro status-intro">
-          <p class="section-label">05 / From slice to system</p>
+          <p class="section-label">06 / From slice to system</p>
           <h2>Start with a kernel. Grow toward an agent runtime.</h2>
-          <p>The current slice tests the core semantics. The larger direction adds projections, communication, identity, durable execution, and stronger isolation.</p>
+          <p>The current slice tests the core semantics. The larger direction adds live projections, communication, identity, durable execution, and stronger isolation.</p>
         </div>
         <div class="status-grid">
           <div class="status-list status-works">
