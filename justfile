@@ -22,7 +22,12 @@ examples:
     cargo run --locked -p svit --example sandbox_limits
     cargo run --locked -p svit --example multi_client_control
     cargo run --locked -p svit --example mounted_resources
+    cargo run --locked -p svit --example process_owned_agent
     cargo run --locked -p svit-cli -- exec crates/svit-cli/tests/fixtures/counter.svit-script '{"by": 3}'
+
+# Run the live process-owned support agent with OPENAI_API_KEY configured.
+support-agent-v2:
+    cargo run --locked -p svit-support-agent-v2
 
 # Validate the OKF v0.2 knowledge bundle.
 check-okf:

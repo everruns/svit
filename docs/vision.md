@@ -15,11 +15,12 @@ principles.
 
 ## The model
 
-A Svit **runtime** is the Rust host that executes and supervises agent
-processes. A Svit **process** is the isolated unit an agent owns. It contains
-one structured space with a memory tree and named script library, plus an
-address and resource limits. The broader model adds a mailbox, identity,
-capabilities, schedules, projections, and lineage.
+A Svit **runtime** is the Rust host that executes and supervises agents. A Svit
+**agent** owns a reason/act loop, one durable thread, and exactly one Svit
+**process**. The process contains structured memory, named scripts, an address,
+and resource limits. Agentyk is the current loop implementation behind the
+Svit API. The broader model adds a mailbox, identity, capabilities, schedules,
+projections, and lineage.
 
 An **activation** is one bounded transition. It receives input, runs a named
 script against a working copy, and either commits the resulting state and
@@ -35,6 +36,7 @@ VAST does not merge concurrent activations.
 flowchart LR
     Event["Input event"] --> Activation["Bounded activation"]
     subgraph Process["Agent process"]
+        Thread["Host-managed agent thread"] --> Activation
         Activation --> Space["Structured agent space"]
         Space --> Memory["Memory tree"]
         Space --> Scripts["Script library"]
@@ -43,9 +45,10 @@ flowchart LR
     Space --> Snapshot["Snapshot or fork"]
 ```
 
-The process is portable data plus explicit transition semantics. The agent can
-reason about the same space that the runtime validates, commits, snapshots,
-and forks.
+The process is portable data plus explicit transition semantics. Its snapshot
+includes the committed agent thread, so restore resumes conversation history
+and fork gives a subagent an independent process. The agent can reason about
+the same space that the runtime validates, commits, snapshots, and forks.
 
 ## One structured space
 
@@ -112,6 +115,7 @@ operating-system boundary.
 
 The current implementation tests the smallest useful part of the idea:
 
+- one process-owned agent thread implemented through Agentyk;
 - one serializable memory tree;
 - named, self-authored Svit Lisp scripts;
 - bounded transactional activations;

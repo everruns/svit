@@ -92,7 +92,8 @@ events and snapshots can be persisted, moved, or replicated by the host.
 6. Make committed processes serializable, forkable, and migratable.
 7. Let an agent discover and modify its memory and functional library within
    its permissions.
-8. Integrate with agent frameworks without owning the LLM loop.
+8. Own the agent lifecycle while using a replaceable reason/act engine; the
+   initial implementation uses Agentyk behind the Svit API.
 
 ### Initial non-goals
 
@@ -144,7 +145,8 @@ mutable values, immutable metadata, capability handles, and lazy projections.
 
 ```mermaid
 flowchart TB
-    Agent["Agent or application"] --> API["Process API / agent capability"]
+    Application["Application"] --> Agent["Svit agent\nAgentyk loop"]
+    Agent --> API["Process API"]
 
     subgraph Host["Svit runtime host (Rust)"]
         Supervisor["Supervisor + fair scheduler"]

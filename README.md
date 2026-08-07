@@ -1,8 +1,10 @@
 # Svit
 
-Svit is a research-stage agent process runtime. It gives an agent one durable
-state tree, named restricted-Lisp scripts, bounded transactional execution,
-snapshots, and forks—without giving guest code an operating system.
+Svit is a research-stage agent process runtime. One Svit agent owns a process,
+a durable conversation thread, named restricted-Lisp scripts, bounded
+transactional execution, snapshots, and forks—without giving guest code an
+operating system. Agentyk implements the current reason/act loop inside the
+Svit agent API.
 
 The current implementation is a deliberately small vertical slice. It is
 runnable and tested, but it is not yet a production multi-tenant platform or a
@@ -74,11 +76,62 @@ exec(script, input)   -> transactional named-script execution
 Builders, snapshots, restore, and fork are process lifecycle APIs, not a second
 agent-operation vocabulary.
 
+## Process-owned agent loop
+
+`svit::Svit` owns both the Agentyk loop and its process. The configured system
+prompt, event-derived message history, and canonical Agentyk events are
+committed under the host-managed, guest-readable `/agent` node. Restoring a
+process resumes that conversation, and forking it creates an isolated child
+agent process with inherited history:
+
+```rust,no_run
+use agentyk::{ModelSpec, OpenAiDriver};
+use svit::{ContentPart, Message, Svit};
+
+# async fn example(api_key: String) -> svit::SvitResult<()> {
+let mut svit = Svit::builder("svit://local/demo/agent")?
+    .system_prompt("Work entirely through your Svit process.")
+    .model(ModelSpec::openai("gpt-5.6-terra").api_key(api_key))
+    .driver(OpenAiDriver::new())
+    .build()
+    .await?;
+
+let inbox = svit.inbox();
+let mut outbox = svit.outbox();
+
+svit.start()?;
+inbox.send(Message::user_multimodal(vec![ContentPart::text(
+    "Remember that the release color is blue.",
+)]))?;
+let answer = outbox.recv().await.expect("completed agent turn");
+assert!(!answer.text().is_empty());
+
+drop(inbox);
+svit.block().await?;
+let snapshot = svit.snapshot()?;
+# let _ = snapshot;
+# Ok(())
+# }
+```
+
+`start` launches the independently running local loop. `Inbox::send` commits an
+Agentyk `Message`, including its ordered `ContentPart` values, before waking
+the loop. The live outbox emits the durable assistant `Message` for each
+completed turn. `block` seals the inbox, drains committed messages, and joins
+the loop. A subagent is another `Svit` built around a fork returned by
+`svit.fork_process(child_address)`.
+
+Run the live process-owned support-agent scenario with `OPENAI_API_KEY` set:
+
+```console
+just support-agent-v2
+```
+
 ## What works now
 
-- One discoverable process namespace containing mutable `/memory`, named
+- One discoverable process namespace containing host-managed `/agent`, mutable `/memory`, named
   `/lib` scripts, read-only folder and Turso query snapshots under `/mounts`,
-  reserved `/tasks`, `/inbox`, and `/children` nodes, plus read-only `/system`
+  reserved `/tasks` and `/children`, a host-managed durable `/inbox`, plus read-only `/system`
   metadata and the outbox.
 - Named script installation, inspection, replacement, and removal through the
   same generic path operations used for memory.
@@ -87,7 +140,10 @@ agent-operation vocabulary.
 - Structured `log-info!` records and deterministic buffered `send!` intents.
 - Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
 - Forks that copy committed memory and scripts into an independently mutable
-  child without copying the parent's outbox.
+  child without copying the parent's outbox. Agent-process forks also inherit
+  committed conversation history and isolate future turns.
+- A process-owned `svit::Svit` loop implemented by Agentyk, with bounded
+  durable events carried by snapshots, restores, and forks.
 - Configurable execution deadline, nested-exec depth, VM stack, namespace,
   syntax, integer, estimated guest-memory, value, text, script, log, message,
   and staged-script limits.
@@ -153,12 +209,15 @@ cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 cargo run -p svit --example mounted_resources
+cargo run -p svit --example process_owned_agent
 ```
 
 They cover persistence and restore, functional self-reflection, rollback of a
 state-plus-message transaction, isolated forks, denied ambient APIs, a bounded
 infinite loop, two clients resolving an optimistic concurrency conflict, and
-bounded snapshots of a real folder and a Turso query. See
+bounded snapshots of a real folder and a Turso query. The process-owned agent
+example resumes one Agentyk-backed thread and continues it in an isolated
+subagent process. See
 [examples/README.md](examples/README.md), or run all of them with `just examples`.
 
 ## Current security status

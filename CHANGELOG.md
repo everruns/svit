@@ -25,7 +25,8 @@ All notable changes to Svit will be documented here.
   validation tooling.
 - Conventional discoverable process hierarchy with reserved future nodes and
   validated system identity, API, limits, lineage, runtime, capabilities, and
-  outbox metadata. Snapshot format 3 records this root schema.
+  outbox metadata. Snapshot format 4 records this root schema and host-managed
+  agent-loop state.
 - Schema-aligned `ProcessBuilder::library` construction for initial `/lib`
   entries, replacing the pre-release `script` builder method.
 - One absolute-path `discover`, `read`, `write`, `remove`, and `exec` contract
@@ -33,6 +34,10 @@ All notable changes to Svit will be documented here.
   deadline-sharing, depth-bounded nested script execution.
 - Bounded, read-only snapshot mounts for real UTF-8 folders and host-selected
   Turso query results, with a deterministic example covering both sources.
+- A process-owned `svit::Svit` loop implemented with Agentyk, with durable
+  conversation events carried through snapshot, restore, and isolated forks.
+- A live `support-agent-v2` consumer using `gpt-5.6-terra` through a
+  process-owned Svit inbox and outbox.
 
 ### Security
 
@@ -42,6 +47,8 @@ All notable changes to Svit will be documented here.
 - Guest diagnostics are sanitized and capped before crossing the public API.
 - Folder snapshot imports reject symbolic links and special files; mount data
   is validated against process value limits and grants no live host authority.
+- Guest scripts and model tools can inspect durable `/agent` history but cannot
+  rewrite it; only the trusted process host can replace that bounded state.
 
 No release has been published. The current API and snapshot format may change
 without compatibility guarantees.

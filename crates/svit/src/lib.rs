@@ -24,6 +24,7 @@
 //! # Ok::<(), svit::Error>(())
 //! ```
 
+mod agent;
 pub mod control;
 mod error;
 pub mod hooks;
@@ -32,6 +33,8 @@ pub mod mounts;
 mod process;
 pub mod value;
 
+pub use agent::{AgentError, Inbox, Svit, SvitBuilder, SvitResult, SvitResumeBuilder};
+pub use agentyk::{ContentPart, Message};
 pub use control::{
     ControlClientId, ControlCommand, ControlFailure, ControlOutcome, ControlProtocol,
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,

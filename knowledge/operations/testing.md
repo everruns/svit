@@ -37,6 +37,11 @@ The following scenarios execute with assertions and deterministic output under
 - denied modules and bounded infinite-loop termination;
 - two control clients contending on one version, then resolving the conflict.
 - a real folder and Turso query imported together as read-only snapshot mounts.
+- a process-owned agent thread restored and continued in an isolated child process.
+- a started Svit drains its durable inbox, emits completed turns, and leaves a
+  failed turn's input queued.
+- the agent reads its projected system prompt, message history, and canonical
+  events through the runtime capability during a turn.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
 CLI smoke inputs live under `crates/svit-cli/tests/fixtures/`; they are internal
@@ -44,11 +49,18 @@ test data, not public examples. Examples requiring an API key or external
 service must be separated from the deterministic core suite and must never
 receive secrets on pull-request-controlled code.
 
-The support-agent consumer scenario uses Agentyk's simulated driver to prove
-that model-visible mutation is attenuated, the committed answer is authoritative,
+The original support-agent consumer scenario uses Agentyk's simulated driver to
+prove that model-visible mutation is attenuated, the committed answer is authoritative,
 request mismatches roll back, ticket policy is derived from retrieved state, and
 retries cannot duplicate a ticket intent. Its optional live-model executable
 remains outside the deterministic suite.
+
+Agent-loop integration tests snapshot and restore a conversation, continue a
+fork in a child process, assert parent isolation, and enforce script
+allowlisting through the Svit-owned builder.
+The credentialed `support-agent-v2` consumer exercises one process-owned Svit
+with `gpt-5.6-terra`. It remains outside the deterministic suite; lifecycle,
+snapshot, and fork behavior stays covered by integration tests.
 
 ## Transaction matrix
 
