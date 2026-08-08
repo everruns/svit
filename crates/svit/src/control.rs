@@ -370,7 +370,9 @@ impl ProcessController {
 fn execute_command(request: &ControlRequest, process: &mut Process) -> ControlResponse {
     let previous_version = process.version();
     let result = match &request.command {
-        ControlCommand::Activate { script, input } => process.exec(script, input.clone()),
+        ControlCommand::Activate { script, input } => {
+            process.exec(&format!("/lib/{script}"), input.clone())
+        }
     };
     let outcome = match result {
         Ok(activation) => ControlOutcome::Committed {
@@ -470,6 +472,7 @@ fn failure(error: Error) -> ControlFailure {
         Error::InvalidControlConfiguration(_) => "invalid_control_configuration",
         Error::ControlUnavailable => "control_unavailable",
         Error::InboxConflict => "inbox_conflict",
+        Error::ChildUnavailable => "child_unavailable",
     };
     ControlFailure {
         code: code.into(),

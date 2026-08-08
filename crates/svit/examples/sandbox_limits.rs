@@ -27,7 +27,7 @@ fn main() -> svit::Result<()> {
     )?;
     let version_before = bounded.version();
 
-    let failure = bounded.exec("loop", Value::Null);
+    let failure = bounded.exec("/lib/loop", Value::Null);
     assert!(matches!(failure, Err(Error::ExecutionLimitExceeded)));
     assert_eq!(bounded.version(), version_before);
     assert_eq!(bounded.read("/memory/started")?, Some(&Value::Bool(false)));

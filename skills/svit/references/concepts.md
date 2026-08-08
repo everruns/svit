@@ -20,11 +20,19 @@
 - **Svit Lisp**: the restricted, versioned Ketos guest language with the same
   generic process operations as host callers and agent tools; not full Scheme,
   Common Lisp, or unrestricted Ketos.
+- **Native executables**: optional typed programs under `/bin` for committed-process
+  search and explicit JSON filtering, with separate host grants for HTTP,
+  nested model calls, and one-turn child execution.
+- **Executable manual**: `/bin/<name>` describes one installed executable's
+  schema, output, effect class, and limits. `/bin` is refreshed on resume and
+  never grants authority.
 
 The current implementation slice is local and in memory. It supports bounded,
 read-only snapshot mounts imported from a folder or host-selected Turso query.
-Scheduling, remote message delivery, durable live projections, external capabilities,
-distributed identity, and production isolation are deferred.
+Scheduling, remote message delivery, durable live projections, guest-script
+external capabilities, distributed identity, and production isolation are
+deferred. Optional native executables remain outside Svit Lisp and process
+transactions.
 
 `/agent` contains host-managed, guest-readable loop and replay state. The
 namespace reserves `/tasks` and `/children`; `/inbox` is a host-managed durable

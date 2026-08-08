@@ -22,7 +22,7 @@ async fn main() -> SvitResult<()> {
         .driver(SimDriver::new([
             SimTurn::tool_call(
                 "exec",
-                json!({"script": "remember_color", "input": {"color": "blue"}}),
+                json!({"path": "/lib/remember_color", "input": {"color": "blue"}}),
             ),
             SimTurn::text("remembered blue"),
         ]))

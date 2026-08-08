@@ -12,10 +12,15 @@ categories.workspace = true
 [dependencies]
 agentyk.workspace = true
 async-trait.workspace = true
+jaq-core.workspace = true
+jaq-json.workspace = true
+jaq-std.workspace = true
 ketos.workspace = true
+regex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 turso.workspace = true
+url.workspace = true

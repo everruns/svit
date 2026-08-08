@@ -48,13 +48,25 @@ Required for the initial vertical slice.
   the configured nesting depth, and rolls back the complete activation.
 - `TM-DOS-007`: folder entry/text and Turso row/text limits stop materializing
   data at their configured bounds; query execution still needs an outer deadline.
+- `TM-DOS-008`: native search rejects oversized patterns and native `jq`
+  rejects recursive or generator constructs before evaluation.
+- `TM-ESC-003`: native data executables accept only a committed process path or
+  explicit JSON; no shell, filesystem, executable, or environment input exists.
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
   mounted data remains read-only through host and guest path operations.
+- `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an
+  allowed fixture request passes through both URL policy and host transport.
+- `TM-CAP-005`: `/bin` exposes the exact installed executable manuals during a
+  turn, and resume removes entries whose host grants are no longer configured.
 - `TM-EFF-002`: concurrent clients cannot both commit from one process version.
 - `TM-EFF-003`: exact retry replays a receipt, and retry after eviction cannot
   duplicate a committed activation.
 - `TM-EFF-004`: the negative test demonstrates that independent controllers do
   not provide distributed ownership; this remains required until leases exist.
+- `TM-EFF-005`: the `llm` command can call only the host-selected driver; tests
+  do not claim transactional or replay-safe external effects.
+- `TM-FORK-002`: `spawn` records lineage, preserves parent memory, retains an
+  independently restorable child, and rejects duplicate child addresses.
 - `TM-AUTH-001`: remote transport tests must prove authorization precedes
   receipt lookup and that two tenant scopes cannot observe each other's
   receipts; no remote transport exists yet.

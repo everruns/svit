@@ -23,7 +23,7 @@ fn lisp_activation_commits_memory_and_returns_a_map() {
         )
         .unwrap();
 
-    let activation = process.exec("counter", value!({"by": 2})).unwrap();
+    let activation = process.exec("/lib/counter", value!({"by": 2})).unwrap();
 
     assert_eq!(
         activation.output,
@@ -56,7 +56,7 @@ fn generic_operations_share_absolute_process_paths_inside_lisp() {
                         "documentation"
                         "Increment the durable count"))
                     (let ((before (discover "/memory"))
-                          (nested (exec "increment" input)))
+                          (nested (exec "/lib/increment" input)))
                       (do
                         (remove "/memory/draft")
                         (remove "/lib/increment")
@@ -70,7 +70,9 @@ fn generic_operations_share_absolute_process_paths_inside_lisp() {
         .build()
         .unwrap();
 
-    let activation = process.exec("orchestrator", value!({"by": 2})).unwrap();
+    let activation = process
+        .exec("/lib/orchestrator", value!({"by": 2}))
+        .unwrap();
 
     assert_eq!(
         activation.output,
@@ -105,14 +107,14 @@ fn failed_nested_exec_rolls_back_the_complete_activation() {
             "outer",
             svit::Script::new(
                 r#"(define (main input)
-                     (do (write "/memory/outer" true) (exec "inner" input)))"#,
+                     (do (write "/memory/outer" true) (exec "/lib/inner" input)))"#,
             ),
         )
         .build()
         .unwrap();
     let before = process.snapshot().unwrap();
 
-    assert!(process.exec("outer", Value::Null).is_err());
+    assert!(process.exec("/lib/outer", Value::Null).is_err());
     assert_eq!(process.snapshot().unwrap(), before);
 }
 
@@ -135,7 +137,7 @@ fn library_reads_can_be_written_back_through_the_generic_value_boundary() {
 
     assert_eq!(
         process
-            .exec("copy", value!({"copied": true}))
+            .exec("/lib/copy", value!({"copied": true}))
             .unwrap()
             .output,
         value!({"copied": true})

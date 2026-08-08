@@ -47,6 +47,19 @@ operations. Domain agents should use its attenuated read/exec mode to omit
 generic mutation tools and allow only host-selected scripts. Prompt instructions
 are not an authorization boundary.
 
+`Executables` configures native programs under `/bin`, invoked through the same
+generic `exec(path, input)` operation used for `/lib` scripts. `search` reads
+committed process values and `jq` processes explicit JSON. Neither has a host filesystem,
+executable, or environment interface. HTTP appears only with a host-supplied
+default-deny `HttpAllowlist` and transport; `llm` and `spawn` require
+host-selected drivers.
+
+`/bin` projects manuals for the exact executables installed by the current
+host, including schemas, effect classes, and limits. It is read-only and descriptive:
+host runtime registration remains the authority boundary. Resume replaces any
+snapshot-carried catalog before the agent runs so stale metadata cannot restore
+a missing host grant.
+
 ## Important limitations
 
 Svit is not yet a proven or production-grade hostile multi-tenant boundary.
@@ -58,11 +71,17 @@ records exact audit exceptions for those unused dependencies. Run hostile
 tenants behind a Wasm or OS process boundary and enforce outer CPU, memory, and
 time limits.
 
-Message delivery, external capabilities, authenticated identity,
-authorization, secrets, snapshot signatures, and distributed execution are
-not implemented. Message intents are inert committed data. Process addresses
-are not authenticated principals. Snapshot hashes detect state changes but do
-not prove provenance.
+Message delivery, guest-script external capabilities, authenticated identity,
+authorization, secrets, snapshot signatures, and distributed execution are not
+implemented. Message intents are inert committed data. Process addresses are
+not authenticated principals. Snapshot hashes detect state changes but do not
+prove provenance.
+
+Opt-in HTTP and nested model executables perform immediate external
+effects. They are outside Svit activation transactions and require host-side
+authorization, cost bounds, idempotency, and reconciliation. `spawn` retains a
+completed one-turn child only in the current parent runtime; it is not durable
+supervision and is not included in the parent snapshot.
 
 Control receipts are bounded and in memory. They are not durable across restart,
 and the controller is not a distributed ownership lease. External effects and

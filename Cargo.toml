@@ -18,13 +18,18 @@ categories = ["development-tools", "virtualization"]
 [workspace.dependencies]
 agentyk = { version = "=0.1.1", default-features = false, features = ["http"] }
 async-trait = "0.1"
+jaq-core = "3.1"
+jaq-json = { version = "2.0", features = ["serde"] }
+jaq-std = "3.0"
 ketos = "0.12.0"
+regex = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.11"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 turso = { version = "=0.8.0-pre.3", default-features = false }
+url = "2"
 
 [profile.test]
 debug = "line-tables-only"

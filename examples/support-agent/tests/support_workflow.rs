@@ -12,7 +12,10 @@ const QUESTION: &str =
 async fn commit_is_idempotent_and_uses_retrieved_sources() {
     let mut process = support_process(REQUEST_ID, QUESTION).await.unwrap();
     process
-        .exec("search_support_docs", value!({"request_id": REQUEST_ID}))
+        .exec(
+            "/lib/search_support_docs",
+            value!({"request_id": REQUEST_ID}),
+        )
         .unwrap();
     assert_eq!(
         process
@@ -30,7 +33,7 @@ async fn commit_is_idempotent_and_uses_retrieved_sources() {
     let root_hash = process.root_hash();
     let version = process.version();
     let mismatched_request = process.exec(
-        "commit_support_result",
+        "/lib/commit_support_result",
         value!({
             "request_id": "support-request-002",
             "answer": "Wrong request"
@@ -43,7 +46,7 @@ async fn commit_is_idempotent_and_uses_retrieved_sources() {
 
     process
         .exec(
-            "commit_support_result",
+            "/lib/commit_support_result",
             value!({
                 "request_id": REQUEST_ID,
                 "answer": "Identity verification is required. Your request is queued for review."
@@ -63,7 +66,7 @@ async fn commit_is_idempotent_and_uses_retrieved_sources() {
     let root_hash = process.root_hash();
     let version = process.version();
     let duplicate = process.exec(
-        "commit_support_result",
+        "/lib/commit_support_result",
         value!({
             "request_id": REQUEST_ID,
             "answer": "A different answer"
@@ -84,11 +87,14 @@ async fn ticket_policy_does_not_queue_an_unneeded_intent() {
     .await
     .unwrap();
     process
-        .exec("search_support_docs", value!({"request_id": REQUEST_ID}))
+        .exec(
+            "/lib/search_support_docs",
+            value!({"request_id": REQUEST_ID}),
+        )
         .unwrap();
     process
         .exec(
-            "commit_support_result",
+            "/lib/commit_support_result",
             value!({
                 "request_id": REQUEST_ID,
                 "answer": "Use Forgot password."
@@ -113,14 +119,14 @@ async fn user_reply_is_loaded_from_the_committed_result() {
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "script": "search_support_docs",
+                    "path": "/lib/search_support_docs",
                     "input": {"request_id": REQUEST_ID}
                 }),
             ),
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "script": "commit_support_result",
+                    "path": "/lib/commit_support_result",
                     "input": {
                         "request_id": REQUEST_ID,
                         "answer": "Use the approved identity-verification process."

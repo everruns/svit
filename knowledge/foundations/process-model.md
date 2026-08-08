@@ -24,6 +24,7 @@ The initial process exposes one conventional namespace:
 │   ├── system_prompt       configured agent instructions
 │   ├── messages            conversation projected from events
 │   └── events              canonical Agentyk event stream
+├── bin/                    host-managed native executable manuals
 ├── memory/                 agent-owned durable values
 ├── lib/                    named scripts
 ├── tasks/                  reserved; empty in this slice
@@ -43,7 +44,9 @@ The initial process exposes one conventional namespace:
 Agent-thread state, memory, scripts, mounts, system metadata, and outbox form
 one committed logical root. Building a `Svit` replaces the bare process's null
 `/agent` node with the configured system prompt, projected messages, and
-canonical events. `/agent` is guest-readable but writable only through the
+canonical events. It also refreshes `/bin` from the attached executable runtime.
+Each `/bin/<name>` record contains a description, input schema, output contract,
+effect class, and limits. `/agent` and `/bin` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
 through host APIs; `/tasks` and `/children` remain reserved and empty.
 Each mount contains `kind`, `mode: snapshot-read-only`, and bounded `data`.
@@ -64,13 +67,18 @@ discover(path)
 read(path)
 write(path, value)
 remove(path)
-exec(script, input)
+exec(path, input)
 ```
 
 `discover` returns deterministic immediate child names across memory, scripts,
 mount snapshots, reserved nodes, and system state at every map or array depth. `read` returns a
 value. `write` and `remove` modify `/memory` or one typed `/lib/<name>` entry.
-`/mounts` is read-only. `exec` runs a named script activation. Inside Svit Lisp these operations use
+`/mounts` and `/bin` are read-only. The agent-facing `exec` resolves
+`/lib/<name>` to a transactional script activation or `/bin/<name>` to an
+attached native executable. `Process::exec` and Svit Lisp accept only `/lib`
+paths because a serializable process does not own host executable authority.
+`/bin` entries are descriptive and never grant authority. Inside Svit Lisp,
+these operations use
 the activation's transactional view; nested `exec` shares its transaction,
 deadline, output limits, and independent nesting-depth limit.
 Builders, snapshot, restore, and fork are
@@ -87,6 +95,33 @@ authentication, reachability, or delivery.
 `authenticated: false`. It is descriptive metadata, never a principal or
 capability. A fork replaces this address and records its parent's address under
 `/system/lineage/parent` without mutating the parent.
+
+## Native executables
+
+A host may attach `Executables` to the process-owned runtime. This installs
+`/bin/search` and `/bin/jq`. `search` traverses text values below one
+committed process path with bounded regular-expression matching. `jq`
+evaluates a bounded filter over explicit JSON supplied to `exec`.
+Neither executable has a filesystem, environment, process launcher, or ambient
+network interface.
+
+At agent construction, Svit derives `/bin` from the exact native executable
+implementations attached by the host. A snapshot records the last catalog for
+inspection, but resume refreshes it from current host configuration before a
+turn; catalog values never authorize execution. Generic operations such as
+`discover`, `read`, and `exec` are API operations and do not appear under `/bin`.
+
+HTTP is default-deny and appears only when the host supplies an `HttpAllowlist`
+and transport. `/bin/llm` uses one host-selected model and driver. Neither
+executable is a Svit activation, and external effects cannot be rolled back with
+process state.
+
+The child executable is named `spawn`, distinguishing process creation from
+executing an existing `/bin` or `/lib` path. It takes a child address and task,
+forks the last committed parent state, uses a separately supplied child model driver, runs one child turn, and
+retains the completed child in the parent runtime's local registry. `child_ids` and
+`child_snapshot` expose that registry to the Rust host. It is not stored under
+`/children`, included in the parent snapshot, scheduled, or supervised.
 
 ## Activation transition
 
@@ -172,8 +207,9 @@ durable Agentyk event batch is validated and committed under `/agent`; callers
 do not construct an external Agentyk agent and attach Svit as a tool.
 `/agent/events` is the canonical replay source. `/agent/messages` is rebuilt
 from those events at the host-only commit boundary and checked against them on
-resume. The model can inspect the projection through ordinary `discover` and
-`read` tools without receiving mutation authority.
+resume. `/bin` is refreshed from the currently attached executable runtime, so
+a restored process does not retain execution authority omitted by the new host.
+The model can inspect manuals through ordinary `discover` and `read` operations.
 
 The host obtains an `Inbox`, starts the process loop, and sends messages to the
 durable `/inbox` queue. The loop processes committed messages in order and

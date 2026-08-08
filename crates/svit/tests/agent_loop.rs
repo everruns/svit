@@ -1,6 +1,26 @@
+use std::collections::BTreeMap;
+
 use agentyk::{ContentPart, Message, ModelSpec, Role, SimDriver, SimTurn};
+use async_trait::async_trait;
 use serde_json::json;
-use svit::{Limits, Process, Script, Svit, value};
+use svit::{
+    Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
+    Limits, Process, Script, Svit, value,
+};
+
+struct FixtureHttp;
+
+#[async_trait]
+impl HttpTransport for FixtureHttp {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpTransportError> {
+        assert_eq!(request.url, "https://8.8.8.8/data");
+        Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            body: br#"{"source":"fixture"}"#.to_vec(),
+        })
+    }
+}
 
 #[tokio::test]
 async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
@@ -81,15 +101,20 @@ async fn started_svit_processes_inbox_messages_in_commit_order() {
 
 #[tokio::test]
 async fn agent_runtime_projects_prompt_messages_and_events() {
+    // THREAT[TM-CAP-005]: The executable catalog comes from the exact host
+    // runtime attached to this process and remains read-only to guest code.
     let prompt = "Inspect your projected runtime state.";
     let mut svit = Svit::builder("svit://local/agent-projection")
         .unwrap()
         .system_prompt(prompt)
+        .executables(Executables::new())
         .model(ModelSpec::llmsim())
         .driver(SimDriver::new([
             SimTurn::tool_call("read", json!({"path": "/agent/system_prompt"})),
             SimTurn::tool_call("read", json!({"path": "/agent/messages"})),
             SimTurn::tool_call("read", json!({"path": "/agent/events"})),
+            SimTurn::tool_call("discover", json!({"path": "/bin"})),
+            SimTurn::tool_call("read", json!({"path": "/bin/search"})),
             SimTurn::text("projection inspected"),
         ]))
         .build()
@@ -102,6 +127,15 @@ async fn agent_runtime_projects_prompt_messages_and_events() {
     );
     assert_eq!(svit.read("/agent/messages").unwrap(), Some(value!([])));
     assert_eq!(svit.read("/agent/events").unwrap(), Some(value!([])));
+    assert_eq!(svit.discover("/bin").unwrap(), vec!["jq", "search"]);
+    let search_manual = svit.read("/bin/search").unwrap().unwrap().to_json();
+    assert_eq!(search_manual["name"], "search");
+    assert_eq!(search_manual["effect"], "read");
+    assert_eq!(
+        search_manual["input_schema"]["required"],
+        json!(["path", "pattern"])
+    );
+    assert!(search_manual["limits"].is_array());
 
     let inbox = svit.inbox();
     svit.start().unwrap();
@@ -119,10 +153,44 @@ async fn agent_runtime_projects_prompt_messages_and_events() {
         .filter(|message| message.role == Role::Tool)
         .map(Message::text)
         .collect::<Vec<_>>();
-    assert_eq!(tool_results.len(), 3);
+    assert_eq!(tool_results.len(), 5);
     assert!(tool_results[0].contains(prompt));
     assert!(tool_results[1].contains("inspect projection"));
     assert!(tool_results[2].contains("session_id"));
+    assert!(tool_results[3].contains("search"));
+    assert!(tool_results[4].contains("input_schema"));
+}
+
+#[tokio::test]
+async fn resumed_agent_refreshes_tool_discovery_to_current_host_grants() {
+    // THREAT[TM-CAP-005]: Snapshot metadata cannot preserve an absent host
+    // grant when a restored process is attached to a new agent runtime.
+    let source = Svit::builder("svit://local/tool-projection-source")
+        .unwrap()
+        .executables(Executables::new().llm(
+            ModelSpec::llmsim(),
+            SimDriver::new([SimTurn::text("nested")]),
+        ))
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([]))
+        .build()
+        .await
+        .unwrap();
+    assert!(source.discover("/bin").unwrap().contains(&"llm".into()));
+    let snapshot = source.snapshot().unwrap();
+
+    let restored = Process::restore(&snapshot).unwrap();
+    let resumed = Svit::resume(restored)
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([]))
+        .build()
+        .await
+        .unwrap();
+
+    let tools = resumed.discover("/bin").unwrap();
+    assert!(!tools.contains(&"llm".into()));
+    assert!(!tools.contains(&"search".into()));
+    assert!(tools.is_empty());
 }
 
 #[tokio::test]
@@ -254,13 +322,15 @@ async fn process_owned_agent_enforces_its_script_allowlist() {
         )
         .model(ModelSpec::llmsim())
         .driver(SimDriver::new([
-            SimTurn::tool_call("exec", json!({"script": "denied", "input": null})),
+            SimTurn::tool_call("exec", json!({"path": "/lib/denied", "input": null})),
             SimTurn::text("denied as expected"),
         ]))
         .allow_scripts(["allowed"])
         .build()
         .await
         .unwrap();
+
+    assert!(agent.discover("/bin").unwrap().is_empty());
 
     let inbox = agent.inbox();
     agent.start().unwrap();
@@ -304,4 +374,284 @@ async fn agent_event_growth_fails_closed_at_the_process_limit() {
     let committed = process.read("/agent").unwrap().unwrap().to_json();
     assert!(!committed.to_string().contains(&"x".repeat(8 * 1024)));
     assert!(!process.discover("/inbox").unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn native_search_and_jq_process_structured_data() {
+    let records = json!({
+        "items": [
+            {"name": "alpha", "active": false},
+            {"name": "beta", "active": true}
+        ]
+    });
+    let mut svit = Svit::builder("svit://local/native-data-tools")
+        .unwrap()
+        .memory("records", value!({"items": records["items"].clone()}))
+        .executables(Executables::new())
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/search",
+                    "input": {
+                        "path": "/memory/records",
+                        "pattern": "^beta$"
+                    }
+                }),
+            ),
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/jq",
+                    "input": {
+                        "filter": ".items[] | select(.active) | .name",
+                        "input": records
+                    }
+                }),
+            ),
+            SimTurn::text("found active record"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("find the active record")).unwrap();
+    svit.block().await.unwrap();
+
+    let tool_results = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .filter(|message| message.role == Role::Tool)
+        .map(|message| message.text())
+        .collect::<Vec<_>>();
+    assert!(tool_results[0].contains("/memory/records/items/1/name"));
+    assert!(tool_results[1].contains("\"beta\""));
+}
+
+#[tokio::test]
+async fn native_http_is_denied_without_an_explicit_url_grant() {
+    // THREAT[TM-CAP-004]: Merely supplying a URL does not grant HTTP authority.
+    let mut svit = Svit::builder("svit://local/native-network-denied")
+        .unwrap()
+        .executables(Executables::new().http(HttpAllowlist::new(), FixtureHttp))
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/http",
+                    "input": {"method": "GET", "url": "https://example.com"}
+                }),
+            ),
+            SimTurn::text("network denied"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("try the network")).unwrap();
+    svit.block().await.unwrap();
+
+    let tool_result = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .find(|message| message.role == Role::Tool)
+        .unwrap()
+        .text();
+    assert!(tool_result.contains("HTTP URL is not allowed"));
+}
+
+#[tokio::test]
+async fn native_http_uses_the_host_allowlist_and_transport() {
+    // THREAT[TM-CAP-004]: An allowed call passes both the host-selected URL
+    // policy and host-owned transport before its response reaches the model.
+    let tools = Executables::new().http(
+        HttpAllowlist::new().allow("https://8.8.8.8/data"),
+        FixtureHttp,
+    );
+    let mut svit = Svit::builder("svit://local/native-network-allowed")
+        .unwrap()
+        .executables(tools)
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/http",
+                    "input": {"method": "GET", "url": "https://8.8.8.8/data"}
+                }),
+            ),
+            SimTurn::text("network allowed"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("read the fixture")).unwrap();
+    svit.block().await.unwrap();
+
+    let tool_result = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .find(|message| message.role == Role::Tool)
+        .unwrap()
+        .text();
+    assert!(tool_result.contains("fixture"), "{tool_result}");
+}
+
+#[tokio::test]
+async fn native_llm_uses_only_the_host_selected_nested_model() {
+    // THREAT[TM-EFF-005]: Nested model execution requires a host-selected
+    // driver and remains outside the process transaction.
+    let nested = SimDriver::new([SimTurn::text("nested answer")]);
+    let mut svit = Svit::builder("svit://local/native-llm")
+        .unwrap()
+        .executables(Executables::new().llm(ModelSpec::llmsim(), nested))
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/llm",
+                    "input": {"prompt": "nested question"}
+                }),
+            ),
+            SimTurn::text("outer answer"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("delegate once")).unwrap();
+    svit.block().await.unwrap();
+
+    let tool_result = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .find(|message| message.role == Role::Tool)
+        .unwrap()
+        .text();
+    assert!(tool_result.contains("nested answer"));
+}
+
+#[tokio::test]
+async fn native_spawn_runs_and_retains_an_isolated_child_svit() {
+    // THREAT[TM-FORK-002]: spawn forks committed state, runs the child with
+    // separately supplied model authority, and retains an isolated snapshot.
+    let child_id = svit::ProcessId::new("svit://local/native-child").unwrap();
+    let child_driver = SimDriver::new([SimTurn::text("child answer")]);
+    let mut parent = Svit::builder("svit://local/native-parent")
+        .unwrap()
+        .memory("owner", value!("parent"))
+        .executables(Executables::new().spawn(ModelSpec::llmsim(), child_driver))
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/spawn",
+                    "input": {"id": "svit://local/native-child", "task": "analyze this"}
+                }),
+            ),
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/spawn",
+                    "input": {"id": "svit://local/native-child", "task": "duplicate"}
+                }),
+            ),
+            SimTurn::text("parent answer"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = parent.inbox();
+    parent.start().unwrap();
+    inbox.send(Message::user("create a child")).unwrap();
+    parent.block().await.unwrap();
+
+    assert_eq!(parent.child_ids(), vec![child_id.clone()]);
+    assert_eq!(
+        parent.read("/memory/owner").unwrap(),
+        Some(value!("parent"))
+    );
+    let snapshot = parent.child_snapshot(&child_id).unwrap().unwrap();
+    let child = Process::restore(&snapshot).unwrap();
+    assert_eq!(
+        child.read("/system/lineage/parent").unwrap(),
+        Some(&value!("svit://local/native-parent"))
+    );
+    let messages = child.read("/agent/messages").unwrap().unwrap().to_json();
+    assert!(messages.to_string().contains("analyze this"));
+    assert!(messages.to_string().contains("child answer"));
+    let duplicate_rejected = parent
+        .messages()
+        .unwrap()
+        .iter()
+        .filter(|message| message.role == Role::Tool)
+        .any(|message| message.text().contains("child address already exists"));
+    assert!(duplicate_rejected);
+}
+
+#[tokio::test]
+async fn native_data_tools_reject_unbounded_or_oversized_work() {
+    // THREAT[TM-DOS-008]: Native tools reject unbounded jq constructs and
+    // oversized search expressions before evaluation.
+    let mut svit = Svit::builder("svit://local/native-limits")
+        .unwrap()
+        .memory("text", value!("bounded"))
+        .executables(Executables::new())
+        .model(ModelSpec::llmsim())
+        .driver(SimDriver::new([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/jq",
+                    "input": {"filter": "def f: f; f", "input": null}
+                }),
+            ),
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/bin/search",
+                    "input": {
+                        "path": "/memory/text",
+                        "pattern": "x".repeat(5 * 1024)
+                    }
+                }),
+            ),
+            SimTurn::text("limit observed"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("loop forever")).unwrap();
+    svit.block().await.unwrap();
+
+    let tool_results = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .filter(|message| message.role == Role::Tool)
+        .map(|message| message.text())
+        .collect::<Vec<_>>();
+    assert!(tool_results[0].contains("unbounded construct"));
+    assert!(tool_results[1].contains("pattern limit exceeded"));
 }

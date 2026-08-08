@@ -9,6 +9,8 @@ Prefer repository examples in this order:
 5. Sandbox limits: denied libraries and bounded infinite-loop termination.
 6. Multi-client control: one client commits while a stale client conflicts and
    retries against the observed version.
+7. Native executables: generic `exec` runs `/bin/search` over committed process
+   text and `/bin/jq` over an explicit JSON value.
 
 Run the example before presenting it. Use the command documented beside the
 example or `just examples` for the complete deterministic suite. If an example

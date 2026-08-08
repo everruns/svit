@@ -31,11 +31,11 @@ fn main() -> svit::Result<()> {
     let mut efficiency = parent.fork("svit://local/examples/research-efficiency")?;
 
     let growth_result = growth.exec(
-        "score_evidence",
+        "/lib/score_evidence",
         value!({"lens": "growth", "impact_weight": 2, "cost_weight": 1}),
     )?;
     let efficiency_result = efficiency.exec(
-        "score_evidence",
+        "/lib/score_evidence",
         value!({"lens": "efficiency", "impact_weight": 1, "cost_weight": 2}),
     )?;
 

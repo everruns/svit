@@ -2,6 +2,29 @@
 
 ## 2026-08-07
 
+* **Native executables**: Added `/bin/search` and `/bin/jq` over
+  committed process text and explicit JSON, with no shell or ambient host
+  interface.
+* **Executable discovery**: Added host-managed `/bin` manuals derived from
+  installed native implementations, including schemas, output contracts,
+  effect classes, and limits. Resume refreshes the catalog from current host grants.
+* **Explicit effects**: Added default-deny, host-allowlisted HTTP plus optional
+  host-routed transport and a fixed host-selected `llm` tool. Both remain
+  outside Svit activation transactions and replay guarantees.
+* **Child execution**: Named process creation `spawn` rather than overloading
+  transactional script `exec`; it forks committed state, runs one child turn,
+  rejects duplicate local addresses, and exposes child snapshots to the host.
+* **Tool security**: Added `TM-DOS-008`, `TM-ESC-003`, `TM-EFF-005`,
+  `TM-FORK-002`, and `TM-CAP-004` with focused agent-loop evidence for limits,
+  host isolation, effect grants, fork lineage, and network policy.
+* **Tool limitations**: Recorded the bounded jq subset, non-transactional
+  HTTP/model effects, and the non-durable local child registry as `L-035`
+  through `L-037`.
+* **Dependency review**: Added direct jaq, regex, and URL dependencies for the
+  native implementations; no shell runtime is included.
+* **Compatibility**: Advanced process snapshots to format 5 for the durable
+  `/bin` executable catalog; agent state remains `svit-agent@2`.
+
 * **Agent ownership**: Added `svit::Svit` as the process-owning reason/act
   API, with Agentyk as its internal loop engine rather than an external agent
   that consumes Svit as a capability.

@@ -23,7 +23,7 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     assert_eq!(
         process.discover("/").unwrap(),
         [
-            "agent", "children", "inbox", "lib", "memory", "mounts", "system", "tasks"
+            "agent", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks"
         ]
     );
     assert_eq!(
@@ -83,7 +83,11 @@ fn agent_runtime_state_is_host_managed_and_guest_read_only() {
     let committed = unchanged(&process);
     let version = process.version();
 
-    assert!(process.exec("forge-history", value!(["forged"])).is_err());
+    assert!(
+        process
+            .exec("/lib/forge-history", value!(["forged"]))
+            .is_err()
+    );
     assert_eq!(process.snapshot().unwrap(), committed);
     assert_eq!(process.version(), version);
     assert_eq!(
@@ -170,7 +174,7 @@ fn invalid_staged_script_rolls_back_memory_scripts_outbox_and_version() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.exec("teacher", Value::Null),
+        process.exec("/lib/teacher", Value::Null),
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -191,7 +195,7 @@ fn guest_function_values_are_rejected_atomically() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.exec("function-value", Value::Null),
+        process.exec("/lib/function-value", Value::Null),
         Err(Error::InvalidValue(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -221,7 +225,7 @@ fn guest_memory_limit_fails_closed() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.exec("allocate", Value::Null),
+        process.exec("/lib/allocate", Value::Null),
         Err(Error::ResourceLimitExceeded("guest memory"))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -282,7 +286,7 @@ fn ketos_activation_limits_fail_without_committing() {
         let before = unchanged(&process);
 
         assert!(matches!(
-            process.exec("exercise", Value::Null),
+            process.exec("/lib/exercise", Value::Null),
             Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
         ));
         assert_eq!(process.snapshot().unwrap(), before);
@@ -360,8 +364,8 @@ fn replay_from_the_same_snapshot_is_deterministic() {
     let mut first = Process::restore(&snapshot).unwrap();
     let mut second = Process::restore(&snapshot).unwrap();
 
-    let first_result = first.exec("add", value!({"amount": 4})).unwrap();
-    let second_result = second.exec("add", value!({"amount": 4})).unwrap();
+    let first_result = first.exec("/lib/add", value!({"amount": 4})).unwrap();
+    let second_result = second.exec("/lib/add", value!({"amount": 4})).unwrap();
 
     assert_eq!(first_result.output, second_result.output);
     assert_eq!(first_result.logs, second_result.logs);
@@ -387,8 +391,8 @@ fn lisp_globals_do_not_cross_activation_boundaries() {
     )
     .unwrap();
 
-    process.exec("write", Value::Null).unwrap();
-    let observed = process.exec("read", Value::Null).unwrap();
+    process.exec("/lib/write", Value::Null).unwrap();
+    let observed = process.exec("/lib/read", Value::Null).unwrap();
     assert_eq!(observed.output, Value::String("read".into()));
 }
 
@@ -412,13 +416,13 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
             "#,
     )
     .unwrap();
-    parent.exec("emit", value!({"value": 1})).unwrap();
+    parent.exec("/lib/emit", value!({"value": 1})).unwrap();
 
     let mut child = parent.fork("svit://local/tests/child").unwrap();
     assert_eq!(parent.outbox().unwrap().len(), 1);
     assert!(child.outbox().unwrap().is_empty());
 
-    child.exec("emit", value!({"value": 2})).unwrap();
+    child.exec("/lib/emit", value!({"value": 2})).unwrap();
     assert_eq!(
         parent.read("/memory/value").unwrap(),
         Some(&Value::Integer(1))
@@ -443,7 +447,10 @@ fn diagnostics_are_capped_and_use_virtual_source_paths() {
     )
     .unwrap();
 
-    let diagnostic = process.exec("fail", Value::Null).unwrap_err().to_string();
+    let diagnostic = process
+        .exec("/lib/fail", Value::Null)
+        .unwrap_err()
+        .to_string();
     assert!(diagnostic.len() <= 1100);
     assert!(diagnostic.contains("/lib/fail.svit-script"));
     assert!(!diagnostic.contains(env!("CARGO_MANIFEST_DIR")));
@@ -487,12 +494,12 @@ fn nested_exec_depth_is_bounded_without_resetting_the_transaction() {
         .library("inner", svit::Script::new("(define (main input) true)"))
         .library(
             "outer",
-            svit::Script::new("(define (main input) (exec \"inner\" input))"),
+            svit::Script::new("(define (main input) (exec \"/lib/inner\" input))"),
         )
         .build()
         .unwrap();
     assert_eq!(
-        allowed.exec("outer", Value::Null).unwrap().output,
+        allowed.exec("/lib/outer", Value::Null).unwrap().output,
         Value::Bool(true)
     );
 
@@ -505,13 +512,13 @@ fn nested_exec_depth_is_bounded_without_resetting_the_transaction() {
         .library("inner", svit::Script::new("(define (main input) true)"))
         .library(
             "outer",
-            svit::Script::new("(define (main input) (exec \"inner\" input))"),
+            svit::Script::new("(define (main input) (exec \"/lib/inner\" input))"),
         )
         .build()
         .unwrap();
     let before = denied.snapshot().unwrap();
     assert!(matches!(
-        denied.exec("outer", Value::Null),
+        denied.exec("/lib/outer", Value::Null),
         Err(Error::ResourceLimitExceeded("nested exec depth"))
     ));
     assert_eq!(denied.snapshot().unwrap(), before);
@@ -543,7 +550,7 @@ fn nested_exec_shares_the_activation_deadline() {
         .library(
             "outer",
             svit::Script::new(
-                "(define (main input) (do (write \"/memory/changed\" true) (exec \"inner\" input)))",
+                "(define (main input) (do (write \"/memory/changed\" true) (exec \"/lib/inner\" input)))",
             ),
         )
         .build()
@@ -551,7 +558,7 @@ fn nested_exec_shares_the_activation_deadline() {
     let before = process.snapshot().unwrap();
 
     assert!(matches!(
-        process.exec("outer", Value::Null),
+        process.exec("/lib/outer", Value::Null),
         Err(Error::ExecutionLimitExceeded)
     ));
     assert_eq!(process.snapshot().unwrap(), before);
@@ -607,7 +614,7 @@ fn buffered_resource_limits_fail_without_committing() {
         let before = unchanged(&process);
 
         assert!(matches!(
-            process.exec("exercise", Value::Null),
+            process.exec("/lib/exercise", Value::Null),
             Err(Error::ResourceLimitExceeded(limit)) if limit == expected_limit
         ));
         assert_eq!(process.snapshot().unwrap(), before);
@@ -726,7 +733,7 @@ fn activation_input_has_no_mutation_primitive() {
     let before = unchanged(&process);
 
     assert!(matches!(
-        process.exec("mutate_input", value!({"value": 1})),
+        process.exec("/lib/mutate_input", value!({"value": 1})),
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
