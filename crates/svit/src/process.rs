@@ -26,7 +26,7 @@ use crate::hooks::{
 };
 use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
 
-const SNAPSHOT_FORMAT: u32 = 4;
+const SNAPSHOT_FORMAT: u32 = 5;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
@@ -390,6 +390,22 @@ impl Process {
         Ok(())
     }
 
+    /// Replaces the host-managed executable catalog under `/bin`.
+    pub(crate) fn replace_executables(&mut self, value: Value) -> Result<()> {
+        let executables = root_map(&value)?;
+        for name in executables.keys() {
+            validate_script_name(name)?;
+        }
+        value.validate(&self.limits, false)?;
+        let mut root = root_map(self.root.as_ref())?.clone();
+        root.insert("bin".into(), value);
+        let new_root = Value::Map(root);
+        validate_root(&new_root, &self.id, &self.limits)?;
+        self.root = Arc::new(new_root);
+        self.version += 1;
+        Ok(())
+    }
+
     /// Returns every committed but not externally acknowledged message intent.
     pub fn outbox(&self) -> Result<Vec<MessageIntent>> {
         let root = root_map(self.root.as_ref())?;
@@ -402,14 +418,17 @@ impl Process {
         values.iter().map(message_from_value).collect()
     }
 
-    /// Invokes a named script transactionally.
+    /// Invokes a script transactionally by its absolute `/lib` path.
     ///
     /// The script must define `main(input)`. Any error leaves memory, scripts,
     /// outbox, and version unchanged.
-    pub fn exec(&mut self, script: &str, input: Value) -> Result<Activation> {
+    pub fn exec(&mut self, path: &str, input: Value) -> Result<Activation> {
+        let script = library_path(path)?
+            .ok_or_else(|| Error::InvalidPath(path.into()))?
+            .to_owned();
         let version_before = self.version;
         let mut request = Ok(ActivationRequest {
-            script: script.into(),
+            script: script.clone(),
             input,
         });
 
@@ -429,7 +448,7 @@ impl Process {
         let event_script = request
             .as_ref()
             .map(|request| request.script.clone())
-            .unwrap_or_else(|_| script.into());
+            .unwrap_or_else(|_| script);
         let result = request.and_then(|request| self.exec_inner(request));
 
         if !self.hooks.is_empty() {
@@ -645,6 +664,7 @@ fn initial_root(
 ) -> Value {
     Value::Map(BTreeMap::from([
         ("agent".into(), Value::Null),
+        ("bin".into(), Value::empty_map()),
         ("children".into(), Value::empty_map()),
         ("inbox".into(), Value::Array(Vec::new())),
         (
@@ -675,7 +695,7 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
         != BTreeSet::from([
-            "agent", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
+            "agent", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
         ])
     {
         return Err(Error::InvalidSnapshot(
@@ -700,6 +720,15 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     root.get("agent")
         .ok_or_else(|| Error::InvalidSnapshot("missing /agent".into()))?
         .validate(limits, false)?;
+
+    let bin = root_map(
+        root.get("bin")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /bin".into()))?,
+    )?;
+    for name in bin.keys() {
+        validate_script_name(name)?;
+    }
+    Value::Map(bin.clone()).validate(limits, false)?;
 
     let memory = root
         .get("memory")
@@ -1397,12 +1426,15 @@ fn install_guest_api(
                 "nested exec depth",
             )));
         }
-        let name = guest_string(&args[0], "exec script")?;
+        let path = guest_string(&args[0], "exec path")?;
+        let name = library_path(&path)
+            .map_err(guest_from_svit)?
+            .ok_or_else(|| guest_from_svit(Error::InvalidPath(path.clone())))?;
         let input = persistent_from_ketos(&args[1], &exec_limits).map_err(guest_from_svit)?;
         let checkpoint = state_for_exec.checkpoint().map_err(guest_from_svit)?;
         match run_guest_script(
             &state_for_exec,
-            &name,
+            name,
             &input,
             &exec_limits,
             remaining_exec_depth - 1,
@@ -1831,7 +1863,7 @@ mod tests {
             .unwrap();
         write_script(&mut process, "counter", COUNTER).unwrap();
 
-        let activation = process.exec("counter", value!({"by": 2})).unwrap();
+        let activation = process.exec("/lib/counter", value!({"by": 2})).unwrap();
 
         assert_eq!(activation.output, value!({"count": 2}));
         assert_eq!(activation.logs[0].message, "counted");
@@ -1954,7 +1986,7 @@ mod tests {
         .unwrap();
         let version = process.version();
 
-        assert!(process.exec("payment", value!({"amount": 3})).is_err());
+        assert!(process.exec("/lib/payment", value!({"amount": 3})).is_err());
         assert_eq!(process.version(), version);
         assert_eq!(
             process.read("/memory/balance").unwrap(),
@@ -1980,7 +2012,7 @@ mod tests {
         );
 
         let mut child = parent.fork("svit://local/test/child").unwrap();
-        child.exec("counter", value!({"by": 5})).unwrap();
+        child.exec("/lib/counter", value!({"by": 5})).unwrap();
         assert_eq!(
             parent.read("/memory/count").unwrap(),
             Some(&Value::Integer(0))
@@ -2016,7 +2048,7 @@ mod tests {
         .unwrap();
         let version = process.version();
 
-        let error = process.exec("loop", Value::Null).unwrap_err();
+        let error = process.exec("/lib/loop", Value::Null).unwrap_err();
         assert!(matches!(error, Error::ExecutionLimitExceeded));
         assert_eq!(process.version(), version);
         assert_eq!(
@@ -2061,12 +2093,14 @@ mod tests {
             .build()
             .unwrap();
 
-        process.exec("teacher", Value::Null).unwrap();
+        process.exec("/lib/teacher", Value::Null).unwrap();
         assert_eq!(
             process.read("/lib/greeter").unwrap().unwrap().to_json()["documentation"],
             "Greets a person",
         );
-        let greeting = process.exec("greeter", value!({"name": "Svit"})).unwrap();
+        let greeting = process
+            .exec("/lib/greeter", value!({"name": "Svit"}))
+            .unwrap();
         assert_eq!(greeting.output, Value::String("Hello, Svit".into()));
     }
 
@@ -2102,7 +2136,7 @@ mod tests {
         .unwrap();
 
         assert!(matches!(
-            process.exec("mutate", Value::Null),
+            process.exec("/lib/mutate", Value::Null),
             Err(Error::HookCancelled(_))
         ));
         assert_eq!(process.read("/memory/changed").unwrap(), None);

@@ -39,6 +39,7 @@ Rust caller ----> Svit Agent
                       +----> durable inbox / live turn outbox
                       +----> buffered message intents (not delivery)
                       +----> bounded folder / Turso snapshot import
+                      +----> opt-in `/bin` native executables
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -59,6 +60,7 @@ the boundary.
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
+| Native executables | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
 
 The current workspace implements the process and process-owned agent loop in
 the `svit` crate and provides a thin `svit-cli` crate. `svit::Svit` assembles
@@ -87,10 +89,15 @@ or process. Module names may evolve; the ownership boundary is the decision.
    history, and canonical events but cannot rewrite them.
 10. Inbox messages commit before loop notification and are acknowledged only
     after the corresponding turn succeeds.
+11. Native executables remain outside Svit Lisp. They receive typed values and
+    process reads, not a shell or ambient host interfaces, and only the HTTP,
+    model, or child-runner authority explicitly supplied by the host.
+12. `/bin` is generated from attached native executables and refreshed
+    on resume. It describes runtime availability but never grants authority.
 
 ## Deferred architecture
 
-Schedulers, external effect adapters, read-through or writable projections,
+Schedulers, durable effect delivery, read-through or writable projections,
 durable process databases, distributed routing, auth services, migrations
 between hosts, and production Wasm/OS isolation are outside this slice. See
 [Limitations](../operations/limitations.md).

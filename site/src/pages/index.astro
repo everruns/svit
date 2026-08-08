@@ -6,7 +6,7 @@ const operations = [
   { name: "read(path)", copy: "Read a process value" },
   { name: "write(path, value)", copy: "Transactionally update memory or library" },
   { name: "remove(path)", copy: "Transactionally remove memory or library data" },
-  { name: "exec(script, input)", copy: "Run a named script transactionally" },
+  { name: "exec(path, input)", copy: "Run a /lib script or installed /bin executable" },
 ];
 
 const works = [
@@ -403,12 +403,12 @@ const denied = ["filesystem", "network", "environment", "process", "clock", "ran
             </div>
             <div class="trace-row">
               <span>02</span>
-              <code>exec("search_support_docs", input)</code>
+              <code>exec("/lib/search_support_docs", input)</code>
               <p>Read support knowledge and account context from <strong>/mounts</strong> snapshots.</p>
             </div>
             <div class="trace-row">
               <span>03</span>
-              <code>exec("commit_support_result", input)</code>
+              <code>exec("/lib/commit_support_result", input)</code>
               <p>Write the authoritative answer to <strong>/memory/request/result</strong>.</p>
             </div>
             <div class="trace-row trace-row-outbox">

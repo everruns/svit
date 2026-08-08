@@ -38,7 +38,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .mount("catalog", catalog)
         .library("inspect", Script::new(INSPECT))
         .build()?;
-    let activation = process.exec("inspect", value!({}))?;
+    let activation = process.exec("/lib/inspect", value!({}))?;
 
     assert_eq!(
         activation.output,

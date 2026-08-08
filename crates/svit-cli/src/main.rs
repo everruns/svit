@@ -39,7 +39,7 @@ fn exec() -> Result<(), String> {
         .write("/lib/main", value!({"source": source}))
         .map_err(|error| error.to_string())?;
     let activation = process
-        .exec("main", input)
+        .exec("/lib/main", input)
         .map_err(|error| error.to_string())?;
 
     let document = serde_json::json!({

@@ -14,8 +14,8 @@ fn main() -> svit::Result<()> {
         .build()?;
     process.write("/lib/counter", value!({"source": COUNTER}))?;
 
-    let first = process.exec("counter", value!({"by": 2}))?;
-    let second = process.exec("counter", value!({"by": 3}))?;
+    let first = process.exec("/lib/counter", value!({"by": 2}))?;
+    let second = process.exec("/lib/counter", value!({"by": 3}))?;
     assert_eq!(first.output, value!({"count": 2}));
     assert_eq!(second.output, value!({"count": 5}));
 
@@ -24,7 +24,7 @@ fn main() -> svit::Result<()> {
     assert_eq!(restored.version(), 3);
     assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(5)));
 
-    let third = restored.exec("counter", value!({"by": 4}))?;
+    let third = restored.exec("/lib/counter", value!({"by": 4}))?;
     assert_eq!(third.output, value!({"count": 9}));
     assert_eq!(third.version, 4);
 

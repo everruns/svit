@@ -15,7 +15,7 @@ fn main() -> svit::Result<()> {
     let mut process = Process::new("svit://local/examples/self-authoring")?;
     process.write("/lib/teacher", value!({"source": TEACHER}))?;
 
-    let taught = process.exec("teacher", Value::Null)?;
+    let taught = process.exec("/lib/teacher", Value::Null)?;
     assert_eq!(taught.output, Value::String("greeter saved".into()));
     assert_eq!(process.discover("/lib")?, ["greeter", "teacher"]);
     assert_eq!(
@@ -26,7 +26,7 @@ fn main() -> svit::Result<()> {
         }).to_json())
     );
 
-    let greeting = process.exec("greeter", value!({"name": "Ada"}))?;
+    let greeting = process.exec("/lib/greeter", value!({"name": "Ada"}))?;
     assert_eq!(
         greeting.output,
         value!({

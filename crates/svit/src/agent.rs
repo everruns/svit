@@ -16,8 +16,8 @@ use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::{
-    Activation, ActivationHook, Limits, MessageIntent, Process, ProcessBuilder, ProcessId, Script,
-    SnapshotMount, Value,
+    Activation, ActivationHook, Executables, Limits, MessageIntent, Process, ProcessBuilder,
+    ProcessId, Script, SnapshotMount, Value,
 };
 
 const AGENT_STATE_PATH: &str = "/agent";
@@ -81,6 +81,7 @@ pub struct Svit {
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
     outbox_sender: broadcast::Sender<Message>,
+    executables: Option<Executables>,
     task: Option<JoinHandle<AgentResult<Agent>>>,
 }
 
@@ -120,6 +121,7 @@ impl Svit {
 
     fn from_agent(agent: Agent) -> Self {
         let process = agent.process();
+        let executables = agent.executables.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
         Self {
@@ -129,6 +131,7 @@ impl Svit {
             command_sender,
             command_receiver: Some(command_receiver),
             outbox_sender,
+            executables,
             task: None,
         }
     }
@@ -256,13 +259,13 @@ impl Svit {
             .remove(path)?)
     }
 
-    /// Executes one named transactional process script.
-    pub fn exec(&mut self, script: &str, input: Value) -> SvitResult<Activation> {
+    /// Executes one transactional process script by its absolute `/lib` path.
+    pub fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
         Ok(self
             .process
             .lock()
             .map_err(|_| AgentError::ProcessUnavailable)?
-            .exec(script, input)?)
+            .exec(path, input)?)
     }
 
     /// Returns committed Lisp message intents from process state.
@@ -304,6 +307,24 @@ impl Svit {
     /// Returns a shared handle for host integrations requiring `Process`.
     pub fn process(&self) -> Arc<Mutex<Process>> {
         self.process.clone()
+    }
+
+    /// Returns completed child addresses created through `/bin/spawn`.
+    pub fn child_ids(&self) -> Vec<ProcessId> {
+        self.executables
+            .as_ref()
+            .map(Executables::child_ids)
+            .unwrap_or_default()
+    }
+
+    /// Snapshots one completed child created through `/bin/spawn`.
+    pub fn child_snapshot(&self, id: &ProcessId) -> SvitResult<Option<Vec<u8>>> {
+        Ok(self
+            .executables
+            .as_ref()
+            .map(|tools| tools.child_snapshot(id))
+            .transpose()?
+            .flatten())
     }
 }
 
@@ -421,6 +442,12 @@ impl SvitResumeBuilder {
         self
     }
 
+    /// Installs native `/bin` executables with explicit host grants.
+    pub fn executables(mut self, executables: Executables) -> Self {
+        self.agent = self.agent.executables(executables);
+        self
+    }
+
     /// Reopens the process and resumes its durable agent thread.
     pub async fn build(self) -> SvitResult<Svit> {
         Ok(Svit::from_agent(self.agent.build().await?))
@@ -504,6 +531,12 @@ impl SvitBuilder {
         self
     }
 
+    /// Installs native `/bin` executables with explicit host grants.
+    pub fn executables(mut self, executables: Executables) -> Self {
+        self.agent = self.agent.executables(executables);
+        self
+    }
+
     /// Builds the process and its runnable loop as one Svit instance.
     pub async fn build(self) -> SvitResult<Svit> {
         let process = self.process.build()?;
@@ -520,6 +553,7 @@ impl SvitBuilder {
 pub struct Agent {
     process: Arc<Mutex<Process>>,
     session: Session,
+    executables: Option<Executables>,
 }
 
 impl Agent {
@@ -545,6 +579,7 @@ pub struct AgentBuilder {
     access: AgentAccess,
     inner: AgentykAgentBuilder,
     system_prompt: Option<String>,
+    executables: Option<Executables>,
 }
 
 impl AgentBuilder {
@@ -558,6 +593,7 @@ impl AgentBuilder {
             access: AgentAccess::Full,
             inner: AgentykAgent::builder(),
             system_prompt: None,
+            executables: None,
         }
     }
 
@@ -607,6 +643,12 @@ impl AgentBuilder {
         self
     }
 
+    /// Installs native `/bin` executables with explicit host grants.
+    pub fn executables(mut self, executables: Executables) -> Self {
+        self.executables = Some(executables);
+        self
+    }
+
     /// Builds the loop and resumes the thread already committed in the process.
     pub async fn build(self) -> AgentResult<Agent> {
         let process = self.process.ok_or(AgentError::MissingProcess)?;
@@ -617,9 +659,22 @@ impl AgentBuilder {
                 .map(|state| state.system_prompt)
         };
         let system_prompt = self.system_prompt.or(stored_prompt).unwrap_or_default();
+        let executable_catalog = self
+            .executables
+            .as_ref()
+            .map(|tools| tools.catalog(process.clone()))
+            .unwrap_or_else(|| json!({}));
+        {
+            // THREAT[TM-CAP-005]: `/bin` is refreshed from current host
+            // configuration before the engine can run a turn. Descriptors do
+            // not grant execution authority.
+            let mut owned = process.lock().map_err(|_| AgentError::ProcessUnavailable)?;
+            owned.replace_executables(Value::from_json(executable_catalog)?)?;
+        }
         let capability = ProcessCapability {
             process: process.clone(),
             access: self.access,
+            executables: self.executables.clone(),
         };
         let engine = self
             .inner
@@ -632,7 +687,11 @@ impl AgentBuilder {
             None => engine.session_with_log(log.clone()),
         };
         log.initialize(session.id())?;
-        Ok(Agent { process, session })
+        Ok(Agent {
+            process,
+            session,
+            executables: self.executables,
+        })
     }
 }
 
@@ -646,9 +705,10 @@ enum AgentAccess {
 struct ProcessCapability {
     process: Arc<Mutex<Process>>,
     access: AgentAccess,
+    executables: Option<Executables>,
 }
 
-fn execute_script(process: &Arc<Mutex<Process>>, script: &str, input: JsonValue) -> ToolOutput {
+fn execute_script(process: &Arc<Mutex<Process>>, path: &str, input: JsonValue) -> ToolOutput {
     let input = match Value::from_json(input) {
         Ok(input) => input,
         Err(error) => return ToolOutput::error(error.to_string()),
@@ -656,7 +716,7 @@ fn execute_script(process: &Arc<Mutex<Process>>, script: &str, input: JsonValue)
     let Ok(mut process) = process.lock() else {
         return ToolOutput::error("Svit process lock is unavailable");
     };
-    let activation = match process.exec(script, input) {
+    let activation = match process.exec(path, input) {
         Ok(activation) => activation,
         Err(error) => return ToolOutput::error(error.to_string()),
     };
@@ -688,26 +748,32 @@ impl Capability for ProcessCapability {
     }
 
     async fn system_prompt_contribution(&self, _context: &SystemPromptContext) -> Option<String> {
-        Some(match &self.access {
+        let mut contribution = match &self.access {
             AgentAccess::Full => {
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, write, and remove. Scripts are under /lib and run through \
-                 exec. /agent/system_prompt, /agent/messages, and /agent/events project your \
-                 runtime context; they are durable and inspectable but host-managed."
+                 with discover, read, write, remove, and exec. Discover executable manuals under \
+                 /bin; run /bin executables or /lib scripts through exec. /agent/system_prompt, \
+                 /agent/messages, and /agent/events are durable host-managed runtime projections."
                     .into()
             }
             AgentAccess::ReadExec(allowed_scripts) => format!(
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover and read. Run only these transactional scripts through exec: {}. \
-                 /agent/system_prompt, /agent/messages, and /agent/events project your runtime \
-                 context; they are durable and inspectable but host-managed.",
+                 with discover, read, and exec. Discover executable manuals under /bin. Run only \
+                 these /lib scripts through exec: {}. /agent/system_prompt, /agent/messages, and \
+                 /agent/events are durable host-managed runtime projections.",
                 allowed_scripts
                     .iter()
                     .cloned()
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-        })
+        };
+        if self.executables.is_some() {
+            contribution.push_str(
+                " Native executables are listed under /bin and invoked only through exec(path, input).",
+            );
+        }
+        Some(contribution)
     }
 
     async fn tools(&self) -> agentyk::Result<Vec<Arc<dyn Tool>>> {
@@ -769,23 +835,36 @@ impl Capability for ProcessCapability {
         ));
 
         let exec_process = self.process.clone();
+        let executables = self.executables.clone();
         let allowed_scripts = match &self.access {
             AgentAccess::Full => None,
             AgentAccess::ReadExec(scripts) => Some(Arc::clone(scripts)),
         };
         let exec: Arc<dyn Tool> = Arc::new(FnTool::new(
             "exec",
-            "Run a named Svit script transactionally.",
+            "Execute an absolute /lib script or /bin native executable path.",
             json!({
                 "type": "object",
-                "properties": {"script": {"type": "string"}, "input": {}},
-                "required": ["script", "input"]
+                "properties": {"path": {"type": "string"}, "input": {}},
+                "required": ["path", "input"]
             }),
             move |arguments| {
                 let process = exec_process.clone();
                 let allowed_scripts = allowed_scripts.clone();
+                let executables = executables.clone();
                 async move {
-                    let script = arguments["script"].as_str().unwrap_or_default();
+                    let path = arguments["path"].as_str().unwrap_or_default();
+                    if let Some(name) = path.strip_prefix("/bin/") {
+                        let Some(executables) = executables else {
+                            return ToolOutput::error("executable not found");
+                        };
+                        return executables
+                            .execute(name, arguments["input"].clone(), process)
+                            .await;
+                    }
+                    let Some(script) = path.strip_prefix("/lib/") else {
+                        return ToolOutput::error("exec path must be under /lib or /bin");
+                    };
                     // THREAT[TM-CAP-002]: Check host-selected script authority
                     // before guest input conversion or process activation.
                     if allowed_scripts
@@ -794,7 +873,7 @@ impl Capability for ProcessCapability {
                     {
                         return ToolOutput::error(format!("script is not allowed: {script}"));
                     }
-                    execute_script(&process, script, arguments["input"].clone())
+                    execute_script(&process, path, arguments["input"].clone())
                 }
             },
         ));

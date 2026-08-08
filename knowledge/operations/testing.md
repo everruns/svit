@@ -42,6 +42,11 @@ The following scenarios execute with assertions and deterministic output under
   failed turn's input queued.
 - the agent reads its projected system prompt, message history, and canonical
   events through the runtime capability during a turn.
+- `/bin/search` reads committed process text and `/bin/jq` filters explicit
+  JSON; focused integration tests cover data limits, default-deny and
+  host-routed HTTP, nested model selection, and local child spawn.
+- `/bin` discovery exposes installed executable manuals, while
+  resume removes catalog entries for absent host grants.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
 CLI smoke inputs live under `crates/svit-cli/tests/fixtures/`; they are internal

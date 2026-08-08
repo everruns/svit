@@ -20,13 +20,13 @@ fn main() -> svit::Result<()> {
     payer.write("/lib/payment", value!({"source": PAYMENT}))?;
     let version_before = payer.version();
 
-    let failure = payer.exec("payment", value!({"amount": 25, "fail": true}));
+    let failure = payer.exec("/lib/payment", value!({"amount": 25, "fail": true}));
     assert!(matches!(failure, Err(Error::Script(_))));
     assert_eq!(payer.version(), version_before);
     assert_eq!(payer.read("/memory/balance")?, Some(&Value::Integer(100)));
     assert!(payer.outbox()?.is_empty());
 
-    let committed = payer.exec("payment", value!({"amount": 25, "fail": false}))?;
+    let committed = payer.exec("/lib/payment", value!({"amount": 25, "fail": false}))?;
     assert_eq!(committed.output, Value::Integer(75));
     assert_eq!(committed.messages.len(), 1);
     assert_eq!(

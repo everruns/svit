@@ -53,7 +53,7 @@ impl SvitCapability {
     }
 }
 
-fn exec(process: &Arc<Mutex<Process>>, script: &str, input: JsonValue) -> ToolOutput {
+fn exec(process: &Arc<Mutex<Process>>, path: &str, input: JsonValue) -> ToolOutput {
     let input = match Value::from_json(input) {
         Ok(input) => input,
         Err(error) => return ToolOutput::error(error.to_string()),
@@ -61,7 +61,7 @@ fn exec(process: &Arc<Mutex<Process>>, script: &str, input: JsonValue) -> ToolOu
     let Ok(mut process) = process.lock() else {
         return ToolOutput::error("Svit process lock is unavailable");
     };
-    let activation = match process.exec(script, input) {
+    let activation = match process.exec(path, input) {
         Ok(activation) => activation,
         Err(error) => return ToolOutput::error(error.to_string()),
     };
@@ -141,17 +141,18 @@ impl Capability for SvitCapability {
         };
         let exec_tool: Arc<dyn Tool> = Arc::new(FnTool::new(
             "exec",
-            "Run a named Svit script transactionally.",
+            "Run a Svit script transactionally by its absolute /lib path.",
             json!({
                 "type": "object",
-                "properties": {"script": {"type": "string"}, "input": {}},
-                "required": ["script", "input"]
+                "properties": {"path": {"type": "string"}, "input": {}},
+                "required": ["path", "input"]
             }),
             move |arguments| {
                 let process = exec_process.clone();
                 let allowed_scripts = allowed_scripts.clone();
                 async move {
-                    let script = arguments["script"].as_str().unwrap_or_default();
+                    let path = arguments["path"].as_str().unwrap_or_default();
+                    let script = path.strip_prefix("/lib/").unwrap_or_default();
                     // THREAT[TM-CAP-002]: Check host-selected script authority
                     // before guest input conversion or process activation.
                     if allowed_scripts
@@ -160,7 +161,7 @@ impl Capability for SvitCapability {
                     {
                         return ToolOutput::error(format!("script is not allowed: {script}"));
                     }
-                    exec(&process, script, arguments["input"].clone())
+                    exec(&process, path, arguments["input"].clone())
                 }
             },
         ));
@@ -296,7 +297,7 @@ mod tests {
             .unwrap();
         let output = exec
             .execute(
-                json!({"script": "denied", "input": null}),
+                json!({"path": "/lib/denied", "input": null}),
                 &ToolContext::new(SessionId::new(), TurnId::new()),
             )
             .await;
@@ -306,7 +307,7 @@ mod tests {
 
         let output = exec
             .execute(
-                json!({"script": "allowed", "input": {"value": 1}}),
+                json!({"path": "/lib/allowed", "input": {"value": 1}}),
                 &ToolContext::new(SessionId::new(), TurnId::new()),
             )
             .await;

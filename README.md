@@ -36,7 +36,7 @@ fn main() -> svit::Result<()> {
         "#))
         .build()?;
 
-    let activation = process.exec("counter", value!({"by": 3}))?;
+    let activation = process.exec("/lib/counter", value!({"by": 3}))?;
     assert_eq!(activation.output, value!({"count": 3}));
     assert_eq!(
         process.read("/memory/count")?,
@@ -63,18 +63,20 @@ smoke-test tool, not a persistent process supervisor.
 
 ## Generic process contract
 
-Rust callers, agent integrations, and Svit Lisp use the same five operations:
+Svit exposes five generic operations over absolute paths:
 
 ```text
 discover(path)        -> immediate child names
 read(path)            -> value at an absolute process path
 write(path, value)    -> transactional memory or library update
 remove(path)          -> transactional memory or library removal
-exec(script, input)   -> transactional named-script execution
+exec(path, input)     -> execute a path with explicit runtime authority
 ```
 
-Builders, snapshots, restore, and fork are process lifecycle APIs, not a second
-agent-operation vocabulary.
+The agent-facing `exec` resolves `/lib` scripts and installed `/bin`
+executables. Bare `Process::exec` and nested Svit Lisp `exec` resolve only
+`/lib`, because serializable guest state never owns native host authority.
+Builders, snapshots, restore, and fork are process lifecycle APIs.
 
 ## Process-owned agent loop
 
@@ -121,6 +123,52 @@ completed turn. `block` seals the inbox, drains committed messages, and joins
 the loop. A subagent is another `Svit` built around a fork returned by
 `svit.fork_process(child_address)`.
 
+### Native executables
+
+Install native executables when the process needs search or structured-data processing:
+
+```rust
+use svit::Executables;
+
+# async fn build() -> svit::SvitResult<svit::Svit> {
+# use agentyk::{ModelSpec, SimDriver, SimTurn};
+let svit = svit::Svit::builder("svit://local/tools")?
+    .memory("records", svit::value!([{"name": "beta", "active": true}]))
+    .executables(Executables::new())
+    .model(ModelSpec::llmsim())
+    .driver(SimDriver::new([SimTurn::text("done")]))
+    .build()
+    .await?;
+# Ok(svit)
+# }
+```
+
+The process receives `/bin/search` and `/bin/jq`. `search` runs a bounded
+Rust regular expression over text below a committed process path; `jq` runs a
+bounded filter over an explicit JSON input. Neither executable can access the host
+filesystem, environment, or processes.
+
+Executables are discovered, inspected, and invoked through the generic process
+operations:
+
+```text
+discover("/bin")               -> ["jq", "search"]
+read("/bin/search")            -> description, input_schema, output, effect, limits
+exec("/bin/search", input)     -> bounded search result
+exec("/lib/analyze", input)    -> transactional Lisp activation
+```
+
+`/bin` is a host-managed executable catalog. Its records are manuals, not
+authority: editing a snapshot cannot install an executable. Resume refreshes
+the catalog from the currently attached executable runtime before the agent runs.
+
+`Executables::http` installs `/bin/http` only with a host URL allowlist and
+transport. `Executables::llm` installs a fixed host-selected `/bin/llm`;
+`Executables::spawn` installs `/bin/spawn`, which forks committed state, runs one child
+turn, and retains the child for `Svit::child_snapshot`. These effectful executables
+are host-side executables, not Svit Lisp functions, and do not join an
+activation transaction.
+
 Run the live process-owned support-agent scenario with `OPENAI_API_KEY` set:
 
 ```console
@@ -148,6 +196,8 @@ just support-agent-v2
   syntax, integer, estimated guest-memory, value, text, script, log, message,
   and staged-script limits.
 - Typed host activation hooks that may rewrite, deny, or observe activations.
+- Opt-in `/bin/search` and `/bin/jq` executables plus host-granted `http`,
+  `llm`, and isolated one-turn `spawn` executables.
 - Reflection over committed memory and the named script library.
 - Discoverable system metadata for the logical address, runtime, API, limits,
   lineage, and the explicitly empty capability set. The address is marked
@@ -210,6 +260,7 @@ cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 cargo run -p svit --example mounted_resources
 cargo run -p svit --example process_owned_agent
+cargo run -p svit --example executables
 ```
 
 They cover persistence and restore, functional self-reflection, rollback of a
@@ -217,7 +268,8 @@ state-plus-message transaction, isolated forks, denied ambient APIs, a bounded
 infinite loop, two clients resolving an optimistic concurrency conflict, and
 bounded snapshots of a real folder and a Turso query. The process-owned agent
 example resumes one Agentyk-backed thread and continues it in an isolated
-subagent process. See
+subagent process. The native executables example searches committed process data and
+filters an explicit JSON value without host filesystem access. See
 [examples/README.md](examples/README.md), or run all of them with `just examples`.
 
 ## Current security status
@@ -244,10 +296,15 @@ described in [SECURITY.md](SECURITY.md).
 
 Svit does not yet provide scheduling, timers, background activations, message
 delivery, retries, global routing, authenticated identity, authorization,
-live or writable external capabilities, filesystem or network read-through
-projections, secrets, durable process storage, distributed migration, exactly-once effects, snapshot
+filesystem or network read-through projections, secrets, durable process
+storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
+
+Opt-in HTTP, model calls, and local one-turn child execution are native
+executables, not guest-script authority or durable effect delivery. Their results are
+recorded in the agent event stream, but the effects themselves are neither
+transactional nor replay-safe.
 
 The control protocol currently has an in-memory reference adapter, not a
 network listener, authenticated transport, durable receipt store, or

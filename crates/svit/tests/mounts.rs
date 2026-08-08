@@ -44,7 +44,7 @@ async fn folder_and_turso_mounts_are_guest_readable_and_snapshot_stable() {
         .build()
         .unwrap();
 
-    let activation = process.exec("read_mounts", value!({})).unwrap();
+    let activation = process.exec("/lib/read_mounts", value!({})).unwrap();
     assert_eq!(
         activation.output,
         value!({"first_item": "alpha", "greeting": "hello from a real folder\n"})

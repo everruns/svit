@@ -19,7 +19,7 @@
 //!     "#))
 //!     .build()?;
 //!
-//! let activation = process.exec("counter", value!({"by": 2}))?;
+//! let activation = process.exec("/lib/counter", value!({"by": 2}))?;
 //! assert_eq!(activation.output, value!(2));
 //! # Ok::<(), svit::Error>(())
 //! ```
@@ -27,6 +27,7 @@
 mod agent;
 pub mod control;
 mod error;
+mod executables;
 pub mod hooks;
 mod limits;
 pub mod mounts;
@@ -40,6 +41,9 @@ pub use control::{
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
 };
 pub use error::{Error, Result};
+pub use executables::{
+    Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
+};
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
 pub use mounts::SnapshotMount;
