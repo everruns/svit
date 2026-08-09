@@ -32,15 +32,19 @@ pub mod hooks;
 mod limits;
 pub mod mounts;
 mod process;
+mod tools;
 pub mod value;
 
-pub use agent::{AgentError, Inbox, Svit, SvitBuilder, SvitResult, SvitResumeBuilder};
-pub use agentyk::{ContentPart, Message};
+pub use agent::{
+    AgentError, AgentModel, Inbox, SimTurn, Svit, SvitBuilder, SvitResult, SvitResumeBuilder,
+};
 pub use control::{
     ControlClientId, ControlCommand, ControlFailure, ControlOutcome, ControlProtocol,
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
 };
 pub use error::{Error, Result};
+pub use everruns::core::llmsim_driver::LlmSimConfig;
+pub use everruns::core::{ContentPart, Message, MessageRole};
 pub use executables::{
     Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
 };

@@ -6,6 +6,5 @@ license.workspace = true
 publish = false
 
 [dependencies]
-agentyk.workspace = true
 svit = { path = "../../crates/svit" }
 tokio.workspace = true

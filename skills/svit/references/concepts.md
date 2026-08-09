@@ -2,7 +2,7 @@
 
 - **Runtime**: the trusted Rust host that validates and executes processes.
 - **Agent**: a Svit-owned reason/act loop and durable thread bound to exactly
-  one process; Agentyk is the current loop implementation.
+  one process; Everruns is the current loop implementation.
 - **Process**: an isolated address, version, host-managed agent-thread state,
   discoverable namespace, memory tree, scripts, metadata, outbox, and limits.
 - **Activation**: one bounded named-script invocation against a transactional

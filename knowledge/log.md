@@ -1,5 +1,24 @@
 # Svit Knowledge Update Log
 
+## 2026-08-09
+
+* **Everruns loop engine**: Replaced Agentyk with Everruns 0.17.25 behind the
+  process-owned `svit::Svit` API. Svit supplies the Everruns runtime with a
+  process-backed event bus, message store, and typed process capability.
+* **Durable projection**: Advanced agent state to `svit-agent@3`. Canonical
+  Everruns events and their exact derived message projection commit under
+  `/agent` and are revalidated on resume.
+* **Provider surface**: Added `AgentModel` for the deterministic Everruns
+  simulator, Everruns' OpenAI Responses driver, and host-provided Everruns
+  driver registries. Removed the `svit-agentyk` adapter and Lampa's custom
+  Responses driver.
+* **Dependency boundary**: Recorded `L-039` for Everruns' unconditional,
+  unused fetch, Bash, and A2A dependency graph. Audit and license exceptions
+  are exact and temporary; Svit registers none of those capabilities.
+* **Consumer migration**: Ported Lampa, both support-agent examples, native
+  model/spawn executables, integration tests, and runnable examples to the
+  process-owned Everruns path.
+
 ## 2026-08-07
 
 * **Native executables**: Added `/bin/search` and `/bin/jq` over

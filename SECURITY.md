@@ -42,7 +42,7 @@ The typed control API receives an already-decoded request. Any network or IPC
 adapter must cap request bytes before deserialization, then apply the same
 decoded value limits enforced by the controller.
 
-The Agentyk adapter's full-access constructor exposes all five generic process
+The Everruns capability's full-access mode exposes all five generic process
 operations. Domain agents should use its attenuated read/exec mode to omit
 generic mutation tools and allow only host-selected scripts. Prompt instructions
 are not an authorization boundary. Independently running agent loops expose

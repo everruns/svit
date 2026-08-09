@@ -23,15 +23,15 @@ Turso query as bounded, read-only snapshots. The script reads both through the
 ordinary `/mounts` hierarchy. No host path, database connection, or SQL
 authority enters the activation.
 
-`process_owned_agent` runs the simulated Agentyk driver through `svit::Svit`.
+`process_owned_agent` runs the simulated Everruns driver through `svit::Svit`.
 It obtains inbox and outbox handles, starts the loop, submits one durable
-Agentyk `Message` with content parts, receives the assistant message while the
+Everruns `Message` with content parts, receives the assistant message while the
 loop is live, and then blocks until the committed queue drains.
 
-## Agentyk support-agent demo
+## Everruns support-agent demo
 
-`support-agent/` runs `gpt-5.6-terra` through an external Agentyk agent. The
-support model sees an attenuated Svit capability surface:
+`support-agent/` runs `gpt-5.6-terra` through the process-owned Everruns loop.
+The support model sees an attenuated Svit capability surface:
 
 - `discover`: list children under any Svit process path;
 - `read`: read a value by absolute process path;
@@ -71,7 +71,7 @@ model is ignored.
 `support-agent-v2/` is the live reference for the new ownership model. It uses
 OpenAI `gpt-5.6-terra` and demonstrates:
 
-- a root agent constructed through `svit::Svit`, with Agentyk behind the Svit API;
+- a root agent constructed through `svit::Svit`, with Everruns behind the Svit API;
 - explicit inbox submission, process start, outbox listening, and blocking drain;
 - a model-authored support answer committed to process memory before reply.
 

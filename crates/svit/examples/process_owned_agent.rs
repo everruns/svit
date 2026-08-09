@@ -1,6 +1,5 @@
-use agentyk::{ModelSpec, SimDriver, SimTurn};
 use serde_json::json;
-use svit::{ContentPart, Message, Script, Svit, SvitResult, value};
+use svit::{AgentModel, Message, Script, SimTurn, Svit, SvitResult, value};
 
 #[tokio::main]
 async fn main() -> SvitResult<()> {
@@ -18,8 +17,7 @@ async fn main() -> SvitResult<()> {
             ),
         )
         .system_prompt("Handle inbox messages entirely inside your Svit process.")
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({"path": "/lib/remember_color", "input": {"color": "blue"}}),
@@ -34,9 +32,7 @@ async fn main() -> SvitResult<()> {
     let mut outbox = svit.outbox();
 
     svit.start()?;
-    inbox.send(Message::user_multimodal(vec![ContentPart::text(
-        "Remember that the release color is blue.",
-    )]))?;
+    inbox.send(Message::user("Remember that the release color is blue."))?;
     let result = outbox
         .recv()
         .await
@@ -44,7 +40,7 @@ async fn main() -> SvitResult<()> {
     drop(inbox);
     svit.block().await?;
 
-    assert_eq!(result.text(), "remembered blue");
+    assert_eq!(result.text(), Some("remembered blue"));
     assert_eq!(svit.read("/memory/release/color")?, Some(value!("blue")));
     println!("process_owned_agent color=blue version={}", svit.version()?);
     Ok(())

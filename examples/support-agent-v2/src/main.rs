@@ -1,7 +1,6 @@
 use std::env;
 
-use agentyk::{ModelSpec, OpenAiDriver};
-use svit::{ContentPart, Message, Script, Svit, SvitResult, Value};
+use svit::{AgentModel, Message, Script, Svit, SvitResult, Value};
 
 const QUESTION: &str = "Can I recover access without my authenticator?";
 
@@ -31,8 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              Before replying, call commit_answer exactly once with your complete answer. \
              Return the same answer as your final response.",
         )
-        .model(ModelSpec::openai("gpt-5.6-terra").api_key(api_key))
-        .driver(OpenAiDriver::new())
+        .model(AgentModel::openai("gpt-5.6-terra", api_key))
         .allow_scripts(["commit_answer"])
         .build()
         .await?;
@@ -41,10 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut outbox = svit.outbox();
 
     svit.start()?;
-    inbox.send(Message::user_multimodal(vec![ContentPart::text(QUESTION)]))?;
+    inbox.send(Message::user(QUESTION))?;
 
     let turn = outbox.recv().await?;
-    let answer = turn.text();
+    let answer = turn.text().unwrap_or_default();
     assert!(!answer.is_empty());
 
     drop(inbox);

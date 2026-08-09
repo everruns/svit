@@ -93,7 +93,7 @@ events and snapshots can be persisted, moved, or replicated by the host.
 7. Let an agent discover and modify its memory and functional library within
    its permissions.
 8. Own the agent lifecycle while using a replaceable reason/act engine; the
-   initial implementation uses Agentyk behind the Svit API.
+   initial implementation uses Everruns behind the Svit API.
 
 ### Initial non-goals
 
@@ -145,7 +145,7 @@ mutable values, immutable metadata, capability handles, and lazy projections.
 
 ```mermaid
 flowchart TB
-    Application["Application"] --> Agent["Svit agent\nAgentyk loop"]
+    Application["Application"] --> Agent["Svit agent\nEverruns loop"]
     Agent --> API["Process API"]
 
     subgraph Host["Svit runtime host (Rust)"]
@@ -650,14 +650,15 @@ core contracts.
 Forbid `unsafe` in the core and codec by default. Isolate unavoidable unsafe or
 FFI in small crates with documented invariants and dedicated verification.
 
-## 14. Integration with Agentyk, Yolop, and Everruns
+## 14. Integration with Everruns and evaluation clients
 
 Svit should initially be an execution substrate used by an agent, not another
 agent framework.
 
-### Agentyk
+### Everruns
 
-Add a `SvitCapability` that binds an Agentyk session to a Svit process and
+Svit owns the process and lifecycle while Everruns implements its reason/act
+loop. A typed Everruns capability binds one session to one Svit process and
 exposes a compact tool surface:
 
 ```text
@@ -671,18 +672,19 @@ write
 Domain operations such as search and committing a result are named Svit
 scripts, discovered and invoked through this generic surface. The adapter
 maps these names one-to-one to the process API and records the resulting process
-version in the Agentyk event stream. Svit keeps its own typed state history;
-Agentyk keeps conversation and turn history. Forking both is allowed only at
-compatible committed boundaries.
+version in the Everruns event stream. Svit supplies a process-backed Everruns
+event bus and message store: canonical events and their derived message
+projection commit under `/agent`. Forking is allowed only at compatible
+committed boundaries.
 
 Domain agents may receive an attenuated view of the same vocabulary. The
 support workflow exposes discovery, reads, and `exec` for a host-selected
 script allowlist; generic writes, removes, and unintended scripts remain
 unavailable to the model.
 
-The first executable integration is intentionally a private workspace adapter
-rather than a published integration crate. It maps those five generic tools to
-one in-memory process. The support search and result commit live in
+The first executable integration lives directly in `svit`. It maps those five
+generic tools to one in-memory process and uses Everruns' deterministic
+simulator or OpenAI Responses driver. The support search and result commit live in
 discoverable Svit scripts; the latter appends a ticket intent to the committed
 outbox. A host-issued request ID binds retrieval and commit, and the host emits
 only the validated committed answer rather than the model's independent final
@@ -700,19 +702,6 @@ security failures against its current shell/filesystem baseline.
 Coding tasks should not be the only benchmark: an OS abstraction is naturally
 advantaged there. Include personal-assistant, operations, data, and long-lived
 workflow tasks where structured memory and forks should help.
-
-### Everruns
-
-Everruns is the natural durable multi-tenant host:
-
-- its identities and principals can issue Svit agent principals;
-- its durable queue can schedule activations and timers;
-- PostgreSQL can store process events, snapshots, leases, and outboxes;
-- its worker/control-plane split can enforce tenant routing and budgets;
-- its existing observability and threat-model practices can cover host adapters.
-
-Svit core should not depend on Everruns. Everruns implements Svit host traits.
-This also leaves room for an embedded in-memory host and a Python or MCP client.
 
 ### Generic interoperability
 
@@ -767,9 +756,8 @@ Exit criteria:
 
 ### Phase 3: real agent evaluations
 
-Build the Agentyk capability, Yolop experiment harness, and an Everruns
-in-memory/durable adapter. Add MCP or a small Python client only as needed by
-evaluation tooling.
+Build the Everruns capability and Yolop experiment harness. Add MCP or a small
+Python client only as needed by evaluation tooling.
 
 Evaluate:
 
@@ -831,7 +819,7 @@ The following should remain deliberately unsettled until Phase 0 evidence:
 6. Whether exported capabilities use Biscuit, another standard, or only opaque
    server-side references initially.
 7. Message ordering guarantees and cross-domain routing protocol.
-8. How Svit and Agentyk/Everruns fork points are coordinated without a fragile
+8. How Svit and Everruns fork points are coordinated without a fragile
    distributed transaction.
 9. Whether read-through projection calls may suspend an activation or must be
    split into explicit request/completion events.
@@ -854,7 +842,7 @@ Build the smallest artifact that tests the hypothesis:
   capability in the kernel;
 - a CLI that can run hostile scripts and compare replayed root hashes.
 
-Then add one Agentyk adapter and evaluate it through Yolop. This cut is large
+Then add one Everruns loop integration and evaluate it through Yolop. This cut is large
 enough to test whether the process abstraction helps an agent, but small enough
 that a future interpreter or storage implementation can replace the prototype
 without changing the semantic contract.

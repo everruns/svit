@@ -1,7 +1,5 @@
-use agentyk::{Agent, ModelSpec, SimDriver, SimTurn};
 use serde_json::json;
-use svit::value;
-use svit_agentyk::SvitCapability;
+use svit::{AgentModel, SimTurn, Svit, value};
 use svit_support_agent::{committed_support_result, run_support_turn, support_process};
 
 const REQUEST_ID: &str = "support-request-001";
@@ -109,13 +107,9 @@ async fn ticket_policy_does_not_queue_an_unneeded_intent() {
 #[tokio::test]
 async fn user_reply_is_loaded_from_the_committed_result() {
     let process = support_process(REQUEST_ID, QUESTION).await.unwrap();
-    let capability =
-        SvitCapability::read_exec(process, ["search_support_docs", "commit_support_result"]);
-    let process_handle = capability.process();
-    let agent = Agent::builder()
+    let mut agent = Svit::resume(process)
         .system_prompt("Test support agent")
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -135,13 +129,12 @@ async fn user_reply_is_loaded_from_the_committed_result() {
             ),
             SimTurn::text("I opened a ticket and bypassed verification."),
         ]))
-        .capability(capability)
+        .allow_scripts(["search_support_docs", "commit_support_result"])
         .build()
-        .unwrap();
-
-    let result = run_support_turn(&agent, &process_handle, REQUEST_ID)
         .await
         .unwrap();
+
+    let result = run_support_turn(&mut agent, REQUEST_ID).await.unwrap();
 
     assert_eq!(
         result.answer,

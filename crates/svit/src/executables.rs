@@ -8,10 +8,8 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use agentyk::{
-    ChatDriver, ChatRequest, DriverId, FnTool, Message, ModelSpec, Tool, ToolContext, ToolOutput,
-};
 use async_trait::async_trait;
+use everruns::core::{Tool, ToolExecutionResult};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, data};
 use jaq_json::Val;
@@ -19,7 +17,8 @@ use regex::{Regex, RegexBuilder};
 use serde_json::{Value as JsonValue, json};
 use url::Url;
 
-use crate::{Process, ProcessId};
+use crate::tools::FunctionTool as FnTool;
+use crate::{AgentModel, Message, Process, ProcessId};
 
 const MAX_TOOL_INPUT_BYTES: usize = 256 * 1024;
 const MAX_TOOL_OUTPUT_BYTES: usize = 256 * 1024;
@@ -29,8 +28,19 @@ const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 struct ModelTool {
-    driver: Arc<dyn ChatDriver>,
-    model: ModelSpec,
+    model: AgentModel,
+}
+
+struct ToolOutput;
+
+impl ToolOutput {
+    fn error(message: impl Into<String>) -> ToolExecutionResult {
+        ToolExecutionResult::tool_error(message)
+    }
+
+    fn text(text: impl Into<String>) -> ToolExecutionResult {
+        ToolExecutionResult::success(JsonValue::String(text.into()))
+    }
 }
 
 #[derive(Clone)]
@@ -159,12 +169,9 @@ impl Executables {
         self
     }
 
-    /// Adds `llm` using one host-selected model and driver.
-    pub fn llm(mut self, model: ModelSpec, driver: impl ChatDriver + 'static) -> Self {
-        self.llm = Some(ModelTool {
-            driver: Arc::new(driver),
-            model,
-        });
+    /// Adds `llm` using one host-selected Everruns model runtime.
+    pub fn llm(mut self, model: AgentModel) -> Self {
+        self.llm = Some(ModelTool { model });
         self
     }
 
@@ -175,11 +182,8 @@ impl Executables {
     }
 
     /// Adds `spawn`, which forks and runs one child Svit turn.
-    pub fn spawn(mut self, model: ModelSpec, driver: impl ChatDriver + 'static) -> Self {
-        self.spawn = Some(ModelTool {
-            driver: Arc::new(driver),
-            model,
-        });
+    pub fn spawn(mut self, model: AgentModel) -> Self {
+        self.spawn = Some(ModelTool { model });
         self
     }
 
@@ -248,14 +252,14 @@ impl Executables {
     pub(crate) fn catalog(&self, process: Arc<Mutex<Process>>) -> JsonValue {
         let mut catalog = serde_json::Map::new();
         for executable in self.build_tools(process) {
-            let definition = executable.definition();
-            let (effect, output, limits) = executable_manual(&definition.name);
+            let name = executable.name();
+            let (effect, output, limits) = executable_manual(name);
             catalog.insert(
-                definition.name.clone(),
+                name.to_owned(),
                 json!({
-                    "name": definition.name,
-                    "description": definition.description,
-                    "input_schema": definition.parameters,
+                    "name": name,
+                    "description": executable.description(),
+                    "input_schema": executable.parameters_schema(),
                     "output": output,
                     "effect": effect,
                     "limits": limits,
@@ -270,15 +274,15 @@ impl Executables {
         name: &str,
         input: JsonValue,
         process: Arc<Mutex<Process>>,
-    ) -> ToolOutput {
+    ) -> ToolExecutionResult {
         let Some(executable) = self
             .build_tools(process)
             .into_iter()
-            .find(|tool| tool.definition().name == name)
+            .find(|tool| tool.name() == name)
         else {
             return ToolOutput::error("executable not found");
         };
-        executable.execute(input, &ToolContext::default()).await
+        executable.execute(input).await
     }
 }
 
@@ -652,11 +656,12 @@ fn build_llm_tool(config: ModelTool, system_prompt: Option<String>) -> Arc<dyn T
                 }
                 // THREAT[TM-EFF-005]: Model calls require an explicit
                 // host-selected driver and remain outside Svit transactions.
-                let request =
-                    ChatRequest::new(config.model.clone(), vec![Message::user(prompt.to_owned())])
-                        .maybe_system_prompt(system_prompt);
-                match config.driver.complete(request).await {
-                    Ok(response) => ToolOutput::text(response.message.text()),
+                match config
+                    .model
+                    .run_once(system_prompt, prompt.to_owned())
+                    .await
+                {
+                    Ok(response) => ToolOutput::text(response),
                     Err(_) => ToolOutput::error("llm request failed"),
                 }
             }
@@ -689,7 +694,7 @@ fn build_spawn_tool(tool: SpawnTool) -> Arc<dyn Tool> {
 }
 
 impl SpawnTool {
-    async fn execute(&self, arguments: JsonValue) -> ToolOutput {
+    async fn execute(&self, arguments: JsonValue) -> ToolExecutionResult {
         let child_id = match arguments["id"]
             .as_str()
             .and_then(|id| ProcessId::new(id).ok())
@@ -720,9 +725,7 @@ impl SpawnTool {
 
         // THREAT[TM-FORK-002]: A child starts from Process::fork. Model
         // authority is supplied separately and never inferred from state.
-        let mut builder = crate::Svit::resume(child_process)
-            .model(self.config.model.clone())
-            .driver(SharedDriver(self.config.driver.clone()));
+        let mut builder = crate::Svit::resume(child_process).model(self.config.model.clone());
         if let Some(system_prompt) = &self.system_prompt {
             builder = builder.system_prompt(system_prompt.clone());
         }
@@ -750,10 +753,13 @@ impl SpawnTool {
             }
             _ => return ToolOutput::error("child address already exists"),
         }
-        ToolOutput::text(json!({"id": child_id.as_str(), "response": response.text()}).to_string())
+        ToolOutput::text(
+            json!({"id": child_id.as_str(), "response": response.text().unwrap_or_default()})
+                .to_string(),
+        )
     }
 
-    fn fail(&self, child_id: &ProcessId, message: &'static str) -> ToolOutput {
+    fn fail(&self, child_id: &ProcessId, message: &'static str) -> ToolExecutionResult {
         if let Ok(mut children) = self.children.lock()
             && matches!(children.get(child_id), Some(ChildEntry::Starting))
         {
@@ -769,18 +775,4 @@ fn path_is_within(root: &str, candidate: &str) -> bool {
         || candidate
             .strip_prefix(root.trim_end_matches('/'))
             .is_some_and(|suffix| suffix.starts_with('/'))
-}
-
-#[derive(Clone)]
-struct SharedDriver(Arc<dyn ChatDriver>);
-
-#[async_trait]
-impl ChatDriver for SharedDriver {
-    fn id(&self) -> DriverId {
-        self.0.id()
-    }
-
-    async fn complete(&self, request: ChatRequest) -> agentyk::Result<agentyk::ChatResponse> {
-        self.0.complete(request).await
-    }
 }

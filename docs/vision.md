@@ -18,7 +18,7 @@ principles.
 A Svit **runtime** is the Rust host that executes and supervises agents. A Svit
 **agent** owns a reason/act loop, one durable thread, and exactly one Svit
 **process**. The process contains structured memory, named scripts, an address,
-and resource limits. Agentyk is the current loop implementation behind the
+and resource limits. Everruns is the current loop implementation behind the
 Svit API. The broader model adds a mailbox, identity, capabilities, schedules,
 projections, and lineage.
 
@@ -115,7 +115,7 @@ operating-system boundary.
 
 The current implementation tests the smallest useful part of the idea:
 
-- one process-owned agent thread implemented through Agentyk;
+- one process-owned agent thread implemented through Everruns;
 - one serializable memory tree;
 - named, self-authored Svit Lisp scripts;
 - bounded transactional activations;

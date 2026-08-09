@@ -23,7 +23,7 @@ The initial process exposes one conventional namespace:
 ├── agent/                  host-managed runtime projection; null for a bare Process
 │   ├── system_prompt       configured agent instructions
 │   ├── messages            conversation projected from events
-│   └── events              canonical Agentyk event stream
+│   └── events              canonical Everruns event stream
 ├── bin/                    host-managed native executable manuals
 ├── memory/                 agent-owned durable values
 ├── lib/                    named scripts
@@ -202,9 +202,9 @@ memory contents.
 ## Agent loop
 
 `svit::Svit` binds one reason/act loop and one durable conversation thread to
-one process. Agentyk implements the current loop behind the Svit API. Each
-durable Agentyk event batch is validated and committed under `/agent`; callers
-do not construct an external Agentyk agent and attach Svit as a tool.
+one process. Everruns implements the current loop behind the Svit API. Each
+durable Everruns event is validated and committed under `/agent`; callers do
+not construct an external Everruns agent and attach Svit as a tool.
 `/agent/events` is the canonical replay source. `/agent/messages` is rebuilt
 from those events at the host-only commit boundary and checked against them on
 resume. `/bin` is refreshed from the currently attached executable runtime, so
@@ -213,10 +213,10 @@ The model can inspect manuals through ordinary `discover` and `read` operations.
 
 The host obtains an `Inbox`, starts the process loop, and sends messages to the
 durable `/inbox` queue. The loop processes committed messages in order and
-acknowledges the exact queue head only after a successful Agentyk turn. A failed
+acknowledges the exact queue head only after a successful Everruns turn. A failed
 turn leaves its input committed for recovery. Hosts may send while a turn is
 running; those messages remain ordered and begin subsequent turns. Both APIs
-use Agentyk `Message` values with ordered `ContentPart` values, preserving text,
+use Everruns `Message` values with ordered `ContentPart` values, preserving text,
 images, actor metadata, and assistant role instead of reducing the boundary to
 strings. Live outbox receivers may await completion before, during, or after
 any turn. `block` stops admission, drains the committed queue, and joins the

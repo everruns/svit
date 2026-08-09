@@ -1,6 +1,5 @@
-use agentyk::{ModelSpec, Role, SimDriver, SimTurn};
 use serde_json::json;
-use svit::{Executables, Message, Svit, SvitResult, value};
+use svit::{AgentModel, Executables, Message, MessageRole, SimTurn, Svit, SvitResult, value};
 
 #[tokio::main]
 async fn main() -> SvitResult<()> {
@@ -13,8 +12,7 @@ async fn main() -> SvitResult<()> {
             ]),
         )
         .executables(Executables::new())
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -49,14 +47,19 @@ async fn main() -> SvitResult<()> {
     let tool_outputs = svit
         .messages()?
         .iter()
-        .filter(|message| message.role == Role::Tool)
-        .map(|message| message.text())
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .filter_map(|message| {
+            message
+                .tool_result_content()
+                .and_then(|result| result.result.as_ref())
+                .map(ToString::to_string)
+        })
         .collect::<Vec<_>>();
     assert!(tool_outputs[0].contains("/memory/releases/1/version"));
     assert!(tool_outputs[1].contains("\"0.2\""));
     assert_eq!(
         svit.messages()?.last().expect("assistant response").text(),
-        "release 0.2 is ready"
+        Some("release 0.2 is ready")
     );
     println!("executables ready_release=0.2");
     Ok(())

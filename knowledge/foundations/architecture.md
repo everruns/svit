@@ -19,7 +19,7 @@ Initial executable vertical slice implemented. Hardening remains in progress.
 Svit is a Rust library for running isolated agents. A Svit agent owns one
 process and its durable conversation thread. A process is an actor-like state
 machine: it handles one transition at a time and owns one committed state root.
-Agentyk implements the current host-side reason/act loop behind `svit::Svit`.
+Everruns implements the current host-side reason/act loop behind `svit::Svit`.
 Parallelism comes from independent processes, not shared guest memory.
 
 The first executable slice contains:
@@ -27,7 +27,7 @@ The first executable slice contains:
 ```text
 Rust caller ----> Svit Agent
                       |
-                      +----> Agentyk reason/act loop
+                      +----> Everruns reason/act loop
                       |
                       v
                   Process ----> transaction working copy ----> commit or rollback
@@ -53,7 +53,7 @@ the boundary.
 | --- | --- |
 | Value model | Bounded serializable guest values with deterministic encoding |
 | Process | Address, version, committed root, limits, and lifecycle operations |
-| Agent loop | Agentyk `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/agent` |
+| Agent loop | Everruns `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/agent` |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
 | Snapshot mounts | Bounded read-only folder trees and host-selected Turso query rows |
@@ -70,9 +70,9 @@ messages plus sanitized terminal loop failures as a presentation stream; tree
 expansion and selection are local UI state, so the TUI does not become another
 process-state owner. Raw durable agent events remain part of the process tree;
 the timeline does not duplicate message events already rendered as chat. Lampa
-adapts Agentyk's provider-neutral `ChatDriver` boundary to OpenAI Responses and,
-with remote storage disabled, persists opaque response output items in message
-metadata so reasoning and function-call continuations can be replayed.
+selects Everruns' OpenAI Responses driver through `AgentModel::openai`.
+Svit supplies a process-backed Everruns event bus and message store so canonical
+events and their derived message projection remain in the Svit process root.
 The value preview is a read-only presentation adapter. Tree rows retain only a
 path locator rather than cloning their persistent subtrees. Container previews
 render bounded shallow child/type summaries; leaf previews are capped before
@@ -81,9 +81,9 @@ cached by selection and width, and each frame gives the scroll view only its
 visible window. These presentation bounds prevent render work from scaling with
 the entire process tree and do not change committed process state.
 `svit::Svit` assembles
-the Agentyk engine internally and can expose the complete generic process
+the Everruns runtime internally and can expose the complete generic process
 surface or attenuate a model to discovery, reads, and a host-selected script
-allowlist. Agentyk is an implementation dependency, not the owner of the agent
+allowlist. Everruns is an implementation dependency, not the owner of the agent
 or process. Module names may evolve; the ownership boundary is the decision.
 
 ## Trusted-boundary rules
