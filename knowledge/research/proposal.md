@@ -639,7 +639,7 @@ svit-host       supervisor, activation loop, quotas, capability broker
 svit-store      event/snapshot traits and in-memory implementation
 svit-protocol   addresses, messages, snapshots, effect envelopes
 svit-model      executable/model-checkable abstract machine
-svit-cli        local REPL, inspection, replay, and hostile-script runner
+lampa           local REPL, inspection, replay, and hostile-script runner
 ```
 
 Keep `svit-core` synchronous, deterministic, and free of network, filesystem,

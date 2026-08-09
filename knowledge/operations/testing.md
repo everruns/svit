@@ -24,6 +24,7 @@ Applies to the initial vertical slice as it is implemented.
 4. Consumer scenarios under `examples/` for agent-facing workflows.
 5. Property and fuzz tests for serialization and isolation boundaries (not yet implemented).
 6. Documentation tests for public Rust APIs.
+7. Headless Tuika rendering and input-state tests for terminal interfaces.
 
 ## Examples as acceptance tests
 
@@ -49,7 +50,7 @@ The following scenarios execute with assertions and deterministic output under
   resume removes catalog entries for absent host grants.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
-CLI smoke inputs live under `crates/svit-cli/tests/fixtures/`; they are internal
+CLI smoke inputs live under `crates/lampa/tests/fixtures/`; they are internal
 test data, not public examples. Examples requiring an API key or external
 service must be separated from the deterministic core suite and must never
 receive secrets on pull-request-controlled code.

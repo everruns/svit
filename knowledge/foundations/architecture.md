@@ -63,7 +63,24 @@ the boundary.
 | Native executables | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
 
 The current workspace implements the process and process-owned agent loop in
-the `svit` crate and provides a thin `svit-cli` crate. `svit::Svit` assembles
+the `svit` crate and provides batch execution plus an interactive three-panel
+tree host in Lampa. The TUI presents the complete committed process root,
+sends chat input through the durable `Svit` inbox, and treats live outbox
+messages plus sanitized terminal loop failures as a presentation stream; tree
+expansion and selection are local UI state, so the TUI does not become another
+process-state owner. Raw durable agent events remain part of the process tree;
+the timeline does not duplicate message events already rendered as chat. Lampa
+adapts Agentyk's provider-neutral `ChatDriver` boundary to OpenAI Responses and,
+with remote storage disabled, persists opaque response output items in message
+metadata so reasoning and function-call continuations can be replayed.
+The value preview is a read-only presentation adapter. Tree rows retain only a
+path locator rather than cloning their persistent subtrees. Container previews
+render bounded shallow child/type summaries; leaf previews are capped before
+classification as embedded JSON, source code, or Markdown. Formatted lines are
+cached by selection and width, and each frame gives the scroll view only its
+visible window. These presentation bounds prevent render work from scaling with
+the entire process tree and do not change committed process state.
+`svit::Svit` assembles
 the Agentyk engine internally and can expose the complete generic process
 surface or attenuate a model to discovery, reads, and a host-selected script
 allowlist. Agentyk is an implementation dependency, not the owner of the agent

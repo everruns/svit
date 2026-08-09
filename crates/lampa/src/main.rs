@@ -3,22 +3,33 @@ use std::process::ExitCode;
 
 use svit::{Process, Value, value};
 
-fn main() -> ExitCode {
-    match exec() {
+mod responses;
+mod tui;
+
+#[tokio::main]
+async fn main() -> ExitCode {
+    match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("svit: {error}");
+            eprintln!("lampa: {error}");
             ExitCode::FAILURE
         }
     }
 }
 
-fn exec() -> Result<(), String> {
+async fn run() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
-    let command = arguments.next().ok_or_else(usage)?;
-    if command != "exec" {
-        return Err(usage());
+    let Some(command) = arguments.next() else {
+        return tui::run(arguments).await;
+    };
+    match command.as_str() {
+        "exec" => exec(arguments),
+        "--model" => tui::run(std::iter::once(command).chain(arguments)).await,
+        _ => Err(usage()),
     }
+}
+
+fn exec(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
     let script_path = arguments.next().ok_or_else(usage)?;
     let input = match arguments.next() {
         Some(input) => Value::from_json(
@@ -33,8 +44,7 @@ fn exec() -> Result<(), String> {
 
     let source = std::fs::read_to_string(&script_path)
         .map_err(|error| format!("cannot read {script_path}: {error}"))?;
-    let mut process =
-        Process::new("svit://local/cli/process").map_err(|error| error.to_string())?;
+    let mut process = Process::new("svit://local/lampa/exec").map_err(|error| error.to_string())?;
     process
         .write("/lib/main", value!({"source": source}))
         .map_err(|error| error.to_string())?;
@@ -59,5 +69,5 @@ fn exec() -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: svit exec <script.svit-script> [input-json]".into()
+    "usage:\n  lampa exec <script.svit-script> [input-json]\n  lampa [--model <model>]".into()
 }

@@ -16,7 +16,7 @@ while the project is pre-release.
 
 ## Scope
 
-This policy covers the `svit` library, `svit-cli`, official examples,
+This policy covers the `svit` library, Lampa, official examples,
 repository tooling, and documentation in this repository.
 
 ## Current security model
@@ -45,7 +45,9 @@ decoded value limits enforced by the controller.
 The Agentyk adapter's full-access constructor exposes all five generic process
 operations. Domain agents should use its attenuated read/exec mode to omit
 generic mutation tools and allow only host-selected scripts. Prompt instructions
-are not an authorization boundary.
+are not an authorization boundary. Independently running agent loops expose
+terminal failures through a capped, sanitized operational error stream; hosts
+must not treat diagnostic text as trusted content.
 
 `Executables` configures native programs under `/bin`, invoked through the same
 generic `exec(path, input)` operation used for `/lib` scripts. `search` reads

@@ -25,6 +25,8 @@
 * **Compatibility**: Advanced process snapshots to format 5 for the durable
   `/bin` executable catalog; agent state remains `svit-agent@2`.
 
+* **Lampa**: Added persistent inbox/outbox chat, complete committed process
+  memory, and JSON item-preview panels with headless UI evidence.
 * **Agent ownership**: Added `svit::Svit` as the process-owning reason/act
   API, with Agentyk as its internal loop engine rather than an external agent
   that consumes Svit as a capability.
