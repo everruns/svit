@@ -3,7 +3,7 @@
 Svit is a research-stage agent process runtime. One Svit agent owns a process,
 a durable conversation thread, named restricted-Lisp scripts, bounded
 transactional execution, snapshots, and forks—without giving guest code an
-operating system. Agentyk implements the current reason/act loop inside the
+operating system. Everruns implements the current reason/act loop inside the
 Svit agent API.
 
 The current implementation is a deliberately small vertical slice. It is
@@ -103,21 +103,19 @@ Builders, snapshots, restore, and fork are process lifecycle APIs.
 
 ## Process-owned agent loop
 
-`svit::Svit` owns both the Agentyk loop and its process. The configured system
-prompt, event-derived message history, and canonical Agentyk events are
+`svit::Svit` owns both the Everruns loop and its process. The configured system
+prompt, event-derived message history, and canonical Everruns events are
 committed under the host-managed, guest-readable `/agent` node. Restoring a
 process resumes that conversation, and forking it creates an isolated child
 agent process with inherited history:
 
 ```rust,no_run
-use agentyk::{ModelSpec, OpenAiDriver};
-use svit::{ContentPart, Message, Svit};
+use svit::{AgentModel, ContentPart, Message, Svit};
 
 # async fn example(api_key: String) -> svit::SvitResult<()> {
 let mut svit = Svit::builder("svit://local/demo/agent")?
     .system_prompt("Work entirely through your Svit process.")
-    .model(ModelSpec::openai("gpt-5.6-terra").api_key(api_key))
-    .driver(OpenAiDriver::new())
+    .model(AgentModel::openai("gpt-5.6-terra", api_key))
     .build()
     .await?;
 
@@ -129,7 +127,7 @@ inbox.send(Message::user_multimodal(vec![ContentPart::text(
     "Remember that the release color is blue.",
 )]))?;
 let answer = outbox.recv().await.expect("completed agent turn");
-assert!(!answer.text().is_empty());
+assert!(!answer.text().unwrap_or_default().is_empty());
 
 drop(inbox);
 svit.block().await?;
@@ -140,7 +138,7 @@ let snapshot = svit.snapshot()?;
 ```
 
 `start` launches the independently running local loop. `Inbox::send` commits an
-Agentyk `Message`, including its ordered `ContentPart` values, before waking
+Everruns `Message`, including its ordered `ContentPart` values, before waking
 the loop. The live outbox emits the durable assistant `Message` for each
 completed turn. `block` seals the inbox, drains committed messages, and joins
 the loop. A subagent is another `Svit` built around a fork returned by
@@ -154,12 +152,11 @@ Install native executables when the process needs search or structured-data proc
 use svit::Executables;
 
 # async fn build() -> svit::SvitResult<svit::Svit> {
-# use agentyk::{ModelSpec, SimDriver, SimTurn};
+# use svit::{AgentModel, SimTurn};
 let svit = svit::Svit::builder("svit://local/tools")?
     .memory("records", svit::value!([{"name": "beta", "active": true}]))
     .executables(Executables::new())
-    .model(ModelSpec::llmsim())
-    .driver(SimDriver::new([SimTurn::text("done")]))
+    .model(AgentModel::scripted([SimTurn::text("done")]))
     .build()
     .await?;
 # Ok(svit)
@@ -213,7 +210,7 @@ just support-agent-v2
 - Forks that copy committed memory and scripts into an independently mutable
   child without copying the parent's outbox. Agent-process forks also inherit
   committed conversation history and isolate future turns.
-- A process-owned `svit::Svit` loop implemented by Agentyk, with bounded
+- A process-owned `svit::Svit` loop implemented by Everruns, with bounded
   durable events carried by snapshots, restores, and forks.
 - Configurable execution deadline, nested-exec depth, VM stack, namespace,
   syntax, integer, estimated guest-memory, value, text, script, log, message,
@@ -290,7 +287,7 @@ They cover persistence and restore, functional self-reflection, rollback of a
 state-plus-message transaction, isolated forks, denied ambient APIs, a bounded
 infinite loop, two clients resolving an optimistic concurrency conflict, and
 bounded snapshots of a real folder and a Turso query. The process-owned agent
-example resumes one Agentyk-backed thread and continues it in an isolated
+example resumes one Everruns-backed thread and continues it in an isolated
 subagent process. The native executables example searches committed process data and
 filters an explicit JSON value without host filesystem access. See
 [examples/README.md](examples/README.md), or run all of them with `just examples`.

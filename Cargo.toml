@@ -16,8 +16,8 @@ keywords = ["agent", "runtime", "lisp", "sandbox", "memory"]
 categories = ["development-tools", "virtualization"]
 
 [workspace.dependencies]
-agentyk = { version = "=0.1.1", default-features = false, features = ["http"] }
 async-trait = "0.1"
+everruns = { version = "=0.17.25", default-features = false, features = ["openai"] }
 jaq-core = "3.1"
 jaq-json = { version = "2.0", features = ["serde"] }
 jaq-std = "3.0"

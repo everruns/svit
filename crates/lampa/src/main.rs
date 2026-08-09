@@ -3,7 +3,6 @@ use std::process::ExitCode;
 
 use svit::{Process, Value, value};
 
-mod responses;
 mod tui;
 
 #[tokio::main]

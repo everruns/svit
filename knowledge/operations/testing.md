@@ -55,7 +55,7 @@ test data, not public examples. Examples requiring an API key or external
 service must be separated from the deterministic core suite and must never
 receive secrets on pull-request-controlled code.
 
-The original support-agent consumer scenario uses Agentyk's simulated driver to
+The original support-agent consumer scenario uses Everruns' simulated driver to
 prove that model-visible mutation is attenuated, the committed answer is authoritative,
 request mismatches roll back, ticket policy is derived from retrieved state, and
 retries cannot duplicate a ticket intent. Its optional live-model executable

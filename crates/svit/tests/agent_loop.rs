@@ -1,14 +1,29 @@
 use std::collections::BTreeMap;
 
-use agentyk::{ContentPart, Message, ModelSpec, Role, SimDriver, SimTurn};
 use async_trait::async_trait;
 use serde_json::json;
 use svit::{
-    Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
-    Limits, Process, Script, Svit, value,
+    AgentModel, ContentPart, Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport,
+    HttpTransportError, Limits, Message, MessageRole, Process, Script, SimTurn, Svit, value,
 };
 
 struct FixtureHttp;
+
+fn message_text(message: &Message) -> String {
+    if let Some(text) = message.text() {
+        return text.to_owned();
+    }
+    message
+        .tool_result_content()
+        .and_then(|result| {
+            result
+                .result
+                .as_ref()
+                .map(ToString::to_string)
+                .or_else(|| result.error.clone())
+        })
+        .unwrap_or_default()
+}
 
 #[async_trait]
 impl HttpTransport for FixtureHttp {
@@ -28,8 +43,7 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
         .unwrap()
         .memory("status", value!("idle"))
         .system_prompt("Handle inbox messages inside your Svit process.")
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "write",
                 json!({"path": "/memory/status", "value": "complete"}),
@@ -45,16 +59,14 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
     svit.start().unwrap();
     assert_eq!(svit.read("/memory/status").unwrap(), Some(value!("idle")));
     inbox
-        .send(Message::user_multimodal(vec![ContentPart::text(
-            "Do the configured work.",
-        )]))
+        .send(Message::user("Do the configured work."))
         .unwrap();
     svit.block().await.unwrap();
     let result = outbox.recv().await.unwrap();
 
-    assert_eq!(result.role, Role::Assistant);
+    assert_eq!(result.role, MessageRole::Agent);
     assert_eq!(result.content, vec![ContentPart::text("work complete")]);
-    assert_eq!(result.text(), "work complete");
+    assert_eq!(result.text(), Some("work complete"));
     assert_eq!(
         svit.read("/memory/status").unwrap(),
         Some(value!("complete"))
@@ -74,8 +86,7 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
 async fn started_svit_processes_inbox_messages_in_commit_order() {
     let mut svit = Svit::builder("svit://local/ordered-inbox")
         .unwrap()
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::text("first answer"),
             SimTurn::text("second answer"),
         ]))
@@ -87,12 +98,12 @@ async fn started_svit_processes_inbox_messages_in_commit_order() {
 
     svit.start().unwrap();
     inbox.send(Message::user("first question")).unwrap();
-    assert_eq!(outbox.recv().await.unwrap().text(), "first answer");
+    assert_eq!(outbox.recv().await.unwrap().text(), Some("first answer"));
 
     // The process remains live after a completed turn. A message committed
     // while it is waiting becomes the next turn without restarting the loop.
     inbox.send(Message::user("second question")).unwrap();
-    assert_eq!(outbox.recv().await.unwrap().text(), "second answer");
+    assert_eq!(outbox.recv().await.unwrap().text(), Some("second answer"));
 
     svit.block().await.unwrap();
     assert_eq!(svit.messages().unwrap().len(), 4);
@@ -108,8 +119,7 @@ async fn agent_runtime_projects_prompt_messages_and_events() {
         .unwrap()
         .system_prompt(prompt)
         .executables(Executables::new())
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call("read", json!({"path": "/agent/system_prompt"})),
             SimTurn::tool_call("read", json!({"path": "/agent/messages"})),
             SimTurn::tool_call("read", json!({"path": "/agent/events"})),
@@ -150,8 +160,8 @@ async fn agent_runtime_projects_prompt_messages_and_events() {
         .messages()
         .unwrap()
         .iter()
-        .filter(|message| message.role == Role::Tool)
-        .map(Message::text)
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .map(message_text)
         .collect::<Vec<_>>();
     assert_eq!(tool_results.len(), 5);
     assert!(tool_results[0].contains(prompt));
@@ -167,12 +177,8 @@ async fn resumed_agent_refreshes_tool_discovery_to_current_host_grants() {
     // grant when a restored process is attached to a new agent runtime.
     let source = Svit::builder("svit://local/tool-projection-source")
         .unwrap()
-        .executables(Executables::new().llm(
-            ModelSpec::llmsim(),
-            SimDriver::new([SimTurn::text("nested")]),
-        ))
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([]))
+        .executables(Executables::new().llm(AgentModel::scripted([SimTurn::text("nested")])))
+        .model(AgentModel::scripted([]))
         .build()
         .await
         .unwrap();
@@ -181,8 +187,7 @@ async fn resumed_agent_refreshes_tool_discovery_to_current_host_grants() {
 
     let restored = Process::restore(&snapshot).unwrap();
     let resumed = Svit::resume(restored)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([]))
+        .model(AgentModel::scripted([]))
         .build()
         .await
         .unwrap();
@@ -199,8 +204,7 @@ async fn agent_resume_rejects_a_divergent_message_projection() {
     // not become the conversation seen by a resumed agent.
     let mut svit = Svit::builder("svit://local/projection-source")
         .unwrap()
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("recorded answer")]))
+        .model(AgentModel::scripted([SimTurn::text("recorded answer")]))
         .build()
         .await
         .unwrap();
@@ -213,14 +217,13 @@ async fn agent_resume_rejects_a_divergent_message_projection() {
         .fork_process("svit://local/projection-tampered")
         .unwrap();
     let mut state = process.read("/agent").unwrap().unwrap().to_json();
-    state["messages"] = json!([]);
+    state["messages"][0]["id"] = state["messages"][1]["id"].clone();
     process
         .replace_agent_state(svit::Value::from_json(state).unwrap())
         .unwrap();
 
     let result = Svit::resume(process)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([]))
+        .model(AgentModel::scripted([]))
         .build()
         .await;
     let error = match result {
@@ -230,7 +233,8 @@ async fn agent_resume_rejects_a_divergent_message_projection() {
     assert!(
         error
             .to_string()
-            .contains("messages do not match the event projection")
+            .contains("messages do not match the Everruns event projection"),
+        "{error}"
     );
 }
 
@@ -240,8 +244,7 @@ async fn svit_agent_resumes_its_thread_from_the_process_snapshot() {
     let mut agent = Svit::builder("svit://local/durable-agent")
         .unwrap()
         .system_prompt(prompt)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("first answer")]))
+        .model(AgentModel::scripted([SimTurn::text("first answer")]))
         .build()
         .await
         .unwrap();
@@ -255,8 +258,7 @@ async fn svit_agent_resumes_its_thread_from_the_process_snapshot() {
 
     let restored = Process::restore(&snapshot).unwrap();
     let mut resumed = Svit::resume(restored)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("second answer")]))
+        .model(AgentModel::scripted([SimTurn::text("second answer")]))
         .build()
         .await
         .unwrap();
@@ -271,8 +273,11 @@ async fn svit_agent_resumes_its_thread_from_the_process_snapshot() {
     inbox.send(Message::user("second question")).unwrap();
     resumed.block().await.unwrap();
     assert_eq!(resumed.messages().unwrap().len(), 4);
-    assert_eq!(resumed.messages().unwrap()[0].text(), "first question");
-    assert_eq!(resumed.messages().unwrap()[1].text(), "first answer");
+    assert_eq!(
+        resumed.messages().unwrap()[0].text(),
+        Some("first question")
+    );
+    assert_eq!(resumed.messages().unwrap()[1].text(), Some("first answer"));
 }
 
 #[tokio::test]
@@ -281,8 +286,7 @@ async fn subagent_owns_an_isolated_forked_process() {
     // appends future events only to its own process.
     let mut parent = Svit::builder("svit://local/parent-agent")
         .unwrap()
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("parent answer")]))
+        .model(AgentModel::scripted([SimTurn::text("parent answer")]))
         .build()
         .await
         .unwrap();
@@ -294,8 +298,7 @@ async fn subagent_owns_an_isolated_forked_process() {
     let parent_hash = parent.root_hash().unwrap();
     let child_process = parent.fork_process("svit://local/child-agent").unwrap();
     let mut child = Svit::resume(child_process)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("child answer")]))
+        .model(AgentModel::scripted([SimTurn::text("child answer")]))
         .build()
         .await
         .unwrap();
@@ -311,7 +314,7 @@ async fn subagent_owns_an_isolated_forked_process() {
 
 #[tokio::test]
 async fn process_owned_agent_enforces_its_script_allowlist() {
-    // THREAT[TM-CAP-002]: Svit assembles the Agentyk tools and checks script
+    // THREAT[TM-CAP-002]: Svit assembles the Everruns tools and checks script
     // authority before executing model-supplied arguments.
     let mut agent = Svit::builder("svit://local/restricted-agent")
         .unwrap()
@@ -320,8 +323,7 @@ async fn process_owned_agent_enforces_its_script_allowlist() {
             "denied",
             Script::new(r#"(define (main input) (do (write "/memory/changed" true) input))"#),
         )
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call("exec", json!({"path": "/lib/denied", "input": null})),
             SimTurn::text("denied as expected"),
         ]))
@@ -357,8 +359,7 @@ async fn agent_event_growth_fails_closed_at_the_process_limit() {
     let mut agent = Svit::builder("svit://local/bounded-agent")
         .unwrap()
         .limits(limits)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([SimTurn::text("x".repeat(8 * 1024))]))
+        .model(AgentModel::scripted([SimTurn::text("x".repeat(8 * 1024))]))
         .build()
         .await
         .unwrap();
@@ -372,8 +373,14 @@ async fn agent_event_growth_fails_closed_at_the_process_limit() {
     let reported = errors.recv().await.unwrap();
     let error = agent.block().await.unwrap_err();
 
-    assert!(reported.contains("maximum text bytes exceeded"));
-    assert!(error.to_string().contains("maximum text bytes exceeded"));
+    assert!(
+        reported.contains("maximum text bytes exceeded"),
+        "{reported}"
+    );
+    assert!(
+        error.to_string().contains("maximum text bytes exceeded"),
+        "{error}"
+    );
     let process = agent.process();
     let process = process.lock().unwrap();
     let committed = process.read("/agent").unwrap().unwrap().to_json();
@@ -393,8 +400,7 @@ async fn native_search_and_jq_process_structured_data() {
         .unwrap()
         .memory("records", value!({"items": records["items"].clone()}))
         .executables(Executables::new())
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -430,8 +436,8 @@ async fn native_search_and_jq_process_structured_data() {
         .messages()
         .unwrap()
         .iter()
-        .filter(|message| message.role == Role::Tool)
-        .map(|message| message.text())
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .map(message_text)
         .collect::<Vec<_>>();
     assert!(tool_results[0].contains("/memory/records/items/1/name"));
     assert!(tool_results[1].contains("\"beta\""));
@@ -443,8 +449,7 @@ async fn native_http_is_denied_without_an_explicit_url_grant() {
     let mut svit = Svit::builder("svit://local/native-network-denied")
         .unwrap()
         .executables(Executables::new().http(HttpAllowlist::new(), FixtureHttp))
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -463,13 +468,13 @@ async fn native_http_is_denied_without_an_explicit_url_grant() {
     inbox.send(Message::user("try the network")).unwrap();
     svit.block().await.unwrap();
 
-    let tool_result = svit
-        .messages()
-        .unwrap()
-        .iter()
-        .find(|message| message.role == Role::Tool)
-        .unwrap()
-        .text();
+    let tool_result = message_text(
+        svit.messages()
+            .unwrap()
+            .iter()
+            .find(|message| message.role == MessageRole::ToolResult)
+            .unwrap(),
+    );
     assert!(tool_result.contains("HTTP URL is not allowed"));
 }
 
@@ -484,8 +489,7 @@ async fn native_http_uses_the_host_allowlist_and_transport() {
     let mut svit = Svit::builder("svit://local/native-network-allowed")
         .unwrap()
         .executables(tools)
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -504,13 +508,13 @@ async fn native_http_uses_the_host_allowlist_and_transport() {
     inbox.send(Message::user("read the fixture")).unwrap();
     svit.block().await.unwrap();
 
-    let tool_result = svit
-        .messages()
-        .unwrap()
-        .iter()
-        .find(|message| message.role == Role::Tool)
-        .unwrap()
-        .text();
+    let tool_result = message_text(
+        svit.messages()
+            .unwrap()
+            .iter()
+            .find(|message| message.role == MessageRole::ToolResult)
+            .unwrap(),
+    );
     assert!(tool_result.contains("fixture"), "{tool_result}");
 }
 
@@ -518,12 +522,10 @@ async fn native_http_uses_the_host_allowlist_and_transport() {
 async fn native_llm_uses_only_the_host_selected_nested_model() {
     // THREAT[TM-EFF-005]: Nested model execution requires a host-selected
     // driver and remains outside the process transaction.
-    let nested = SimDriver::new([SimTurn::text("nested answer")]);
     let mut svit = Svit::builder("svit://local/native-llm")
         .unwrap()
-        .executables(Executables::new().llm(ModelSpec::llmsim(), nested))
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .executables(Executables::new().llm(AgentModel::scripted([SimTurn::text("nested answer")])))
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -542,13 +544,13 @@ async fn native_llm_uses_only_the_host_selected_nested_model() {
     inbox.send(Message::user("delegate once")).unwrap();
     svit.block().await.unwrap();
 
-    let tool_result = svit
-        .messages()
-        .unwrap()
-        .iter()
-        .find(|message| message.role == Role::Tool)
-        .unwrap()
-        .text();
+    let tool_result = message_text(
+        svit.messages()
+            .unwrap()
+            .iter()
+            .find(|message| message.role == MessageRole::ToolResult)
+            .unwrap(),
+    );
     assert!(tool_result.contains("nested answer"));
 }
 
@@ -557,13 +559,13 @@ async fn native_spawn_runs_and_retains_an_isolated_child_svit() {
     // THREAT[TM-FORK-002]: spawn forks committed state, runs the child with
     // separately supplied model authority, and retains an isolated snapshot.
     let child_id = svit::ProcessId::new("svit://local/native-child").unwrap();
-    let child_driver = SimDriver::new([SimTurn::text("child answer")]);
     let mut parent = Svit::builder("svit://local/native-parent")
         .unwrap()
         .memory("owner", value!("parent"))
-        .executables(Executables::new().spawn(ModelSpec::llmsim(), child_driver))
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .executables(
+            Executables::new().spawn(AgentModel::scripted([SimTurn::text("child answer")])),
+        )
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -607,8 +609,8 @@ async fn native_spawn_runs_and_retains_an_isolated_child_svit() {
         .messages()
         .unwrap()
         .iter()
-        .filter(|message| message.role == Role::Tool)
-        .any(|message| message.text().contains("child address already exists"));
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .any(|message| message_text(message).contains("child address already exists"));
     assert!(duplicate_rejected);
 }
 
@@ -620,8 +622,7 @@ async fn native_data_tools_reject_unbounded_or_oversized_work() {
         .unwrap()
         .memory("text", value!("bounded"))
         .executables(Executables::new())
-        .model(ModelSpec::llmsim())
-        .driver(SimDriver::new([
+        .model(AgentModel::scripted([
             SimTurn::tool_call(
                 "exec",
                 json!({
@@ -654,8 +655,8 @@ async fn native_data_tools_reject_unbounded_or_oversized_work() {
         .messages()
         .unwrap()
         .iter()
-        .filter(|message| message.role == Role::Tool)
-        .map(|message| message.text())
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .map(message_text)
         .collect::<Vec<_>>();
     assert!(tool_results[0].contains("unbounded construct"));
     assert!(tool_results[1].contains("pattern limit exceeded"));

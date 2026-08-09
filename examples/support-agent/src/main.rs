@@ -1,8 +1,7 @@
 use std::env;
 use std::error::Error;
 
-use agentyk::{Agent, ModelSpec, OpenAiDriver};
-use svit_agentyk::SvitCapability;
+use svit::{AgentModel, Svit};
 use svit_support_agent::{run_support_turn, support_process};
 
 const REQUEST_ID: &str = "support-request-001";
@@ -12,10 +11,7 @@ const QUESTION: &str =
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let process = support_process(REQUEST_ID, QUESTION).await?;
-    let svit_capability =
-        SvitCapability::read_exec(process, ["search_support_docs", "commit_support_result"]);
-    let process_handle = svit_capability.process();
-    let agent = Agent::builder()
+    let mut agent = Svit::resume(process)
         .system_prompt(
             "You are a support agent. A reply is invalid unless this exact Svit workflow \
              succeeds: first read /memory/request/id; then execute search_support_docs with \
@@ -25,18 +21,18 @@ async fn main() -> Result<(), Box<dyn Error>> {
              commit succeeds. A ticket intent is queued, not delivered; describe it only as \
              queued.",
         )
-        .model(
-            ModelSpec::openai("gpt-5.6-terra")
-                .api_key(env::var("OPENAI_API_KEY")?)
-                .reasoning_effort("none"),
-        )
-        .driver(OpenAiDriver::new())
-        .capability(svit_capability)
+        .model(AgentModel::openai(
+            "gpt-5.6-terra",
+            env::var("OPENAI_API_KEY")?,
+        ))
+        .allow_scripts(["search_support_docs", "commit_support_result"])
         .max_iterations(8)
-        .build()?;
+        .build()
+        .await?;
 
-    let result = run_support_turn(&agent, &process_handle, REQUEST_ID).await?;
-    let committed_process = process_handle.lock().unwrap();
+    let result = run_support_turn(&mut agent, REQUEST_ID).await?;
+    let process = agent.process();
+    let committed_process = process.lock().unwrap();
     println!("{}", result.answer);
     println!("sources={}", result.source_ids.join(","));
     println!("ticket_queued={}", result.ticket_queued);

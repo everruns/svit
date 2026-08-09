@@ -10,8 +10,8 @@ keywords.workspace = true
 categories.workspace = true
 
 [dependencies]
-agentyk.workspace = true
 async-trait.workspace = true
+everruns.workspace = true
 jaq-core.workspace = true
 jaq-json.workspace = true
 jaq-std.workspace = true

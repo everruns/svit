@@ -9,11 +9,8 @@ description = "Terminal interface for the Svit agent process runtime"
 publish = false
 
 [dependencies]
-agentyk.workspace = true
-async-trait.workspace = true
 crossterm = "0.29"
 ratatui = "0.30.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json.workspace = true
 svit = { path = "../svit" }
 tokio.workspace = true

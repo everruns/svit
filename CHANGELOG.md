@@ -34,7 +34,7 @@ All notable changes to Svit will be documented here.
   deadline-sharing, depth-bounded nested script execution.
 - Bounded, read-only snapshot mounts for real UTF-8 folders and host-selected
   Turso query results, with a deterministic example covering both sources.
-- A process-owned `svit::Svit` loop implemented with Agentyk, with durable
+- A process-owned `svit::Svit` loop implemented with Everruns, with durable
   conversation events carried through snapshot, restore, and isolated forks.
 - A live `support-agent-v2` consumer using `gpt-5.6-terra` through a
   process-owned Svit inbox and outbox.

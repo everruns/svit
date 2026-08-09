@@ -3,17 +3,14 @@ use std::env;
 use std::io;
 use std::time::Duration;
 
-use agentyk::{ContentPart, Message, ModelSpec, Role};
 use crossterm::event;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
-use svit::{Svit, Value};
+use svit::{AgentModel, ContentPart, Message, MessageRole, Svit, Value};
 use tokio::sync::broadcast;
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
 use tuika_codeformatters::TreeSitterHighlighter;
-
-use crate::responses::OpenAiResponsesDriver;
 
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const MEMORY_WIDTH: u16 = 30;
@@ -492,8 +489,7 @@ pub async fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), Stri
         .system_prompt(
             "You own this Svit process. Use its memory tree for durable facts and working state.",
         )
-        .model(ModelSpec::openai(&model).api_key(api_key))
-        .driver(OpenAiResponsesDriver::new())
+        .model(AgentModel::openai(&model, api_key))
         .build()
         .await
         .map_err(|error| error.to_string())?;
@@ -1158,10 +1154,10 @@ fn timeline_lines(entries: &[TimelineEntry], theme: &Theme) -> Vec<Line<'static>
     for entry in entries {
         let (label, color) = match entry {
             TimelineEntry::Message(message) => match message.role {
-                Role::User => ("YOU", theme.accent),
-                Role::Assistant => ("SVIT", theme.accent_alt),
-                Role::System => ("SYSTEM", theme.muted),
-                Role::Tool => ("TOOL", theme.muted),
+                MessageRole::User => ("YOU", theme.accent),
+                MessageRole::Agent => ("SVIT", theme.accent_alt),
+                MessageRole::System => ("SYSTEM", theme.muted),
+                MessageRole::ToolResult => ("TOOL", theme.muted),
             },
             TimelineEntry::Event { label, .. } => (*label, theme.accent_alt),
         };
@@ -1176,7 +1172,18 @@ fn timeline_lines(entries: &[TimelineEntry], theme: &Theme) -> Vec<Line<'static>
                         ContentPart::Text(part) => {
                             lines.extend(part.text.lines().map(|line| Line::from(line.to_owned())));
                         }
-                        ContentPart::Image(_) => lines.push(Line::from("[image]")),
+                        ContentPart::Image(_) | ContentPart::ImageFile(_) => {
+                            lines.push(Line::from("[image]"));
+                        }
+                        ContentPart::ToolCall(call) => {
+                            lines.push(Line::from(format!("[tool: {}]", call.name)));
+                        }
+                        ContentPart::ToolResult(result) => {
+                            lines.push(Line::from(format!(
+                                "[tool result: {}]",
+                                result.tool_call_id
+                            )));
+                        }
                     }
                 }
             }

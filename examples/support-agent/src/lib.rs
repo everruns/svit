@@ -1,11 +1,8 @@
 //! Transactional support-agent workflow used by the executable example.
 
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-
-use agentyk::Agent;
 use serde_json::json;
-use svit::{Limits, Process, Script, SnapshotMount, Value};
+use std::path::PathBuf;
+use svit::{Limits, Message, Process, Script, SnapshotMount, Svit, Value};
 use thiserror::Error;
 
 const TICKET_DESTINATION: &str = "svit://local/support-tickets";
@@ -30,7 +27,7 @@ pub enum SupportError {
 
     /// The agent turn failed before producing a committed result.
     #[error(transparent)]
-    Agent(#[from] agentyk::Error),
+    Agent(#[from] svit::AgentError),
 
     /// Turso could not construct or query the account-context database.
     #[error(transparent)]
@@ -111,18 +108,19 @@ pub async fn support_process(request_id: &str, question: &str) -> Result<Process
 /// The model's final free-form response is intentionally ignored. The host
 /// returns the answer that committed atomically with any ticket intent.
 pub async fn run_support_turn(
-    agent: &Agent,
-    process: &Arc<Mutex<Process>>,
+    agent: &mut Svit,
     request_id: &str,
 ) -> Result<CommittedSupportResult, SupportError> {
-    let question = {
-        let process = process
-            .lock()
-            .map_err(|_| SupportError::ProcessUnavailable)?;
-        text_at(&process, "/memory/request/question")?.to_owned()
+    let question = match agent.read("/memory/request/question")? {
+        Some(Value::String(question)) if !question.is_empty() => question,
+        _ => return Err(invalid("active question is missing or invalid")),
     };
-
-    let _untrusted_response = agent.run(question).await?;
+    let inbox = agent.inbox();
+    agent.start()?;
+    inbox.send(Message::user(question))?;
+    drop(inbox);
+    agent.block().await?;
+    let process = agent.process();
     let process = process
         .lock()
         .map_err(|_| SupportError::ProcessUnavailable)?;
@@ -173,13 +171,6 @@ pub fn committed_support_result(
         source_ids,
         ticket_queued,
     })
-}
-
-fn text_at<'a>(process: &'a Process, path: &str) -> Result<&'a str, SupportError> {
-    match process.read(path)? {
-        Some(Value::String(value)) if !value.is_empty() => Ok(value),
-        _ => Err(invalid("active question is missing or invalid")),
-    }
 }
 
 fn map_text<'a>(
