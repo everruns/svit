@@ -82,6 +82,7 @@ pub struct Svit {
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
     outbox_sender: broadcast::Sender<Message>,
     executables: Option<Executables>,
+    error_sender: broadcast::Sender<String>,
     task: Option<JoinHandle<AgentResult<Agent>>>,
 }
 
@@ -124,6 +125,7 @@ impl Svit {
         let executables = agent.executables.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
+        let (error_sender, _) = broadcast::channel(16);
         Self {
             agent: Some(agent),
             process,
@@ -132,6 +134,7 @@ impl Svit {
             command_receiver: Some(command_receiver),
             outbox_sender,
             executables,
+            error_sender,
             task: None,
         }
     }
@@ -153,6 +156,14 @@ impl Svit {
         self.outbox_sender.subscribe()
     }
 
+    /// Subscribes to sanitized terminal failures from the independently running loop.
+    ///
+    /// Unlike the outbox, this stream is operational: receiving an error means
+    /// the loop has stopped and the inbox no longer accepts messages.
+    pub fn errors(&self) -> broadcast::Receiver<String> {
+        self.error_sender.subscribe()
+    }
+
     /// Starts the Agentyk loop as an independent Tokio task.
     pub fn start(&mut self) -> SvitResult<()> {
         if self.task.is_some() || self.command_receiver.is_none() {
@@ -164,7 +175,21 @@ impl Svit {
             .take()
             .ok_or(AgentError::AlreadyStarted)?;
         let outbox = self.outbox_sender.clone();
-        self.task = Some(tokio::spawn(run_process_loop(agent, receiver, outbox)));
+        let errors = self.error_sender.clone();
+        let inbox_state = self.inbox_state.clone();
+        self.task = Some(tokio::spawn(async move {
+            let result = run_process_loop(agent, receiver, outbox).await;
+            if let Ok(mut state) = inbox_state.lock() {
+                state.accepting = false;
+            }
+            if let Err(error) = &result {
+                // THREAT[TM-INF-001]: Operational subscribers receive the same
+                // bounded diagnostic surface as other runtime callers.
+                let diagnostic = crate::error::sanitize_diagnostic(error);
+                let _ = errors.send(diagnostic);
+            }
+            result
+        }));
         Ok(())
     }
 
@@ -177,9 +202,9 @@ impl Svit {
                 .lock()
                 .map_err(|_| AgentError::ProcessUnavailable)?;
             state.accepting = false;
-            self.command_sender
-                .send(RuntimeCommand::Stop)
-                .map_err(|_| AgentError::TaskFailed)?;
+            // A failed loop has already dropped its receiver; awaiting the task
+            // below must preserve that original error instead of masking it.
+            let _ = self.command_sender.send(RuntimeCommand::Stop);
         }
         self.agent = Some(task.await.map_err(|_| AgentError::TaskFailed)??);
         Ok(())

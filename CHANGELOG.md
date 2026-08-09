@@ -6,7 +6,7 @@ All notable changes to Svit will be documented here.
 
 ### Added
 
-- Initial Rust workspace with the `svit` library and `svit-cli` smoke-test
+- Initial Rust workspace with the `svit` library and Lampa smoke-test
   binary.
 - Transactional Svit Lisp activations, backed by Ketos, over one process state root.
 - Named, discoverable scripts with guest-side transactional script creation.

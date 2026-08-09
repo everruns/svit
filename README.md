@@ -54,12 +54,35 @@ fn main() -> svit::Result<()> {
 Run one standalone script through the CLI:
 
 ```console
-cargo run -p svit-cli -- exec path/to/script.svit-script '{"input": "value"}'
+cargo run -p lampa -- exec path/to/script.svit-script '{"input": "value"}'
 ```
 
 The CLI creates a fresh process, installs the script as `main`, executes one
 activation, and prints committed memory, output, and version as JSON. It is a
 smoke-test tool, not a persistent process supervisor.
+
+For an interactive process, start Lampa with an OpenAI API key:
+
+```console
+OPENAI_API_KEY=... cargo run -p lampa
+```
+
+![Lampa terminal process viewer](docs/lampa.gif)
+
+Three persistent panels show the inbox/outbox conversation and runtime events,
+the complete committed process memory tree, and the selected item. Container
+previews are bounded, shallow summaries; leaf previews render JSON text as
+highlighted JSON, detected source text with tree-sitter syntax highlighting,
+and other text as Markdown. Leaf rendering is capped at 64 KiB so a large value
+cannot stall the TUI.
+The middle panel includes `/agent`, `/memory`, scripts, inbox, mounts, and
+system state. `Tab` moves focus between chat input, memory navigation, and
+preview scrolling. In the memory panel, use arrows or `j`/`k` to move,
+`Right` to expand, `Left` to collapse or move to the parent, and `Enter` to
+toggle nodes. Use `PageUp`/`PageDown` or the mouse wheel to scroll. Use
+`--model` or `SVIT_MODEL` to override the
+default model. Lampa uses OpenAI's Responses API for reasoning and function
+tools.
 
 ## Generic process contract
 

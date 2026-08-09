@@ -348,6 +348,8 @@ async fn process_owned_agent_enforces_its_script_allowlist() {
 async fn agent_event_growth_fails_closed_at_the_process_limit() {
     // THREAT[TM-DOS-003]: Model output enters the durable event stream only
     // through bounded Svit value validation.
+    // THREAT[TM-INF-001]: The terminal failure also crosses the bounded
+    // operational error stream without being replaced by a task error.
     let limits = Limits {
         max_text_bytes: 4 * 1024,
         ..Limits::default()
@@ -362,12 +364,15 @@ async fn agent_event_growth_fails_closed_at_the_process_limit() {
         .unwrap();
 
     let inbox = agent.inbox();
+    let mut errors = agent.errors();
     agent.start().unwrap();
     inbox
         .send(Message::user("produce too much output"))
         .unwrap();
+    let reported = errors.recv().await.unwrap();
     let error = agent.block().await.unwrap_err();
 
+    assert!(reported.contains("maximum text bytes exceeded"));
     assert!(error.to_string().contains("maximum text bytes exceeded"));
     let process = agent.process();
     let process = process.lock().unwrap();

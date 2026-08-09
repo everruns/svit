@@ -24,7 +24,7 @@ examples:
     cargo run --locked -p svit --example mounted_resources
     cargo run --locked -p svit --example process_owned_agent
     cargo run --locked -p svit --example executables
-    cargo run --locked -p svit-cli -- exec crates/svit-cli/tests/fixtures/counter.svit-script '{"by": 3}'
+    cargo run --locked -p lampa -- exec crates/lampa/tests/fixtures/counter.svit-script '{"by": 3}'
 
 # Run the live process-owned support agent with OPENAI_API_KEY configured.
 support-agent-v2:
@@ -61,4 +61,8 @@ pre-pr: check examples audit
 
 # Run a Lisp file in a fresh CLI process.
 exec *args:
-    cargo run --locked -p svit-cli -- exec {{args}}
+    cargo run --locked -p lampa -- exec {{args}}
+
+# Open the Lampa process console. Requires OPENAI_API_KEY.
+lampa *args:
+    cargo run --locked -p lampa -- {{args}}
