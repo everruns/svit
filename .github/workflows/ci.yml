@@ -62,6 +62,9 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --locked
 
+      - name: Reclaim test artifacts before examples
+        run: cargo clean
+
       - name: Run durable counter
         run: cargo run --locked -p svit --example durable_counter
 
@@ -82,7 +85,7 @@ jobs:
 
       - name: Run CLI smoke test
         run: >-
-          cargo run --locked -p svit-cli -- exec crates/svit-cli/tests/fixtures/counter.svit-script '{"by": 3}'
+          cargo run --locked -p lampa -- exec crates/lampa/tests/fixtures/counter.svit-script '{"by": 3}'
 
   audit:
     name: Dependency audit
