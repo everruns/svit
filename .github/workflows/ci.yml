@@ -51,6 +51,11 @@ jobs:
   test:
     name: Tests and executable examples
     runs-on: ubuntu-latest
+    # Debug sections make this workspace's test artifacts exceed the hosted
+    # runner disk. CI needs assertions and diagnostics, not debugger symbols.
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -60,7 +65,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run tests
-        run: cargo test --workspace --locked
+        # Avoid multiple large links competing for the remaining runner disk.
+        run: cargo test --workspace --locked --jobs 1
 
       - name: Reclaim test artifacts before examples
         run: cargo clean
