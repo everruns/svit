@@ -1,5 +1,0 @@
-(define (main input)
-  (let ((count (value-get input "/by")))
-    (do
-      (write "/memory/count" count)
-      (value-map "count" count))))

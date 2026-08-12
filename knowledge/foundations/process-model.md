@@ -20,12 +20,13 @@ The initial process exposes one conventional namespace:
 
 ```text
 /
-├── agent/                  host-managed runtime projection; null for a bare Process
-│   ├── system_prompt       configured agent instructions
+├── thread/                 host-managed reasoning projection; null for a bare Process
+│   ├── instructions        optional host instructions, or null
+│   ├── system_prompt       Svit-owned prompt composed for this address
 │   ├── messages            conversation projected from events
 │   └── events              canonical Everruns event stream
-├── bin/                    host-managed native executable manuals
-├── memory/                 agent-owned durable values
+├── bin/                    host-managed built-in manuals
+├── memory/                 process-owned durable values
 ├── lib/                    named scripts
 ├── tasks/                  reserved; empty in this slice
 ├── inbox/                  host-managed durable input queue
@@ -34,19 +35,23 @@ The initial process exposes one conventional namespace:
 └── system/                 read-only runtime metadata
     ├── identity            logical address, explicitly unauthenticated
     ├── capabilities        empty in this slice
-    ├── api                 generic agent operations
+    ├── api                 generic process operations
     ├── limits              configured resource limits
     ├── lineage             parent address for forks
     ├── runtime             language and snapshot format
     └── outbox              committed message intents
 ```
 
-Agent-thread state, memory, scripts, mounts, system metadata, and outbox form
+Thread state, memory, scripts, mounts, system metadata, and outbox form
 one committed logical root. Building a `Svit` replaces the bare process's null
-`/agent` node with the configured system prompt, projected messages, and
-canonical events. It also refreshes `/bin` from the attached executable runtime.
+`/thread` node with optional host instructions, the Svit-owned system prompt,
+projected messages, and canonical events. The process address is the runtime
+identity; Svit does not accept a second runtime name. Instructions are wrapped in
+an `<instructions>` block. Restore retains them, while fork recomposes the base
+prompt for the child address. Construction also refreshes `/bin` from the
+attached built-in registry.
 Each `/bin/<name>` record contains a description, input schema, output contract,
-effect class, and limits. `/agent` and `/bin` are guest-readable but writable only through the
+effect class, and limits. `/thread` and `/bin` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
 through host APIs; `/tasks` and `/children` remain reserved and empty.
 Each mount contains `kind`, `mode: snapshot-read-only`, and bounded `data`.
@@ -59,7 +64,7 @@ text-keyed map and initial scripts through `library(name, script)` so both
 durable namespaces are explicit at the setup boundary. It attaches a prepared
 `SnapshotMount` through `mount(name, mount)`; import finishes before process
 construction and activation.
-Rust callers, the Svit agent loop, and Svit Lisp use the same five generic
+Rust callers, the Svit reasoning loop, and Svit Lisp use the same five generic
 process operations:
 
 ```text
@@ -75,8 +80,8 @@ mount snapshots, reserved nodes, and system state at every map or array depth. `
 value. `write` and `remove` modify `/memory` or one typed `/lib/<name>` entry.
 `/mounts` and `/bin` are read-only. The agent-facing `exec` resolves
 `/lib/<name>` to a transactional script activation or `/bin/<name>` to an
-attached native executable. `Process::exec` and Svit Lisp accept only `/lib`
-paths because a serializable process does not own host executable authority.
+attached built-in. `Process::exec` and Svit Lisp accept only `/lib` paths
+because a serializable process does not own host built-in authority.
 `/bin` entries are descriptive and never grant authority. Inside Svit Lisp,
 these operations use
 the activation's transactional view; nested `exec` shares its transaction,
@@ -96,25 +101,49 @@ authentication, reachability, or delivery.
 capability. A fork replaces this address and records its parent's address under
 `/system/lineage/parent` without mutating the parent.
 
-## Native executables
+## Built-ins
 
-A host may attach `Executables` to the process-owned runtime. This installs
-`/bin/search` and `/bin/jq`. `search` traverses text values below one
-committed process path with bounded regular-expression matching. `jq`
-evaluates a bounded filter over explicit JSON supplied to `exec`.
-Neither executable has a filesystem, environment, process launcher, or ambient
-network interface.
+A host may attach `Builtins` to the process-owned runtime. The default
+registry installs `/bin/search` and `/bin/jq`. `search` traverses text values
+below one committed process path with bounded regular-expression matching.
+`jq` evaluates a bounded filter over explicit JSON supplied to `exec`.
+Neither built-in has a filesystem, environment, process launcher, or ambient
+network interface. Hosts can register one `Builtin` by name or contribute a
+bundle through `BuiltinExtension`; later registrations replace earlier
+entries of the same name. The frozen registry generates both dispatch and the
+catalog, so no separate name switch or manual table can drift.
 
-At agent construction, Svit derives `/bin` from the exact native executable
+At agent construction, Svit derives `/bin` from the exact built-in
 implementations attached by the host. A snapshot records the last catalog for
 inspection, but resume refreshes it from current host configuration before a
 turn; catalog values never authorize execution. Generic operations such as
 `discover`, `read`, and `exec` are API operations and do not appear under `/bin`.
+Every implementation receives bounded explicit JSON and an
+a `BuiltinContext` exposing committed reads and discovery without process
+mutation. Extension implementations are trusted native host code and may use
+only additional capabilities deliberately captured during registration.
+
+`Builtins::standard()` selects the complete set through the same `builtins`
+builder operation used for every host registry. HTTP starts default-deny and
+`with_http_allowlist` replaces its URL grants. At Svit construction it installs
+`search` and `jq`, derives `llm` and `spawn` from the same instance `Reasoner`,
+and resolves `http` from the allowlist
+with Svit's bounded transport. Later built-in registrations win, including
+a specialized host's explicit `http` adapter. Presentation hosts do not
+reconstruct this registry after the Svit instance is built.
 
 HTTP is default-deny and appears only when the host supplies an `HttpAllowlist`
 and transport. `/bin/llm` uses one host-selected model and driver. Neither
 executable is a Svit activation, and external effects cannot be rolled back with
 process state.
+
+A running Svit publishes host-only operational events. A commit event is a
+notification that state changed; it does not expose the process root. The host
+may then obtain an owned value and its version atomically through the Svit
+contract. A failure event contains only a sanitized diagnostic. These transient
+notifications do not replace the durable process event log or outbox. Each
+`events` or `outbox` call creates an independent observer behind the Svit
+contract; consumers do not receive the underlying channel implementation.
 
 The child executable is named `spawn`, distinguishing process creation from
 executing an existing `/bin` or `/lib` path. It takes a child address and task,
@@ -199,15 +228,15 @@ Authority inheritance is deferred because the initial slice has no external
 capabilities. Future grants must be explicitly attenuated, never inferred from
 memory contents.
 
-## Agent loop
+## Reasoning loop
 
 `svit::Svit` binds one reason/act loop and one durable conversation thread to
 one process. Everruns implements the current loop behind the Svit API. Each
-durable Everruns event is validated and committed under `/agent`; callers do
+durable Everruns event is validated and committed under `/thread`; callers do
 not construct an external Everruns agent and attach Svit as a tool.
-`/agent/events` is the canonical replay source. `/agent/messages` is rebuilt
+`/thread/events` is the canonical replay source. `/thread/messages` is rebuilt
 from those events at the host-only commit boundary and checked against them on
-resume. `/bin` is refreshed from the currently attached executable runtime, so
+resume. `/bin` is refreshed from the currently attached built-in registry, so
 a restored process does not retain execution authority omitted by the new host.
 The model can inspect manuals through ordinary `discover` and `read` operations.
 

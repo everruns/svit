@@ -1,10 +1,42 @@
 use serde_json::json;
-use svit::{AgentModel, SimTurn, Svit, value};
-use svit_support_agent::{committed_support_result, run_support_turn, support_process};
+use svit::{
+    LLMSIM_MODEL_ID, LlmSimConfig, Reasoner, SimToolCall, SimTurn, Svit, llm_sim_provider, value,
+};
+use svit_support_agent_process::{committed_support_result, run_support_turn, support_process};
 
 const REQUEST_ID: &str = "support-request-001";
 const QUESTION: &str =
     "I lost access to my verified email and my authenticator. Can support restore access?";
+
+fn simulated_model() -> &'static str {
+    LLMSIM_MODEL_ID
+}
+
+fn scripted_reasoner(turns: impl IntoIterator<Item = SimTurn>) -> Reasoner {
+    Reasoner::new(
+        simulated_model(),
+        llm_sim_provider(LlmSimConfig::scripted(turns.into_iter().collect())),
+    )
+}
+
+trait SimTurnExt {
+    fn text(value: impl Into<String>) -> Self;
+    fn tool_call(name: impl Into<String>, arguments: serde_json::Value) -> Self;
+}
+
+impl SimTurnExt for SimTurn {
+    fn text(value: impl Into<String>) -> Self {
+        Self::Assistant(value.into())
+    }
+
+    fn tool_call(name: impl Into<String>, arguments: serde_json::Value) -> Self {
+        Self::ToolCalls(vec![SimToolCall {
+            name: name.into(),
+            arguments,
+            id: None,
+        }])
+    }
+}
 
 #[tokio::test]
 async fn commit_is_idempotent_and_uses_retrieved_sources() {
@@ -108,8 +140,8 @@ async fn ticket_policy_does_not_queue_an_unneeded_intent() {
 async fn user_reply_is_loaded_from_the_committed_result() {
     let process = support_process(REQUEST_ID, QUESTION).await.unwrap();
     let mut agent = Svit::resume(process)
-        .system_prompt("Test support agent")
-        .model(AgentModel::scripted([
+        .instructions("Test support agent")
+        .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({

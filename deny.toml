@@ -17,7 +17,7 @@ exceptions = [
     { allow = ["BSD-2-Clause"], crate = "arrayref@0.3.9" },
     { allow = ["CC0-1.0"], crate = "constant_time_eq@0.1.5" },
     { allow = ["WTFPL"], crate = "terminfo@0.8.0" },
-    # Everruns 0.17.25 declares fetch, HTML, and Bash support from its core
+    # The current Everruns main graph declares fetch, HTML, and Bash support from its core
     # graph even though Svit registers none of those capabilities. Keep the
     # additional OSI-approved licenses scoped to the exact transitive crates.
     { allow = ["MIT-0"], crate = "borrow-or-share@0.2.4" },
@@ -50,3 +50,4 @@ deny = []
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
+allow-git = ["https://github.com/everruns/everruns"]

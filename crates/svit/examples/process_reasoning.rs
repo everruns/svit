@@ -1,5 +1,19 @@
 use serde_json::json;
-use svit::{AgentModel, Message, Script, SimTurn, Svit, SvitResult, value};
+use svit::{
+    LLMSIM_MODEL_ID, LlmSimConfig, Message, Reasoner, Script, SimToolCall, SimTurn, Svit,
+    SvitResult, llm_sim_provider, value,
+};
+
+fn simulated_model() -> &'static str {
+    LLMSIM_MODEL_ID
+}
+
+fn scripted_reasoner(turns: Vec<SimTurn>) -> Reasoner {
+    Reasoner::new(
+        simulated_model(),
+        llm_sim_provider(LlmSimConfig::scripted(turns)),
+    )
+}
 
 #[tokio::main]
 async fn main() -> SvitResult<()> {
@@ -16,13 +30,14 @@ async fn main() -> SvitResult<()> {
                 "#,
             ),
         )
-        .system_prompt("Handle inbox messages entirely inside your Svit process.")
-        .model(AgentModel::scripted([
-            SimTurn::tool_call(
-                "exec",
-                json!({"path": "/lib/remember_color", "input": {"color": "blue"}}),
-            ),
-            SimTurn::text("remembered blue"),
+        .instructions("Handle inbox messages entirely inside your Svit process.")
+        .reasoner(scripted_reasoner(vec![
+            SimTurn::ToolCalls(vec![SimToolCall {
+                name: "exec".into(),
+                arguments: json!({"path": "/lib/remember_color", "input": {"color": "blue"}}),
+                id: None,
+            }]),
+            SimTurn::Assistant("remembered blue".into()),
         ]))
         .allow_scripts(["remember_color"])
         .build()
@@ -42,6 +57,6 @@ async fn main() -> SvitResult<()> {
 
     assert_eq!(result.text(), Some("remembered blue"));
     assert_eq!(svit.read("/memory/release/color")?, Some(value!("blue")));
-    println!("process_owned_agent color=blue version={}", svit.version()?);
+    println!("process_reasoning color=blue version={}", svit.version()?);
     Ok(())
 }

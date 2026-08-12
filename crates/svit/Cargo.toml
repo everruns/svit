@@ -12,11 +12,14 @@ categories.workspace = true
 [dependencies]
 async-trait.workspace = true
 everruns.workspace = true
+everruns-host.workspace = true
+everruns-test-support.workspace = true
 jaq-core.workspace = true
 jaq-json.workspace = true
 jaq-std.workspace = true
 ketos.workspace = true
 regex.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

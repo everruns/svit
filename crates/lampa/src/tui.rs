@@ -1,22 +1,21 @@
 use std::collections::BTreeSet;
-use std::env;
 use std::io;
 use std::time::Duration;
 
 use crossterm::event;
 use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
-use svit::{AgentModel, ContentPart, Message, MessageRole, Svit, Value};
-use tokio::sync::broadcast;
+use svit::{ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
 use tuika_codeformatters::TreeSitterHighlighter;
 
-const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const MEMORY_WIDTH: u16 = 30;
 const FRAME_TIME: Duration = Duration::from_millis(50);
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
+const MAX_INLINE_VALUE_BYTES: usize = 160;
+const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
 
 fn lampa_theme() -> Theme {
     let text = Color::Rgb(230, 230, 232);
@@ -95,6 +94,15 @@ fn contains(rect: Rect, mouse: &Mouse) -> bool {
         && mouse.column < rect.right()
         && mouse.row >= rect.y
         && mouse.row < rect.bottom()
+}
+
+fn panel_body(rect: Rect) -> Rect {
+    Rect::new(
+        rect.x.saturating_add(1),
+        rect.y.saturating_add(1),
+        rect.width.saturating_sub(2),
+        rect.height.saturating_sub(2),
+    )
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -301,6 +309,24 @@ impl App {
         match mouse.kind {
             MouseKind::Down(MouseButton::Left) if mouse.plain() => {
                 self.focus = target;
+                if target == Focus::Memory {
+                    let selected = self.tree.selected();
+                    let first_visible = VirtualWindow::around(
+                        self.rows.len(),
+                        self.memory_viewport_height,
+                        selected,
+                    )
+                    .start();
+                    let _ = self.tree.handle_mouse(
+                        event,
+                        self.rows.len(),
+                        panel_body(self.panel_bounds.memory),
+                        first_visible,
+                    );
+                    if self.tree.selected() != selected {
+                        self.preview_scroll.jump_to_top();
+                    }
+                }
                 true
             }
             MouseKind::ScrollUp | MouseKind::ScrollDown if mouse.plain() => {
@@ -478,62 +504,25 @@ enum AppAction {
     Quit,
 }
 
-pub async fn run(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
-    let model = parse_model(&mut arguments)?;
-    let api_key = env::var("OPENAI_API_KEY")
-        .map_err(|_| "OPENAI_API_KEY is required for Lampa".to_string())?;
-
-    let mut svit = Svit::builder("svit://local/lampa/process")
-        .map_err(|error| error.to_string())?
-        .name("lampa")
-        .system_prompt(
-            "You own this Svit process. Use its memory tree for durable facts and working state.",
-        )
-        .model(AgentModel::openai(&model, api_key))
-        .build()
-        .await
-        .map_err(|error| error.to_string())?;
-    let root = svit
-        .read("/")
-        .map_err(|error| error.to_string())?
-        .expect("a process always has a root");
-    let mut app = App::new(
-        root,
-        svit.version().map_err(|error| error.to_string())?,
-        model,
-    );
+pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
+    let (root, version) = read_root(&svit)?;
+    let mut app = App::new(root, version, model);
     let inbox = svit.inbox();
+    let mut events = svit.events();
     let mut outbox = svit.outbox();
-    let mut errors = svit.errors();
     svit.start().map_err(|error| error.to_string())?;
 
-    let ui_result = run_terminal(&mut app, &svit, &inbox, &mut outbox, &mut errors);
+    let ui_result = run_terminal(&mut app, &svit, &inbox, &mut events, &mut outbox);
     svit.block().await.map_err(|error| error.to_string())?;
     ui_result
-}
-
-fn parse_model(arguments: &mut impl Iterator<Item = String>) -> Result<String, String> {
-    match arguments.next() {
-        None => Ok(env::var("SVIT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string())),
-        Some(flag) if flag == "--model" => {
-            let model = arguments
-                .next()
-                .ok_or_else(|| "--model requires a value".to_string())?;
-            if arguments.next().is_some() {
-                return Err("usage: lampa [--model <model>]".into());
-            }
-            Ok(model)
-        }
-        Some(_) => Err("usage: lampa [--model <model>]".into()),
-    }
 }
 
 fn run_terminal(
     app: &mut App,
     svit: &Svit,
-    inbox: &svit::Inbox,
-    outbox: &mut broadcast::Receiver<Message>,
-    errors: &mut broadcast::Receiver<String>,
+    inbox: &Inbox,
+    events: &mut Events,
+    outbox: &mut Outbox,
 ) -> Result<(), String> {
     let theme = lampa_theme();
     let probes = UiProbes::default();
@@ -548,17 +537,18 @@ fn run_terminal(
 
     let result = (|| {
         loop {
+            while let Ok(event) = events.try_recv() {
+                match event {
+                    SvitEvent::Committed => {
+                        let (root, version) = read_root(svit)?;
+                        app.refresh_process(root, version);
+                    }
+                    SvitEvent::Failed(error) => app.push_error(error),
+                }
+            }
             while let Ok(message) = outbox.try_recv() {
                 app.push_assistant(message);
             }
-            while let Ok(error) = errors.try_recv() {
-                app.push_error(error);
-            }
-            let root = svit
-                .read("/")
-                .map_err(|error| error.to_string())?
-                .expect("a process always has a root");
-            app.refresh_process(root, svit.version().map_err(|error| error.to_string())?);
 
             terminal
                 .draw(|frame| {
@@ -592,6 +582,14 @@ fn run_terminal(
     })();
     let _ = terminal.clear();
     result
+}
+
+fn read_root(svit: &Svit) -> Result<(Value, u64), String> {
+    let (root, version) = svit
+        .read_versioned("/")
+        .map_err(|error| error.to_string())?;
+    let root = root.ok_or_else(|| "Svit process root is unavailable".to_owned())?;
+    Ok((root, version))
 }
 
 fn has_children(value: &Value) -> bool {
@@ -677,7 +675,13 @@ fn flatten_memory(
         Value::Array(values) => values
             .iter()
             .enumerate()
-            .map(|(index, value)| (format!("[{index}]"), PathPart::Index(index), value))
+            .map(|(index, value)| {
+                (
+                    format!("[{index}] - {}", tree_item_summary(value)),
+                    PathPart::Index(index),
+                    value,
+                )
+            })
             .collect(),
         _ => return,
     };
@@ -719,6 +723,77 @@ fn flatten_memory(
             );
         }
     }
+}
+
+fn tree_item_summary(value: &Value) -> String {
+    match value {
+        Value::String(text) => bounded_tree_text(text),
+        Value::Array(values) => item_count("array", values.len()),
+        Value::Map(values) => {
+            const IDENTITY_KEYS: [&str; 6] = ["name", "title", "label", "operation", "type", "id"];
+            IDENTITY_KEYS
+                .iter()
+                .find_map(|key| {
+                    values
+                        .get(*key)
+                        .and_then(tree_scalar_summary)
+                        .map(|value| format!("{key}: {value}"))
+                })
+                .or_else(|| {
+                    values.iter().find_map(|(key, value)| {
+                        tree_scalar_summary(value).map(|value| format!("{key}: {value}"))
+                    })
+                })
+                .unwrap_or_else(|| item_count("object", values.len()))
+        }
+        Value::Script(_) => "script".into(),
+        value => tree_scalar_summary(value).expect("non-container value is scalar"),
+    }
+}
+
+fn tree_scalar_summary(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(bounded_tree_text(text)),
+        Value::Null | Value::Bool(_) | Value::Integer(_) | Value::Number(_) => Some(
+            serde_json::to_string(&value.to_json())
+                .expect("persistent scalar values always serialize to JSON"),
+        ),
+        Value::Array(_) | Value::Map(_) | Value::Script(_) => None,
+    }
+}
+
+fn bounded_tree_text(text: &str) -> String {
+    let mut summary = String::new();
+    let mut pending_space = false;
+    let mut truncated = false;
+    for character in text.chars() {
+        if character.is_whitespace() || character.is_control() {
+            pending_space = !summary.is_empty();
+            continue;
+        }
+        let extra = character.len_utf8() + usize::from(pending_space);
+        if summary.len() + extra > MAX_TREE_ITEM_PREVIEW_BYTES {
+            truncated = true;
+            break;
+        }
+        if pending_space {
+            summary.push(' ');
+            pending_space = false;
+        }
+        summary.push(character);
+    }
+    if truncated {
+        summary.push('…');
+    }
+    if summary.is_empty() {
+        "\"\"".into()
+    } else {
+        summary
+    }
+}
+
+fn item_count(kind: &str, count: usize) -> String {
+    format!("{kind} · {count} item{}", if count == 1 { "" } else { "s" })
 }
 
 fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> Element {
@@ -906,7 +981,7 @@ fn preview_document(path: &str, value: &Value) -> PreviewDocument {
                 values.len(),
                 values
                     .iter()
-                    .map(|(key, value)| (key.as_str(), value_kind(value))),
+                    .map(|(key, value)| (key.as_str(), value_summary(value))),
             ),
         },
         Value::Array(values) => PreviewDocument {
@@ -917,7 +992,7 @@ fn preview_document(path: &str, value: &Value) -> PreviewDocument {
                 values
                     .iter()
                     .enumerate()
-                    .map(|(index, value)| (index.to_string(), value_kind(value))),
+                    .map(|(index, value)| (index.to_string(), value_summary(value))),
             ),
         },
         value => PreviewDocument {
@@ -949,11 +1024,11 @@ fn bounded_preview_source(source: &str) -> (String, bool) {
 fn container_summary<K: AsRef<str>>(
     kind: &str,
     count: usize,
-    children: impl Iterator<Item = (K, &'static str)>,
+    children: impl Iterator<Item = (K, String)>,
 ) -> String {
     let mut summary = format!("{kind} · {count} items");
-    for (name, child_kind) in children.take(MAX_PREVIEW_ITEMS) {
-        summary.push_str(&format!("\n{}  {child_kind}", name.as_ref()));
+    for (name, child_summary) in children.take(MAX_PREVIEW_ITEMS) {
+        summary.push_str(&format!("\n{}  {child_summary}", name.as_ref()));
     }
     if count > MAX_PREVIEW_ITEMS {
         summary.push_str(&format!(
@@ -964,16 +1039,25 @@ fn container_summary<K: AsRef<str>>(
     summary
 }
 
-fn value_kind(value: &Value) -> &'static str {
+fn value_summary(value: &Value) -> String {
     match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Integer(_) | Value::Number(_) => "number",
-        Value::String(_) => "text",
-        Value::Array(_) => "array",
-        Value::Map(_) => "object",
-        Value::Script(_) => "script",
+        Value::String(text) => inline_string_summary(text),
+        Value::Array(values) => format!("array · {} items", values.len()),
+        Value::Map(values) => format!("object · {} items", values.len()),
+        Value::Script(_) => "script".into(),
+        value => serde_json::to_string(&value.to_json())
+            .expect("persistent scalar values always serialize to JSON"),
     }
+}
+
+fn inline_string_summary(text: &str) -> String {
+    let mut end = text.len().min(MAX_INLINE_VALUE_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    let suffix = if end < text.len() { "…" } else { "" };
+    serde_json::to_string(&format!("{}{suffix}", &text[..end]))
+        .expect("Rust strings always serialize to JSON")
 }
 
 fn detect_code(path: &str, source: &str) -> Option<&'static str> {
@@ -1246,10 +1330,46 @@ mod tests {
     }
 
     #[test]
+    fn array_tree_rows_include_bounded_item_previews() {
+        let long_text = format!(
+            "start\n\u{1b}{}",
+            "x".repeat(MAX_TREE_ITEM_PREVIEW_BYTES * 2)
+        );
+        let root = value!({
+            "items": [
+                "plain text",
+                7,
+                {"id": "secondary", "name": "Ada"},
+                {"count": 2},
+                {"nested": {"value": "hidden"}},
+                long_text
+            ]
+        });
+        let rows = tree_rows(&root, &expandable_paths(&root));
+        let label = |path: &str| {
+            rows.iter()
+                .find(|row| row.path == path)
+                .unwrap()
+                .label
+                .as_str()
+        };
+
+        assert!(label("/items/0").ends_with("[0] - plain text"));
+        assert!(label("/items/1").ends_with("[1] - 7"));
+        assert!(label("/items/2").ends_with("[2] - name: Ada"));
+        assert!(label("/items/3").ends_with("[3] - count: 2"));
+        assert!(label("/items/4").ends_with("[4] - object · 1 item"));
+        assert!(label("/items/5").contains("[5] - start "));
+        assert!(label("/items/5").ends_with('…'));
+        assert!(!label("/items/5").contains('\n'));
+        assert!(!label("/items/5").contains('\u{1b}'));
+    }
+
+    #[test]
     fn tree_flattens_complete_process_memory_and_preview_tracks_selection() {
         let mut app = App::new(
             value!({
-                "agent": {"messages": [], "events": []},
+                "thread": {"messages": [], "events": []},
                 "memory": {"profile": {"name": "Ada"}, "scores": [3, 5]}
             }),
             7,
@@ -1257,7 +1377,7 @@ mod tests {
         );
 
         assert_eq!(app.rows[0].label, "▾ /");
-        assert!(app.rows.iter().any(|row| row.path == "/agent/messages"));
+        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
         assert!(app.rows.iter().any(|row| row.path == "/memory"));
         assert!(app.rows.iter().any(|row| row.label.ends_with("name")));
         let name_index = app
@@ -1278,7 +1398,7 @@ mod tests {
     fn text_memory_preview_renders_markdown_instead_of_json_quoting_it() {
         let theme = lampa_theme();
         let lines = preview_lines(
-            "/agent/system_prompt",
+            "/thread/system_prompt",
             &Value::String("# Heading\n\nA **bold** fact.".into()),
             40,
             &theme,
@@ -1347,6 +1467,49 @@ mod tests {
     }
 
     #[test]
+    fn container_preview_shows_scalar_child_values() {
+        let theme = lampa_theme();
+        let event = value!({
+            "context": {},
+            "data": {"private": "nested value"},
+            "id": "event-123",
+            "sequence": 7,
+            "session_id": "session-456",
+            "ts": "2026-08-11T12:34:56Z",
+            "type": "response.completed"
+        });
+        let rendered = preview_lines("/thread/events/0", &event, 80, &theme)
+            .iter()
+            .flat_map(|line| &line.spans)
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("context  object"));
+        assert!(rendered.contains("data  object"));
+        assert!(rendered.contains("id  \"event-123\""));
+        assert!(rendered.contains("sequence  7"));
+        assert!(rendered.contains("session_id  \"session-456\""));
+        assert!(rendered.contains("type  \"response.completed\""));
+        assert!(!rendered.contains("nested value"));
+    }
+
+    #[test]
+    fn container_preview_bounds_inline_string_values() {
+        let theme = lampa_theme();
+        let long_value = format!("start-{}-end", "x".repeat(MAX_INLINE_VALUE_BYTES * 2));
+        let value = value!({"field": long_value});
+        let rendered = preview_lines("/memory", &value, 80, &theme)
+            .iter()
+            .flat_map(|line| &line.spans)
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("field  \"start-"));
+        assert!(rendered.contains('…'));
+        assert!(!rendered.contains("-end"));
+    }
+
+    #[test]
     fn large_leaf_preview_is_bounded_before_formatting() {
         let theme = lampa_theme();
         let source = format!("start\n{}\nend", "x".repeat(MAX_PREVIEW_BYTES * 2));
@@ -1363,7 +1526,7 @@ mod tests {
     #[test]
     fn refresh_preserves_selected_memory_path() {
         let mut app = App::new(
-            value!({"agent": {}, "memory": {"profile": {"name": "Ada"}}}),
+            value!({"thread": {}, "memory": {"profile": {"name": "Ada"}}}),
             1,
             "test".into(),
         );
@@ -1376,7 +1539,7 @@ mod tests {
 
         app.refresh_process(
             value!({
-                "agent": {"messages": []},
+                "thread": {"messages": []},
                 "memory": {"profile": {"name": "Grace"}, "z": true}
             }),
             2,
@@ -1424,46 +1587,52 @@ mod tests {
 
     #[test]
     fn selecting_another_memory_item_starts_its_preview_at_the_top() {
-        let mut app = App::new(value!({"agent": {}, "memory": {}}), 0, "test".into());
+        let mut app = App::new(value!({"thread": {}, "memory": {}}), 0, "test".into());
         app.focus = Focus::Memory;
         app.preview_scroll.set_offset(10);
+        let memory = app
+            .rows
+            .iter()
+            .position(|row| row.path == "/memory")
+            .unwrap();
+        app.tree.select(Some(memory));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Down)));
 
-        assert_eq!(app.selected().path, "/agent");
+        assert_eq!(app.selected().path, "/thread");
         assert_eq!(app.preview_scroll.offset(), 0);
     }
 
     #[test]
     fn memory_nodes_collapse_expand_and_stay_collapsed_after_refresh() {
         let mut app = App::new(
-            value!({"agent": {"messages": ["hello"]}, "memory": {}}),
+            value!({"thread": {"messages": ["hello"]}, "memory": {}}),
             0,
             "test".into(),
         );
         app.focus = Focus::Memory;
-        let agent = app
+        let thread = app
             .rows
             .iter()
-            .position(|row| row.path == "/agent")
+            .position(|row| row.path == "/thread")
             .unwrap();
-        app.tree.select(Some(agent));
+        app.tree.select(Some(thread));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Enter)));
 
-        assert!(app.selected().label.contains("▸ agent"));
-        assert!(!app.rows.iter().any(|row| row.path == "/agent/messages"));
+        assert!(app.selected().label.contains("▸ thread"));
+        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
         app.refresh_process(
-            value!({"agent": {"messages": ["hello", "again"]}, "memory": {}}),
+            value!({"thread": {"messages": ["hello", "again"]}, "memory": {}}),
             1,
         );
-        assert!(!app.rows.iter().any(|row| row.path == "/agent/messages"));
+        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Right)));
 
-        assert_eq!(app.selected().path, "/agent");
-        assert!(app.selected().label.contains("▾ agent"));
-        assert!(app.rows.iter().any(|row| row.path == "/agent/messages"));
+        assert_eq!(app.selected().path, "/thread");
+        assert!(app.selected().label.contains("▾ thread"));
+        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
     }
 
     #[test]
@@ -1544,6 +1713,55 @@ mod tests {
     }
 
     #[test]
+    fn clicking_a_memory_row_selects_it() {
+        let mut app = App::new(
+            value!({"memory": {"alpha": 1, "beta": 2}}),
+            0,
+            "test".into(),
+        );
+        let probes = layout(&mut app, 90, 24);
+        let bounds = probes.memory.rect();
+
+        let _ = app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::Down(MouseButton::Left),
+            bounds.x + 2,
+            bounds.y + 3,
+        )));
+
+        assert_eq!(app.focus, Focus::Memory);
+        assert_eq!(app.selected().path, "/memory/alpha");
+    }
+
+    #[test]
+    fn clicking_a_scrolled_memory_row_uses_the_visible_offset() {
+        let mut app = App::new(
+            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
+            0,
+            "test".into(),
+        );
+        let selected = app
+            .rows
+            .iter()
+            .position(|row| row.path == "/memory/8")
+            .unwrap();
+        app.tree.select(Some(selected));
+        let probes = layout(&mut app, 90, 8);
+        let first_visible =
+            VirtualWindow::around(app.rows.len(), app.memory_viewport_height, Some(selected))
+                .start();
+        let expected_path = app.rows[first_visible].path.clone();
+        let bounds = probes.memory.rect();
+
+        let _ = app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::Down(MouseButton::Left),
+            bounds.x + 2,
+            bounds.y + 1,
+        )));
+
+        assert_eq!(app.selected().path, expected_path);
+    }
+
+    #[test]
     fn memory_tree_viewport_follows_an_offscreen_selection() {
         let mut app = App::new(
             value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
@@ -1569,7 +1787,7 @@ mod tests {
     fn headless_frame_contains_tree_chat_and_status() {
         let mut app = App::new(
             value!({
-                "agent": {"messages": []},
+                "thread": {"messages": []},
                 "memory": {"release": {"color": "blue"}}
             }),
             3,
@@ -1585,14 +1803,14 @@ mod tests {
 
         assert!(!frame.contains("Inbox / Outbox"));
         assert!(frame.contains(" Memory "));
-        assert!(frame.contains("agent"));
+        assert!(frame.contains("thread"));
         assert!(frame.contains("memory"));
         assert!(frame.contains("Stored in memory."));
         assert!(frame.contains("v3 · sim · ready"));
     }
 
     #[test]
-    fn agent_failure_is_visible_as_an_event_and_status() {
+    fn reasoning_failure_is_visible_as_an_event_and_status() {
         let mut app = App::new(value!({}), 3, "sim".into());
         app.working = true;
 

@@ -1,9 +1,11 @@
 use std::env;
 use std::process::ExitCode;
 
-use svit::{Process, Value, value};
+use svit::{Builtins, HttpAllowlist, OpenAI, Reasoner, Svit};
 
 mod tui;
+
+const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -18,55 +20,45 @@ async fn main() -> ExitCode {
 
 async fn run() -> Result<(), String> {
     let mut arguments = env::args().skip(1);
-    let Some(command) = arguments.next() else {
-        return tui::run(arguments).await;
-    };
-    match command.as_str() {
-        "exec" => exec(arguments),
-        "--model" => tui::run(std::iter::once(command).chain(arguments)).await,
-        _ => Err(usage()),
+    let model = parse_model(&mut arguments)?;
+    let svit = Svit::builder("svit://local/lampa/process")
+        .map_err(|error| error.to_string())?
+        .reasoner(Reasoner::new(
+            &model,
+            OpenAI::from_env().map_err(|error| error.to_string())?,
+        ))
+        .builtins(Builtins::standard().with_http_allowlist(lampa_http_allowlist()))
+        .build()
+        .await
+        .map_err(|error| error.to_string())?;
+    tui::run(svit, model).await
+}
+
+fn parse_model(arguments: &mut impl Iterator<Item = String>) -> Result<String, String> {
+    match arguments.next() {
+        None => Ok(env::var("SVIT_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string())),
+        Some(flag) if flag == "--model" => {
+            let model = arguments
+                .next()
+                .ok_or_else(|| "--model requires a value".to_string())?;
+            if arguments.next().is_some() {
+                return Err("usage: lampa [--model <model>]".into());
+            }
+            Ok(model)
+        }
+        Some(_) => Err("usage: lampa [--model <model>]".into()),
     }
 }
 
-fn exec(mut arguments: impl Iterator<Item = String>) -> Result<(), String> {
-    let script_path = arguments.next().ok_or_else(usage)?;
-    let input = match arguments.next() {
-        Some(input) => Value::from_json(
-            serde_json::from_str(&input).map_err(|error| format!("invalid input JSON: {error}"))?,
-        )
-        .map_err(|error| error.to_string())?,
-        None => Value::Null,
-    };
-    if arguments.next().is_some() {
-        return Err(usage());
-    }
-
-    let source = std::fs::read_to_string(&script_path)
-        .map_err(|error| format!("cannot read {script_path}: {error}"))?;
-    let mut process = Process::new("svit://local/lampa/exec").map_err(|error| error.to_string())?;
-    process
-        .write("/lib/main", value!({"source": source}))
-        .map_err(|error| error.to_string())?;
-    let activation = process
-        .exec("/lib/main", input)
-        .map_err(|error| error.to_string())?;
-
-    let document = serde_json::json!({
-        "memory": process
-            .read("/memory")
-            .map_err(|error| error.to_string())?
-            .expect("process root always has memory")
-            .to_json(),
-        "output": activation.output.to_json(),
-        "version": activation.version,
-    });
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&document).expect("JSON values are serializable")
-    );
-    Ok(())
-}
-
-fn usage() -> String {
-    "usage:\n  lampa exec <script.svit-script> [input-json]\n  lampa [--model <model>]".into()
+fn lampa_http_allowlist() -> HttpAllowlist {
+    env::var("LAMPA_HTTP_ALLOW")
+        .ok()
+        .map(|roots| {
+            roots
+                .split(',')
+                .map(str::trim)
+                .filter(|root| !root.is_empty())
+                .fold(HttpAllowlist::new(), HttpAllowlist::allow)
+        })
+        .unwrap_or_default()
 }

@@ -31,6 +31,10 @@ pub enum Error {
     #[error("spawned child process is unavailable")]
     ChildUnavailable,
 
+    /// A built-in cannot access its read-only process context.
+    #[error("built-in process context is unavailable")]
+    BuiltinContextUnavailable,
+
     /// A host-supplied resource configuration exceeds the runtime's hard
     /// safety envelope.
     #[error("invalid process limits: {0}")]

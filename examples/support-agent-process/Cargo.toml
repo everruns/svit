@@ -1,5 +1,5 @@
 [package]
-name = "svit-support-agent"
+name = "svit-support-agent-process"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

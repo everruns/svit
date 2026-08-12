@@ -41,21 +41,41 @@ The following scenarios execute with assertions and deterministic output under
 - a process-owned agent thread restored and continued in an isolated child process.
 - a started Svit drains its durable inbox, emits completed turns, and leaves a
   failed turn's input queued.
-- the agent reads its projected system prompt, message history, and canonical
-  events through the runtime capability during a turn.
+- Svit supplies a base prompt without host instructions, wraps optional
+  instructions in an `<instructions>` block, persists them across restore, and
+  recomposes a forked prompt for the child address.
+- the agent reads its projected instructions, composed system prompt, message
+  history, and canonical events through the runtime capability during a turn.
 - `/bin/search` reads committed process text and `/bin/jq` filters explicit
   JSON; focused integration tests cover data limits, default-deny and
   host-routed HTTP, nested model selection, and local child spawn.
-- `/bin` discovery exposes installed executable manuals, while
+- `/bin` discovery exposes installed built-in manuals, while
   resume removes catalog entries for absent host grants.
+- a host `BuiltinExtension` contributes a discoverable built-in that can
+  read committed state through the restricted context; the common dispatcher
+  rejects oversized extension output.
+- Lampa projects `http`, `jq`, `llm`, `search`, and `spawn` under `/bin` while
+  selecting only HTTP policy; Svit's reusable reqwest transport rejects
+  redirect escape and oversized streamed responses.
+- the Svit standard built-in setup derives the full catalog from one instance's
+  `Reasoner`; commit events are notifications, and an atomic
+  Svit contract read returns an owned value/version pair after inbox and
+  completed-turn transitions. Multiple `Events` observers independently see
+  the same notifications, and empty `Events` and `Outbox` observations return
+  the contract's typed observer error rather than a channel-specific error.
+- Lampa's render loop depends only on the Svit contract, events, inbox, and
+  outbox after construction; it reads after commit notifications rather than
+  polling or assembling built-in state.
+- Lampa array rows show bounded scalar previews, prefer conventional object
+  identity fields, fall back to the first scalar field, and summarize other
+  containers by kind and item count.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
-CLI smoke inputs live under `crates/lampa/tests/fixtures/`; they are internal
-test data, not public examples. Examples requiring an API key or external
-service must be separated from the deterministic core suite and must never
-receive secrets on pull-request-controlled code.
+Examples requiring an API key or external service must be separated from the
+deterministic core suite and must never receive secrets on
+pull-request-controlled code.
 
-The original support-agent consumer scenario uses Everruns' simulated driver to
+The support-agent-process consumer scenario uses Everruns' simulated driver to
 prove that model-visible mutation is attenuated, the committed answer is authoritative,
 request mismatches roll back, ticket policy is derived from retrieved state, and
 retries cannot duplicate a ticket intent. Its optional live-model executable
@@ -64,7 +84,7 @@ remains outside the deterministic suite.
 Agent-loop integration tests snapshot and restore a conversation, continue a
 fork in a child process, assert parent isolation, and enforce script
 allowlisting through the Svit-owned builder.
-The credentialed `support-agent-v2` consumer exercises one process-owned Svit
+The credentialed `support-agent-svit` consumer exercises one process-owned Svit
 with `gpt-5.6-terra`. It remains outside the deterministic suite; lifecycle,
 snapshot, and fork behavior stays covered by integration tests.
 

@@ -1,8 +1,8 @@
-//! Transactional support-agent workflow used by the executable example.
+//! Transactional support-agent-process workflow used by the builtin example.
 
 use serde_json::json;
 use std::path::PathBuf;
-use svit::{Limits, Message, Process, Script, SnapshotMount, Svit, Value};
+use svit::{Limits, Message, MessageIntent, Process, Script, SnapshotMount, Svit, Value};
 use thiserror::Error;
 
 const TICKET_DESTINATION: &str = "svit://local/support-tickets";
@@ -27,15 +27,11 @@ pub enum SupportError {
 
     /// The agent turn failed before producing a committed result.
     #[error(transparent)]
-    Agent(#[from] svit::AgentError),
+    Agent(#[from] svit::SvitError),
 
     /// Turso could not construct or query the account-context database.
     #[error(transparent)]
     Turso(#[from] turso::Error),
-
-    /// The shared process lock is poisoned.
-    #[error("support process is unavailable")]
-    ProcessUnavailable,
 
     /// The committed support record does not satisfy the host contract.
     #[error("invalid committed support result: {0}")]
@@ -71,7 +67,7 @@ pub async fn support_process(request_id: &str, question: &str) -> Result<Process
     )
     .await?;
 
-    Ok(Process::builder("svit://local/support-agent")?
+    Ok(Process::builder("svit://local/support-agent-process")?
         .limits(limits)
         .mount("support_docs", support_docs)
         .mount("account_context", account_context)
@@ -120,11 +116,11 @@ pub async fn run_support_turn(
     inbox.send(Message::user(question))?;
     drop(inbox);
     agent.block().await?;
-    let process = agent.process();
-    let process = process
-        .lock()
-        .map_err(|_| SupportError::ProcessUnavailable)?;
-    committed_support_result(&process, request_id)
+    let result = agent
+        .read("/memory/request/result")?
+        .ok_or_else(|| invalid("missing result path"))?;
+    let outbox = agent.message_intents()?;
+    validate_committed_support_result(&result, &outbox, request_id)
 }
 
 /// Validates and loads the authoritative support result from committed state.
@@ -135,6 +131,15 @@ pub fn committed_support_result(
     let result = process
         .read("/memory/request/result")?
         .ok_or_else(|| invalid("missing result path"))?;
+    let outbox = process.outbox()?;
+    validate_committed_support_result(result, &outbox, request_id)
+}
+
+fn validate_committed_support_result(
+    result: &Value,
+    outbox: &[MessageIntent],
+    request_id: &str,
+) -> Result<CommittedSupportResult, SupportError> {
     let Value::Map(result) = result else {
         return Err(invalid("result was not committed"));
     };
@@ -155,8 +160,7 @@ pub fn committed_support_result(
         _ => return Err(invalid("ticket_queued is not boolean")),
     };
 
-    let outbox = process.outbox()?;
-    match (ticket_queued, outbox.as_slice()) {
+    match (ticket_queued, outbox) {
         (false, []) => {}
         (true, [message])
             if message.to.as_str() == TICKET_DESTINATION

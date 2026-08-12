@@ -48,16 +48,21 @@ Required for the initial vertical slice.
   the configured nesting depth, and rolls back the complete activation.
 - `TM-DOS-007`: folder entry/text and Turso row/text limits stop materializing
   data at their configured bounds; query execution still needs an outer deadline.
-- `TM-DOS-008`: native search rejects oversized patterns and native `jq`
-  rejects recursive or generator constructs before evaluation.
-- `TM-ESC-003`: native data executables accept only a committed process path or
+- `TM-DOS-008`: the common built-in dispatcher rejects oversized extension
+  output; `search` rejects oversized patterns and `jq` rejects
+  recursive or generator constructs before evaluation.
+- `TM-ESC-003`: data built-ins accept only a committed process path or
   explicit JSON; no shell, filesystem, executable, or environment input exists.
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
   mounted data remains read-only through host and guest path operations.
 - `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an
-  allowed fixture request passes through both URL policy and host transport.
-- `TM-CAP-005`: `/bin` exposes the exact installed executable manuals during a
+  allowed fixture request passes through both URL policy and host transport;
+  Svit's standard reqwest transport refuses redirects and bounds the streamed
+  body.
+- `TM-CAP-005`: `/bin` exposes the exact installed built-in manuals during a
   turn, and resume removes entries whose host grants are no longer configured.
+- `TM-CAP-006`: a host extension executes through bounded explicit JSON and a
+  context exposing committed reads without process mutation methods.
 - `TM-EFF-002`: concurrent clients cannot both commit from one process version.
 - `TM-EFF-003`: exact retry replays a receipt, and retry after eviction cannot
   duplicate a committed activation.
@@ -77,9 +82,10 @@ Required for the initial vertical slice.
   denies unlisted scripts before activation, and still executes an allowed script.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
-- `TM-AUD-001`: host commits to `/agent` succeed atomically, guest writes fail
+- `TM-AUD-001`: host commits to `/thread` succeed atomically, guest writes fail
   without mutation, invalid host replacement values preserve the root and
-  version, and message projection must match canonical events on resume.
+  version, message projection must match canonical events on resume, and the
+  event log rejects foreign sessions, duplicate IDs, or invalid sequences.
 - `TM-MSG-002`: inbox enqueue and exact-head acknowledgement commit once;
   rejected values, mismatched acknowledgement, and guest writes preserve state.
 

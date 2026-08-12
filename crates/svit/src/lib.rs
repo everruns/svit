@@ -1,4 +1,4 @@
-//! Svit is a research runtime for isolated, serializable agent processes.
+//! Svit is a research runtime for isolated, serializable processes.
 //!
 //! The current vertical slice runs named, untrusted Svit Lisp scripts against a
 //! transactional memory tree. Successful activations commit memory, staged
@@ -24,32 +24,41 @@
 //! # Ok::<(), svit::Error>(())
 //! ```
 
-mod agent;
+mod builtins;
 pub mod control;
 mod error;
-mod executables;
 pub mod hooks;
 mod limits;
 pub mod mounts;
 mod process;
+mod reasoner;
+mod reasoning;
 mod tools;
 pub mod value;
 
-pub use agent::{
-    AgentError, AgentModel, Inbox, SimTurn, Svit, SvitBuilder, SvitResult, SvitResumeBuilder,
+pub use async_trait::async_trait;
+pub use builtins::{
+    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins,
+    HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
+    ReqwestHttpTransport,
 };
 pub use control::{
     ControlClientId, ControlCommand, ControlFailure, ControlOutcome, ControlProtocol,
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
 };
 pub use error::{Error, Result};
-pub use everruns::core::llmsim_driver::LlmSimConfig;
-pub use everruns::core::{ContentPart, Message, MessageRole};
-pub use executables::{
-    Executables, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
+pub use everruns::core::Message;
+pub use everruns::{ContentPart, MessageRole, OpenAI};
+pub use everruns_test_support::{
+    LLMSIM_MODEL_ID, LlmSimConfig, SimToolCall, SimTurn, llm_sim_provider,
 };
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
 pub use mounts::SnapshotMount;
 pub use process::{Activation, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId};
+pub use reasoner::Reasoner;
+pub use reasoning::{
+    Events, Inbox, ObserveError, Outbox, Svit, SvitBuilder, SvitError, SvitEvent, SvitResult,
+    SvitResumeBuilder,
+};
 pub use value::{Script, Value};

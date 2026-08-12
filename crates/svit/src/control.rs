@@ -473,6 +473,7 @@ fn failure(error: Error) -> ControlFailure {
         Error::ControlUnavailable => "control_unavailable",
         Error::InboxConflict => "inbox_conflict",
         Error::ChildUnavailable => "child_unavailable",
+        Error::BuiltinContextUnavailable => "builtin_context_unavailable",
     };
     ControlFailure {
         code: code.into(),

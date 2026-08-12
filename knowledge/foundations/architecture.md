@@ -39,7 +39,7 @@ Rust caller ----> Svit Agent
                       +----> durable inbox / live turn outbox
                       +----> buffered message intents (not delivery)
                       +----> bounded folder / Turso snapshot import
-                      +----> opt-in `/bin` native executables
+                      +----> opt-in `/bin` built-ins
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -53,38 +53,66 @@ the boundary.
 | --- | --- |
 | Value model | Bounded serializable guest values with deterministic encoding |
 | Process | Address, version, committed root, limits, and lifecycle operations |
-| Agent loop | Everruns `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/agent` |
+| Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/thread` |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
 | Snapshot mounts | Bounded read-only folder trees and host-selected Turso query rows |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
-| Native executables | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
+| Built-ins | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
 
-The current workspace implements the process and process-owned agent loop in
-the `svit` crate and provides batch execution plus an interactive three-panel
-tree host in Lampa. The TUI presents the complete committed process root,
-sends chat input through the durable `Svit` inbox, and treats live outbox
-messages plus sanitized terminal loop failures as a presentation stream; tree
-expansion and selection are local UI state, so the TUI does not become another
-process-state owner. Raw durable agent events remain part of the process tree;
-the timeline does not duplicate message events already rendered as chat. Lampa
-selects Everruns' OpenAI Responses driver through `AgentModel::openai`.
-Svit supplies a process-backed Everruns event bus and message store so canonical
-events and their derived message projection remain in the Svit process root.
+The current workspace implements the process and process-owned reasoning loop in
+the `svit` crate and provides an interactive three-panel tree host in Lampa.
+Lampa's entry point configures and builds one `Svit`; the
+TUI thereafter sends only through its durable inbox and consumes commit
+notifications, completed-turn outbox messages, and terminal failure events.
+After a commit notification it reads an owned root/version pair through the
+`Svit` contract. It never retains a direct reference to `Process`.
+The contract exposes a cloneable `Inbox` sink and creates independent `Outbox`
+and `Events` observers for transient host consumption; Tokio broadcast channels
+remain an implementation detail behind those ports.
+Tree expansion and selection remain local UI state, so the TUI does not become
+another process-state owner or poll the runtime. Raw durable agent events
+remain part of the process tree; the timeline does not duplicate message
+events already rendered as chat. Svit binds the provider-visible model ID and
+host-owned provider into a credential-free `ModelSpec`. Svit is an
+advanced Everruns host: it composes the compact single-session host builder and
+`HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
+history from that canonical log. Svit's standard built-in setup derives local
+`search` and `jq` plus model-backed `llm` and `spawn` from the instance
+configuration. Lampa supplies only explicit HTTP policy through
+`LAMPA_HTTP_ALLOW` roots. Svit supplies the reusable redirect-denying,
+response-bounded transport. HTTP URL authority remains default-deny.
+Each append commits the canonical event and its derived guest-readable message
+projection together in the Svit process root. One `Reasoner` owns the
+provider-visible model ID and host-owned provider, so Svit cannot represent a
+partially configured reasoning loop. Built-ins remain separate because their
+external authority is not part of reasoning identity.
+The process address is the Svit runtime identity; there is no independent agent
+name. Svit owns the base system prompt, including the generic requirement to use
+the memory tree for durable facts and working state, and derives the prompt from
+that address. Optional application `instructions` are appended inside an
+`<instructions>` block and persisted separately so restore preserves them and
+fork can recompose the prompt for the child address.
 The value preview is a read-only presentation adapter. Tree rows retain only a
 path locator rather than cloning their persistent subtrees. Container previews
-render bounded shallow child/type summaries; leaf previews are capped before
+render bounded shallow child summaries with scalar values inline and nested
+containers summarized by kind and item count. Array tree rows inline a bounded
+scalar preview; object items prefer a conventional identity field, then their
+first scalar field, then a kind/count summary. Leaf previews are capped before
 classification as embedded JSON, source code, or Markdown. Formatted lines are
 cached by selection and width, and each frame gives the scroll view only its
 visible window. These presentation bounds prevent render work from scaling with
 the entire process tree and do not change committed process state.
-`svit::Svit` assembles
-the Everruns runtime internally and can expose the complete generic process
-surface or attenuate a model to discovery, reads, and a host-selected script
-allowlist. Everruns is an implementation dependency, not the owner of the agent
-or process. Module names may evolve; the ownership boundary is the decision.
+`SvitEvent::Committed` is deliberately notification-only. The atomic
+`Svit::read_versioned` operation returns an owned value/version observation and
+keeps the mutable process tree behind the Svit abstraction.
+`svit::Svit` assembles the Everruns host internally and can expose the complete
+generic process surface or attenuate a model to discovery, reads, and a
+host-selected script allowlist. Everruns owns the public model, provider, and
+loop contracts; Svit owns process state and its canonical event-log adapter.
+Module names may evolve; the ownership boundary is the decision.
 
 ## Trusted-boundary rules
 
@@ -101,16 +129,18 @@ or process. Module names may evolve; the ownership boundary is the decision.
    checked at the same serialization point as commit.
 8. External data enters only through a host-created bounded snapshot mount;
    activations receive persistent values, never filesystem or database handles.
-9. Durable loop and replay state is host-managed under `/agent`; untrusted
+9. Durable loop and replay state is host-managed under `/thread`; untrusted
    scripts and model tools can inspect the configured prompt, derived message
    history, and canonical events but cannot rewrite them.
 10. Inbox messages commit before loop notification and are acknowledged only
     after the corresponding turn succeeds.
-11. Native executables remain outside Svit Lisp. They receive typed values and
-    process reads, not a shell or ambient host interfaces, and only the HTTP,
-    model, or child-runner authority explicitly supplied by the host.
-12. `/bin` is generated from attached native executables and refreshed
-    on resume. It describes runtime availability but never grants authority.
+11. Built-ins remain outside Svit Lisp. They receive typed values and
+   a read-only process context, not a shell or implicit ambient host interface.
+   Built-ins receive only the HTTP, model, or child-runner authority explicitly
+   supplied by the host; custom implementations are trusted native extensions
+   and may capture additional explicit host capabilities.
+12. `/bin` is generated from attached built-ins and refreshed
+   on resume. It describes runtime availability but never grants authority.
 
 ## Deferred architecture
 

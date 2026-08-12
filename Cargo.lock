@@ -1641,24 +1641,34 @@ dependencies = [
 
 [[package]]
 name = "everruns"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d58c013d36931ca70eec523f3fa9264066274c611b4df1ede6ac961367664eb"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
+ "everruns-capability",
  "everruns-core",
+ "everruns-host",
  "everruns-openai",
- "everruns-runtime",
+ "everruns-test-support",
  "serde_json",
  "tokio",
  "tokio-util",
 ]
 
 [[package]]
+name = "everruns-capability"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "everruns-core"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "737ece66441939876ba4f0d7b0d5d38a5e7d23d3ef2753c48561cc84e258185a"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "a2a-client-lf",
  "a2a-lf",
@@ -1671,6 +1681,7 @@ dependencies = [
  "cron",
  "ed25519-dalek 3.0.0",
  "eventsource-stream",
+ "everruns-capability",
  "everruns-provider",
  "fetchkit",
  "futures",
@@ -1678,10 +1689,6 @@ dependencies = [
  "hex",
  "inventory",
  "jsonschema",
- "llmsim",
- "opentelemetry",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "rand 0.10.2",
  "regex",
  "reqwest 0.13.4",
@@ -1697,17 +1704,14 @@ dependencies = [
  "tokio-util",
  "toml",
  "tracing",
- "tracing-opentelemetry",
- "tracing-subscriber",
  "url",
  "uuid",
 ]
 
 [[package]]
 name = "everruns-engine"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bba611ee9f70791327cd9f9895b0415d0be3bf22b6f3bc5056b3233e8b13085"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "chrono",
  "everruns-core",
@@ -1716,10 +1720,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "everruns-host"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "everruns-core",
+ "everruns-engine",
+ "everruns-mcp",
+ "everruns-platform",
+ "futures",
+ "ignore",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.19",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "everruns-mcp"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b652208a3ef0aeb37eb1b700c0c18871b2e9444c43dcc4290c4791466fca15ab"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1734,9 +1760,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-openai"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52786590a0b5052c9f2ebbf12d7b8da7fb7a5645cdca4d2a80dde8e2e290b1e4"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1750,9 +1775,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-platform"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d946bd552df5560e2138d74d41ab7d3bd92abb7c3d2ece8c8b94783207b054"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1767,9 +1791,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-provider"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d089f7c6c3cdcce30257bde874ed8d3ec3cbba8811f1623af96c4c8c6a27c01c"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1794,26 +1817,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "everruns-runtime"
-version = "0.17.25"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc9daec13759b8c089eb87788b7c0ebb7b617a7cf3cf862bd0ea0d35d6003364"
+name = "everruns-test-support"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#279ccee1cfa01a975d64aca41369715eec1c4446"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "everruns-core",
- "everruns-engine",
- "everruns-mcp",
- "everruns-platform",
+ "everruns-host",
  "futures",
- "ignore",
- "regex",
+ "inventory",
+ "llmsim",
  "serde",
  "serde_json",
- "sha2 0.11.0",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -3664,78 +3682,6 @@ name = "openssl-probe"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
-
-[[package]]
-name = "opentelemetry"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0142c63252a9e054e68a4c61a5778f7b14f576274d593f8ce883d191a099682"
-dependencies = [
- "futures-core",
- "futures-sink",
- "js-sys",
- "pin-project-lite",
- "thiserror 2.0.19",
- "tracing",
-]
-
-[[package]]
-name = "opentelemetry-http"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5683015d09e2df236ef005b17f6f196f0d5f6313c4fa43a7b6a53b52776e4331"
-dependencies = [
- "async-trait",
- "bytes",
- "http",
- "opentelemetry",
- "reqwest 0.13.4",
-]
-
-[[package]]
-name = "opentelemetry-otlp"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9966929966d17620d7c316c643ba62631826e10021409357772d5eea84f62c35"
-dependencies = [
- "http",
- "opentelemetry",
- "opentelemetry-http",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "prost",
- "reqwest 0.13.4",
- "thiserror 2.0.19",
-]
-
-[[package]]
-name = "opentelemetry-proto"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56d658ba1faf63f7b9c492cfbe6e0ec365440a16132d3270c1065f7b33f1b638"
-dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
- "prost",
-]
-
-[[package]]
-name = "opentelemetry_sdk"
-version = "0.32.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b59f80e1ac4d5ff7a2db8fb6c80badb7f0f3f858211fba08dd9aaec750894f9"
-dependencies = [
- "futures-channel",
- "futures-executor",
- "futures-util",
- "opentelemetry",
- "percent-encoding",
- "portable-atomic",
- "rand 0.9.5",
- "thiserror 2.0.19",
- "tokio",
- "tokio-stream",
-]
 
 [[package]]
 name = "ordered-float"
@@ -5768,11 +5714,14 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "everruns",
+ "everruns-host",
+ "everruns-test-support",
  "jaq-core",
  "jaq-json",
  "jaq-std",
  "ketos",
  "regex",
+ "reqwest 0.13.4",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -5783,7 +5732,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "svit-support-agent"
+name = "svit-support-agent-process"
 version = "0.1.0"
 dependencies = [
  "serde_json",
@@ -5794,7 +5743,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "svit-support-agent-v2"
+name = "svit-support-agent-svit"
 version = "0.1.0"
 dependencies = [
  "svit",
@@ -6433,22 +6382,6 @@ dependencies = [
  "log",
  "once_cell",
  "tracing-core",
-]
-
-[[package]]
-name = "tracing-opentelemetry"
-version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adbc64cba7137545b8044cb1fe9814f7aacf3c6b5f9b45be8bb5db538befdb26"
-dependencies = [
- "js-sys",
- "opentelemetry",
- "smallvec",
- "tracing",
- "tracing-core",
- "tracing-log",
- "tracing-subscriber",
- "web-time",
 ]
 
 [[package]]

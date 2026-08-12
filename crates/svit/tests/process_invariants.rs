@@ -23,7 +23,7 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     assert_eq!(
         process.discover("/").unwrap(),
         [
-            "agent", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks"
+            "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks", "thread"
         ]
     );
     assert_eq!(
@@ -67,18 +67,18 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
 
 #[test]
 // THREAT[TM-AUD-001]
-fn agent_runtime_state_is_host_managed_and_guest_read_only() {
-    let mut process = Process::builder("svit://local/tests/agent-state")
+fn thread_state_is_host_managed_and_guest_read_only() {
+    let mut process = Process::builder("svit://local/tests/thread-state")
         .unwrap()
         .library(
             "forge-history",
-            svit::Script::new(r#"(define (main input) (write "/agent/events" input))"#),
+            svit::Script::new(r#"(define (main input) (write "/thread/events" input))"#),
         )
         .build()
         .unwrap();
 
     process
-        .replace_agent_state(value!({"format": "test@1", "events": []}))
+        .replace_thread_state(value!({"format": "test@1", "events": []}))
         .unwrap();
     let committed = unchanged(&process);
     let version = process.version();
@@ -91,13 +91,13 @@ fn agent_runtime_state_is_host_managed_and_guest_read_only() {
     assert_eq!(process.snapshot().unwrap(), committed);
     assert_eq!(process.version(), version);
     assert_eq!(
-        process.read("/agent/format").unwrap(),
+        process.read("/thread/format").unwrap(),
         Some(&value!("test@1"))
     );
 
     let oversized = Value::String("x".repeat(process.limits().max_text_bytes + 1));
     assert!(matches!(
-        process.replace_agent_state(oversized),
+        process.replace_thread_state(oversized),
         Err(Error::InvalidValue(message)) if message == "maximum text bytes exceeded"
     ));
     assert_eq!(process.snapshot().unwrap(), committed);

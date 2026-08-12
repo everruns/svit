@@ -26,11 +26,11 @@ use crate::hooks::{
 };
 use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
 
-const SNAPSHOT_FORMAT: u32 = 5;
+const SNAPSHOT_FORMAT: u32 = 6;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
-/// Stable logical address of one agent process.
+/// Stable logical address of one Svit process.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct ProcessId(String);
@@ -173,7 +173,7 @@ impl ProcessBuilder {
     }
 }
 
-/// In-memory, serializable agent process.
+/// In-memory, serializable Svit process.
 pub struct Process {
     id: ProcessId,
     version: u64,
@@ -370,30 +370,30 @@ impl Process {
         Ok(())
     }
 
-    /// Replaces host-managed durable agent-loop state under `/agent`.
+    /// Replaces host-managed durable reasoning state under `/thread`.
     ///
-    /// Guest scripts and generic agent tools may inspect this node through
-    /// `read` and `discover`, but cannot write or remove it. Agent adapters use
-    /// this boundary for replay and audit state that untrusted model output
-    /// must not rewrite.
-    pub fn replace_agent_state(&mut self, value: Value) -> Result<()> {
+    /// Guest scripts and generic reasoning tools may inspect this node through
+    /// `read` and `discover`, but cannot write or remove it. The Everruns
+    /// adapter uses this boundary for replay and audit state that untrusted
+    /// model output must not rewrite.
+    pub fn replace_thread_state(&mut self, value: Value) -> Result<()> {
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
-        root.insert("agent".into(), value);
+        root.insert("thread".into(), value);
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
 
         // THREAT[TM-AUD-001]: Only the trusted host receives this mutation
-        // boundary; guest write/remove paths deliberately exclude `/agent`.
+        // boundary; guest write/remove paths deliberately exclude `/thread`.
         self.root = Arc::new(new_root);
         self.version += 1;
         Ok(())
     }
 
-    /// Replaces the host-managed executable catalog under `/bin`.
-    pub(crate) fn replace_executables(&mut self, value: Value) -> Result<()> {
-        let executables = root_map(&value)?;
-        for name in executables.keys() {
+    /// Replaces the host-managed built-in catalog under `/bin`.
+    pub(crate) fn replace_builtins(&mut self, value: Value) -> Result<()> {
+        let builtins = root_map(&value)?;
+        for name in builtins.keys() {
             validate_script_name(name)?;
         }
         value.validate(&self.limits, false)?;
@@ -663,7 +663,7 @@ fn initial_root(
     mounts: BTreeMap<String, SnapshotMount>,
 ) -> Value {
     Value::Map(BTreeMap::from([
-        ("agent".into(), Value::Null),
+        ("thread".into(), Value::Null),
         ("bin".into(), Value::empty_map()),
         ("children".into(), Value::empty_map()),
         ("inbox".into(), Value::Array(Vec::new())),
@@ -695,7 +695,7 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
         != BTreeSet::from([
-            "agent", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
+            "thread", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
         ])
     {
         return Err(Error::InvalidSnapshot(
@@ -717,8 +717,8 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     )?;
     validate_reserved_root(root, "tasks", Value::empty_map())?;
 
-    root.get("agent")
-        .ok_or_else(|| Error::InvalidSnapshot("missing /agent".into()))?
+    root.get("thread")
+        .ok_or_else(|| Error::InvalidSnapshot("missing /thread".into()))?
         .validate(limits, false)?;
 
     let bin = root_map(

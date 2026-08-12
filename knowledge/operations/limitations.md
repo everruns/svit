@@ -21,7 +21,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-002` | No scheduler, timers, or automatic process activation | Callers explicitly start each local process loop |
 | `L-003` | Outgoing Lisp messages are committed intents only | Routing, delivery, retries, ordering across hosts, and dead letters are not implemented; local inbox submission is explicit host API |
 | `L-004` | Addresses are local validated identifiers, not authenticated identities | Possessing or naming an address proves no authority |
-| `L-005` | Svit Lisp has no live or writable external capabilities | Guest code can read recorded snapshot mounts and `/bin` manuals but cannot execute `/bin` or access network, live filesystem/database handles, models, secrets, or clocks; host-side executable dispatch does not widen the Lisp surface |
+| `L-005` | Svit Lisp has no live or writable external capabilities | Guest code can read recorded snapshot mounts and `/bin` manuals but cannot execute `/bin` or access network, live filesystem/database handles, models, secrets, or clocks; host-side built-in dispatch does not widen the Lisp surface |
 | `L-006` | No durable database adapter | Snapshots are caller-managed values or bytes; process residency is in memory |
 | `L-007` | No live-stack serialization | Coroutines, closures, userdata, VM bytecode, and in-progress activations are not snapshotted |
 | `L-008` | Svit Lisp is a restricted versioned subset | Full Scheme, Common Lisp, and unrestricted Ketos compatibility are unsupported |
@@ -50,12 +50,13 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-031` | One Svit process owns exactly one Everruns conversation thread | Multiple participants or independent threads require separate processes in the current implementation |
 | `L-032` | Agent events and script activations commit separately around external model and tool calls | Recovery of an incomplete turn is at-least-once for external actions; a whole model turn is not one atomic Svit activation |
 | `L-033` | The Everruns loop records host-generated event identifiers and timestamps plus provider output | Process snapshots preserve the recorded thread, but deterministic Svit Lisp replay does not imply deterministic model-turn replay |
-| `L-034` | The live agent-turn outbox is a bounded in-memory notification stream | Slow listeners may lag; durable conversation recovery uses `/agent`, not the live receiver |
+| `L-034` | The live reasoning-turn outbox is a bounded in-memory notification stream | Slow listeners may lag; durable conversation recovery uses `/thread`, not the live receiver |
 | `L-035` | Native `jq` rejects recursive, input-generator, and range constructs | The supported bounded jq surface is deliberately smaller than the jq CLI; compose tool results through typed model calls |
 | `L-036` | Opt-in HTTP and nested model calls are immediate external effects outside process transactions | Failure or replay cannot roll them back; hosts must enforce authorization, cost, idempotency, and reconciliation policies |
 | `L-037` | `spawn` runs one local child turn and retains the child only in the current parent runtime | Parent snapshots do not include the child registry; there is no child scheduling, cancellation propagation, durable supervision, or distributed ownership |
-| `L-038` | `/bin` stores executable manuals, not executable authority | A bare restored `Process` may contain historical manuals; building or resuming `Svit` refreshes them from the attached `Executables`, and only that host runtime can dispatch `/bin` paths |
-| `L-039` | Everruns 0.17.25 unconditionally includes fetch, Bash, and A2A dependencies that Svit does not expose | The locked graph contains two unmaintained transitive crates and additional crate-specific license exceptions; remove the audit exceptions when Everruns makes those modules optional or replaces their dependencies |
+| `L-038` | `/bin` stores built-in manuals, not built-in authority | A bare restored `Process` may contain historical manuals; building or resuming `Svit` refreshes them from the attached `Builtins`, and only that host runtime can dispatch `/bin` paths |
+| `L-039` | The current Everruns `main` graph includes fetch, Bash, and A2A dependencies that Svit does not expose | The locked graph contains two unmaintained transitive crates and additional crate-specific license exceptions; remove the audit exceptions when Everruns makes those modules optional or replaces their dependencies |
+| `L-040` | Host-defined `Builtin` implementations are trusted native code, not sandboxed guest extensions | Svit bounds their JSON input/output and supplies only a read-only process context, but an implementation can use any host capability it deliberately captures; hosts must review extensions as part of the trusted computing base |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

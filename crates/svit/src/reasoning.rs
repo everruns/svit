@@ -1,6 +1,6 @@
-//! Process-owned agent loop implemented by Everruns.
+//! Process-owned reasoning loop implemented by Everruns.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -8,17 +8,13 @@ use async_trait::async_trait;
 use everruns::core::capabilities::{Capability, SystemPromptContext};
 use everruns::core::error::Result as EverrunsResult;
 use everruns::core::events::{Event, EventData, EventRequest, ToolCompletedData};
-use everruns::core::llmsim_driver::LlmSimConfig;
-use everruns::core::message_retriever::{InputMessage, MessageRetriever};
+use everruns::core::message_retriever::InputMessage;
 use everruns::core::tools::{Tool, ToolExecutionResult, ToolResultImage};
 use everruns::core::typed_id::{EventId, MessageId, SessionId};
-use everruns::core::{
-    AgentCapabilityConfig, AgentLoopError, ContentPart, DriverId, DriverRegistry, Message,
-    MessageRole, ResolvedModel,
-};
-use everruns::runtime::{
-    AgentBuilder as RuntimeAgentBuilder, EventBus, HarnessBuilder, InProcessRuntime,
-    InProcessRuntimeBuilder, RuntimeBackends, RuntimeMessageStore, SessionBuilder, TurnResult,
+use everruns::core::{AgentCapabilityConfig, AgentLoopError, ContentPart, Message, MessageRole};
+use everruns_host::{
+    EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest,
+    EventReader, HostBackends, InProcessRuntime, InProcessRuntimeBuilder, TurnResult,
 };
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
@@ -27,180 +23,40 @@ use tokio::task::JoinHandle;
 
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
-    Activation, ActivationHook, Executables, Limits, MessageIntent, Process, ProcessBuilder,
-    ProcessId, Script, SnapshotMount, Value,
+    Activation, ActivationHook, Builtins, Limits, MessageIntent, Process, ProcessBuilder,
+    ProcessId, Reasoner, Script, SnapshotMount, Value,
 };
 
-const AGENT_STATE_PATH: &str = "/agent";
-const AGENT_STATE_FORMAT: &str = "svit-agent@3";
+const THREAD_STATE_PATH: &str = "/thread";
+const THREAD_STATE_FORMAT: &str = "svit-thread@6";
 const PROCESS_CAPABILITY_ID: &str = "svit";
+const SVIT_SYSTEM_PROMPT: &str = "You operate one Svit process. Use its memory tree for durable facts and working state. Svit owns the process state, conversation history, and execution environment. Use only the capabilities supplied by Svit, and treat committed process state as authoritative.";
 
-/// Host-selected Everruns model runtime.
-#[derive(Clone)]
-pub struct AgentModel {
-    resolved: ResolvedModel,
-    drivers: DriverRegistry,
-    llm_sim: Option<LlmSimConfig>,
-}
-
-/// One deterministic Everruns simulator response used by Svit tests and examples.
-#[derive(Clone, Debug, PartialEq)]
-pub enum SimTurn {
-    /// A final agent text response.
-    Text(String),
-    /// One model tool call.
-    ToolCall {
-        /// Model-facing tool name.
-        name: String,
-        /// JSON tool arguments.
-        arguments: JsonValue,
-    },
-}
-
-impl SimTurn {
-    /// Creates one final text response.
-    pub fn text(text: impl Into<String>) -> Self {
-        Self::Text(text.into())
-    }
-
-    /// Creates one tool-call response.
-    pub fn tool_call(name: impl Into<String>, arguments: JsonValue) -> Self {
-        Self::ToolCall {
-            name: name.into(),
-            arguments,
-        }
-    }
-
-    fn into_everruns(self) -> everruns::core::llmsim_driver::SimTurn {
-        match self {
-            Self::Text(text) => everruns::core::llmsim_driver::SimTurn::Assistant(text),
-            Self::ToolCall { name, arguments } => {
-                everruns::core::llmsim_driver::SimTurn::ToolCalls(vec![
-                    everruns::core::llmsim_driver::SimToolCall {
-                        name,
-                        arguments,
-                        id: None,
-                    },
-                ])
-            }
-        }
-    }
-}
-
-impl AgentModel {
-    /// Configures Everruns' deterministic in-process simulator.
-    pub fn simulated(config: LlmSimConfig) -> Self {
-        Self {
-            resolved: ResolvedModel {
-                model: config.model_name.clone(),
-                provider_type: DriverId::LlmSim,
-                api_key: None,
-                base_url: None,
-                provider_metadata: None,
-            },
-            drivers: DriverRegistry::new(),
-            llm_sim: Some(config),
-        }
-    }
-
-    /// Configures a scripted deterministic Everruns simulator.
-    pub fn scripted(turns: impl IntoIterator<Item = SimTurn>) -> Self {
-        Self::simulated(LlmSimConfig::scripted(
-            turns.into_iter().map(SimTurn::into_everruns).collect(),
-        ))
-    }
-
-    /// Configures the Everruns OpenAI Responses driver.
-    pub fn openai(model: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let mut drivers = DriverRegistry::new();
-        everruns::providers::openai::register_driver(&mut drivers);
-        Self {
-            resolved: ResolvedModel {
-                model: model.into(),
-                provider_type: DriverId::OpenAI,
-                api_key: Some(api_key.into()),
-                base_url: None,
-                provider_metadata: None,
-            },
-            drivers,
-            llm_sim: None,
-        }
-    }
-
-    /// Configures an embedder-provided Everruns driver registry and model.
-    pub fn custom(resolved: ResolvedModel, drivers: DriverRegistry) -> Self {
-        Self {
-            resolved,
-            drivers,
-            llm_sim: None,
-        }
-    }
-
-    fn apply(&self, mut builder: InProcessRuntimeBuilder) -> InProcessRuntimeBuilder {
-        builder = builder
-            .default_model(self.resolved.clone())
-            .driver_registry(self.drivers.clone());
-        if let Some(config) = &self.llm_sim {
-            builder = builder.llm_sim(config.clone());
-        }
-        builder
-    }
-
-    pub(crate) async fn run_once(
-        &self,
-        system_prompt: Option<String>,
-        prompt: String,
-    ) -> EverrunsResult<String> {
-        let runtime = self
-            .apply(InProcessRuntimeBuilder::new().single_session(|session| {
-                session
-                    .harness("svit-native-llm", system_prompt.unwrap_or_default())
-                    .agent("svit-native-llm", "Complete the supplied task.")
-            }))
-            .build()
-            .await?;
-        let session_id = runtime
-            .default_session_id()
-            .ok_or_else(|| AgentLoopError::config("nested Everruns session is missing"))?;
-        Ok(runtime
-            .run_turn(session_id, InputMessage::user(prompt))
-            .await?
-            .response)
-    }
-}
-
-impl fmt::Debug for AgentModel {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("AgentModel")
-            .field("model", &self.resolved.model)
-            .field("provider", &self.resolved.provider_type)
-            .field("simulated", &self.llm_sim.is_some())
-            .finish()
-    }
-}
-
-/// Failure to construct or run a process-owned agent loop.
+/// Failure to construct or run a Svit process.
 #[derive(Debug, Error)]
-pub enum AgentError {
-    /// The Everruns loop or durable event protocol failed.
-    #[error(transparent)]
-    Engine(#[from] AgentLoopError),
+pub enum SvitError {
+    /// The reasoning loop or durable event protocol failed.
+    #[error("Svit reasoning failed: {0}")]
+    Reasoning(String),
 
     /// The shared process state could not be locked.
-    #[error("Svit agent process is unavailable")]
+    #[error("Svit process is unavailable")]
     ProcessUnavailable,
 
     /// A Svit process transition failed.
     #[error(transparent)]
     Process(#[from] crate::Error),
 
-    /// No Everruns model runtime was configured.
-    #[error("Svit agent model is required")]
-    MissingModel,
+    /// No reasoning model and provider were configured.
+    #[error("Svit reasoner is required")]
+    MissingReasoner,
+
+    /// The standard native HTTP transport could not be initialized.
+    #[error("Svit HTTP transport is unavailable")]
+    HttpTransportUnavailable,
 
     /// Internal loop assembly did not receive its owning process.
-    #[error("Svit agent process is required")]
+    #[error("Svit process is required")]
     MissingProcess,
 
     /// The inbox no longer accepts new messages.
@@ -223,28 +79,58 @@ pub enum AgentError {
     #[error("Svit process task failed")]
     TaskFailed,
 
-    /// A completed turn did not produce an agent message.
-    #[error("Svit turn completed without an agent message")]
+    /// A completed turn did not produce an assistant message.
+    #[error("Svit turn completed without an assistant message")]
     MissingOutboxMessage,
 }
 
-/// Result returned by the process-owned agent API.
-pub type AgentResult<T> = std::result::Result<T, AgentError>;
+/// Failure while observing a transient Svit stream.
+#[derive(Clone, Debug, Error, PartialEq, Eq)]
+pub enum ObserveError {
+    /// No observation is currently available without waiting.
+    #[error("no Svit observation is available")]
+    Empty,
+    /// The observed Svit instance closed this stream.
+    #[error("Svit observation stream is closed")]
+    Closed,
+    /// The observer fell behind and missed committed observations.
+    #[error("Svit observer missed {0} observations")]
+    Lagged(u64),
+}
+
+impl From<AgentLoopError> for SvitError {
+    fn from(error: AgentLoopError) -> Self {
+        Self::Reasoning(error.to_string())
+    }
+}
 
 /// Result returned by the runnable Svit API.
-pub type SvitResult<T> = AgentResult<T>;
+pub type SvitResult<T> = std::result::Result<T, SvitError>;
+
+/// Operational event published by a running Svit instance.
+#[derive(Clone, Debug, PartialEq)]
+pub enum SvitEvent {
+    /// Process state changed through a committed host or reasoning transition.
+    ///
+    /// This is a notification, not a state-bearing event. Hosts observe owned
+    /// committed values through [`Svit::read_versioned`] instead of retaining
+    /// access to the mutable process tree.
+    Committed,
+    /// The independently running process loop stopped with a sanitized failure.
+    Failed(String),
+}
 
 /// One configured, independently running Svit process.
 pub struct Svit {
-    agent: Option<Agent>,
+    reasoning: Option<ReasoningLoop>,
     process: Arc<Mutex<Process>>,
     inbox_state: Arc<Mutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
     outbox_sender: broadcast::Sender<Message>,
-    executables: Option<Executables>,
-    error_sender: broadcast::Sender<String>,
-    task: Option<JoinHandle<AgentResult<Agent>>>,
+    builtins: Option<Builtins>,
+    event_sender: broadcast::Sender<SvitEvent>,
+    task: Option<JoinHandle<SvitResult<ReasoningLoop>>>,
 }
 
 /// Cloneable handle for committing messages to one Svit process inbox.
@@ -253,6 +139,17 @@ pub struct Inbox {
     process: Arc<Mutex<Process>>,
     state: Arc<Mutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
+    event_sender: broadcast::Sender<SvitEvent>,
+}
+
+/// Observer for completed messages emitted by one Svit instance.
+pub struct Outbox {
+    receiver: broadcast::Receiver<Message>,
+}
+
+/// Observer for operational events emitted by one Svit instance.
+pub struct Events {
+    receiver: broadcast::Receiver<SvitEvent>,
 }
 
 struct InboxState {
@@ -270,32 +167,32 @@ impl Svit {
     pub fn builder(id: impl Into<String>) -> crate::Result<SvitBuilder> {
         Ok(SvitBuilder {
             process: Process::builder(id)?,
-            agent: AgentBuilder::detached(),
+            reasoning: ReasoningLoopBuilder::detached(),
         })
     }
 
     /// Configures a runnable Svit around a restored or forked process.
     pub fn resume(process: Process) -> SvitResumeBuilder {
         SvitResumeBuilder {
-            agent: AgentBuilder::new(process),
+            reasoning: ReasoningLoopBuilder::new(process),
         }
     }
 
-    fn from_agent(agent: Agent) -> Self {
-        let process = agent.process();
-        let executables = agent.executables.clone();
+    fn from_reasoning(reasoning: ReasoningLoop) -> Self {
+        let process = reasoning.process();
+        let builtins = reasoning.builtins.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
-        let (error_sender, _) = broadcast::channel(16);
+        let (event_sender, _) = broadcast::channel(64);
         Self {
-            agent: Some(agent),
+            reasoning: Some(reasoning),
             process,
             inbox_state: Arc::new(Mutex::new(InboxState { accepting: true })),
             command_sender,
             command_receiver: Some(command_receiver),
             outbox_sender,
-            executables,
-            error_sender,
+            builtins,
+            event_sender,
             task: None,
         }
     }
@@ -306,34 +203,39 @@ impl Svit {
             process: self.process.clone(),
             state: self.inbox_state.clone(),
             command_sender: self.command_sender.clone(),
+            event_sender: self.event_sender.clone(),
         }
     }
 
     /// Subscribes to completed turns from this process lifetime.
-    pub fn outbox(&self) -> broadcast::Receiver<Message> {
-        self.outbox_sender.subscribe()
+    pub fn outbox(&self) -> Outbox {
+        Outbox {
+            receiver: self.outbox_sender.subscribe(),
+        }
     }
 
-    /// Subscribes to sanitized terminal failures from the independently running loop.
-    pub fn errors(&self) -> broadcast::Receiver<String> {
-        self.error_sender.subscribe()
+    /// Subscribes to commit notifications and sanitized terminal failures.
+    pub fn events(&self) -> Events {
+        Events {
+            receiver: self.event_sender.subscribe(),
+        }
     }
 
     /// Starts the Everruns loop as an independent Tokio task.
     pub fn start(&mut self) -> SvitResult<()> {
         if self.task.is_some() || self.command_receiver.is_none() {
-            return Err(AgentError::AlreadyStarted);
+            return Err(SvitError::AlreadyStarted);
         }
-        let agent = self.agent.take().ok_or(AgentError::AlreadyStarted)?;
+        let reasoning = self.reasoning.take().ok_or(SvitError::AlreadyStarted)?;
         let receiver = self
             .command_receiver
             .take()
-            .ok_or(AgentError::AlreadyStarted)?;
+            .ok_or(SvitError::AlreadyStarted)?;
         let outbox = self.outbox_sender.clone();
-        let errors = self.error_sender.clone();
+        let events = self.event_sender.clone();
         let inbox_state = self.inbox_state.clone();
         self.task = Some(tokio::spawn(async move {
-            let result = run_process_loop(agent, receiver, outbox).await;
+            let result = run_process_loop(reasoning, receiver, outbox, events.clone()).await;
             if let Ok(mut state) = inbox_state.lock() {
                 state.accepting = false;
             }
@@ -341,7 +243,7 @@ impl Svit {
                 // THREAT[TM-INF-001]: Operational subscribers receive the same
                 // bounded diagnostic surface as other runtime callers.
                 let diagnostic = crate::error::sanitize_diagnostic(error);
-                let _ = errors.send(diagnostic);
+                let _ = events.send(SvitEvent::Failed(diagnostic));
             }
             result
         }));
@@ -350,25 +252,25 @@ impl Svit {
 
     /// Seals the inbox, drains committed messages, and waits for the loop.
     pub async fn block(&mut self) -> SvitResult<()> {
-        let task = self.task.take().ok_or(AgentError::NotStarted)?;
+        let task = self.task.take().ok_or(SvitError::NotStarted)?;
         {
             let mut state = self
                 .inbox_state
                 .lock()
-                .map_err(|_| AgentError::ProcessUnavailable)?;
+                .map_err(|_| SvitError::ProcessUnavailable)?;
             state.accepting = false;
             let _ = self.command_sender.send(RuntimeCommand::Stop);
         }
-        self.agent = Some(task.await.map_err(|_| AgentError::TaskFailed)??);
+        self.reasoning = Some(task.await.map_err(|_| SvitError::TaskFailed)??);
         Ok(())
     }
 
     /// Returns the durable conversation projection.
     pub fn messages(&self) -> SvitResult<&[Message]> {
-        self.agent
+        self.reasoning
             .as_ref()
-            .map(Agent::messages)
-            .ok_or(AgentError::AlreadyStarted)
+            .map(ReasoningLoop::messages)
+            .ok_or(SvitError::AlreadyStarted)
     }
 
     /// Returns the process identifier.
@@ -376,7 +278,7 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .id()
             .clone())
     }
@@ -386,7 +288,7 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .version())
     }
 
@@ -395,7 +297,7 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .limits()
             .clone())
     }
@@ -405,7 +307,7 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .discover(path)?)
     }
 
@@ -414,36 +316,57 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .read(path)?
             .cloned())
     }
 
-    /// Commits a host write through the process path contract.
-    pub fn write(&mut self, path: &str, value: Value) -> SvitResult<()> {
-        Ok(self
+    /// Reads one owned value and its committed process version atomically.
+    pub fn read_versioned(&self, path: &str) -> SvitResult<(Option<Value>, u64)> {
+        let process = self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
-            .write(path, value)?)
+            .map_err(|_| SvitError::ProcessUnavailable)?;
+        Ok((process.read(path)?.cloned(), process.version()))
+    }
+
+    /// Commits a host write through the process path contract.
+    pub fn write(&mut self, path: &str, value: Value) -> SvitResult<()> {
+        {
+            let mut process = self
+                .process
+                .lock()
+                .map_err(|_| SvitError::ProcessUnavailable)?;
+            process.write(path, value)?;
+        }
+        publish_committed(&self.event_sender);
+        Ok(())
     }
 
     /// Commits a host removal through the process path contract.
     pub fn remove(&mut self, path: &str) -> SvitResult<()> {
-        Ok(self
-            .process
-            .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
-            .remove(path)?)
+        {
+            let mut process = self
+                .process
+                .lock()
+                .map_err(|_| SvitError::ProcessUnavailable)?;
+            process.remove(path)?;
+        }
+        publish_committed(&self.event_sender);
+        Ok(())
     }
 
     /// Executes one transactional process script by its absolute `/lib` path.
     pub fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
-        Ok(self
-            .process
-            .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
-            .exec(path, input)?)
+        let activation = {
+            let mut process = self
+                .process
+                .lock()
+                .map_err(|_| SvitError::ProcessUnavailable)?;
+            process.exec(path, input)?
+        };
+        publish_committed(&self.event_sender);
+        Ok(activation)
     }
 
     /// Returns committed Lisp message intents from process state.
@@ -451,16 +374,16 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .outbox()?)
     }
 
-    /// Snapshots process state and the durable agent thread together.
+    /// Snapshots process state and the durable reasoning thread together.
     pub fn snapshot(&self) -> SvitResult<Vec<u8>> {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .snapshot()?)
     }
 
@@ -469,7 +392,7 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .root_hash())
     }
 
@@ -478,31 +401,69 @@ impl Svit {
         Ok(self
             .process
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
+            .map_err(|_| SvitError::ProcessUnavailable)?
             .fork(child_id)?)
-    }
-
-    /// Returns a shared handle for host integrations requiring `Process`.
-    pub fn process(&self) -> Arc<Mutex<Process>> {
-        self.process.clone()
     }
 
     /// Returns completed child addresses created through `/bin/spawn`.
     pub fn child_ids(&self) -> Vec<ProcessId> {
-        self.executables
+        self.builtins
             .as_ref()
-            .map(Executables::child_ids)
+            .map(Builtins::child_ids)
             .unwrap_or_default()
     }
 
     /// Snapshots one completed child created through `/bin/spawn`.
     pub fn child_snapshot(&self, id: &ProcessId) -> SvitResult<Option<Vec<u8>>> {
         Ok(self
-            .executables
+            .builtins
             .as_ref()
             .map(|tools| tools.child_snapshot(id))
             .transpose()?
             .flatten())
+    }
+}
+
+impl Outbox {
+    /// Waits for the next completed message.
+    pub async fn recv(&mut self) -> Result<Message, ObserveError> {
+        self.receiver.recv().await.map_err(ObserveError::from)
+    }
+
+    /// Receives the next completed message without waiting.
+    pub fn try_recv(&mut self) -> Result<Message, ObserveError> {
+        self.receiver.try_recv().map_err(ObserveError::from)
+    }
+}
+
+impl Events {
+    /// Waits for the next operational event.
+    pub async fn recv(&mut self) -> Result<SvitEvent, ObserveError> {
+        self.receiver.recv().await.map_err(ObserveError::from)
+    }
+
+    /// Receives the next operational event without waiting.
+    pub fn try_recv(&mut self) -> Result<SvitEvent, ObserveError> {
+        self.receiver.try_recv().map_err(ObserveError::from)
+    }
+}
+
+impl From<broadcast::error::RecvError> for ObserveError {
+    fn from(error: broadcast::error::RecvError) -> Self {
+        match error {
+            broadcast::error::RecvError::Closed => Self::Closed,
+            broadcast::error::RecvError::Lagged(count) => Self::Lagged(count),
+        }
+    }
+}
+
+impl From<broadcast::error::TryRecvError> for ObserveError {
+    fn from(error: broadcast::error::TryRecvError) -> Self {
+        match error {
+            broadcast::error::TryRecvError::Empty => Self::Empty,
+            broadcast::error::TryRecvError::Closed => Self::Closed,
+            broadcast::error::TryRecvError::Lagged(count) => Self::Lagged(count),
+        }
     }
 }
 
@@ -512,92 +473,96 @@ impl Inbox {
         let state = self
             .state
             .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?;
+            .map_err(|_| SvitError::ProcessUnavailable)?;
         if !state.accepting {
-            return Err(AgentError::InboxClosed);
+            return Err(SvitError::InboxClosed);
         }
         let json = serde_json::to_value(message)
-            .map_err(|error| AgentError::InvalidInbox(error.to_string()))?;
+            .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
         let value = Value::from_json(json)?;
-        self.process
-            .lock()
-            .map_err(|_| AgentError::ProcessUnavailable)?
-            .enqueue_inbox(value)?;
+        {
+            let mut process = self
+                .process
+                .lock()
+                .map_err(|_| SvitError::ProcessUnavailable)?;
+            process.enqueue_inbox(value)?;
+        }
+        publish_committed(&self.event_sender);
         self.command_sender
             .send(RuntimeCommand::Wake)
-            .map_err(|_| AgentError::TaskFailed)?;
+            .map_err(|_| SvitError::TaskFailed)?;
         drop(state);
         Ok(())
     }
 }
 
 async fn run_process_loop(
-    mut agent: Agent,
+    mut reasoning: ReasoningLoop,
     mut commands: mpsc::UnboundedReceiver<RuntimeCommand>,
     outbox: broadcast::Sender<Message>,
-) -> AgentResult<Agent> {
+    events: broadcast::Sender<SvitEvent>,
+) -> SvitResult<ReasoningLoop> {
     loop {
         let next = {
-            let process = agent.process();
+            let process = reasoning.process();
             process
                 .lock()
-                .map_err(|_| AgentError::ProcessUnavailable)?
+                .map_err(|_| SvitError::ProcessUnavailable)?
                 .inbox_front()?
                 .cloned()
         };
         if let Some(value) = next {
             let message: Message = serde_json::from_value(value.to_json())
-                .map_err(|error| AgentError::InvalidInbox(error.to_string()))?;
-            agent.run(message).await?;
-            let response = agent
+                .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
+            reasoning.run(message).await?;
+            let response = reasoning
                 .messages()
                 .last()
                 .filter(|message| message.role == MessageRole::Agent)
                 .cloned()
-                .ok_or(AgentError::MissingOutboxMessage)?;
-            agent
-                .process()
-                .lock()
-                .map_err(|_| AgentError::ProcessUnavailable)?
-                .acknowledge_inbox(&value)?;
+                .ok_or(SvitError::MissingOutboxMessage)?;
+            {
+                let process = reasoning.process();
+                let mut process = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+                process.acknowledge_inbox(&value)?;
+            }
+            publish_committed(&events);
             let _ = outbox.send(response);
             continue;
         }
 
         match commands.recv().await {
             Some(RuntimeCommand::Wake) => {}
-            Some(RuntimeCommand::Stop) | None => return Ok(agent),
+            Some(RuntimeCommand::Stop) | None => return Ok(reasoning),
         }
     }
 }
 
+fn publish_committed(events: &broadcast::Sender<SvitEvent>) {
+    let _ = events.send(SvitEvent::Committed);
+}
+
 /// Loop configuration for a restored or forked process.
 pub struct SvitResumeBuilder {
-    agent: AgentBuilder,
+    reasoning: ReasoningLoopBuilder,
 }
 
 impl SvitResumeBuilder {
-    /// Names the agent loop for host diagnostics.
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.agent = self.agent.name(name);
+    /// Adds optional host instructions to Svit's system prompt.
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.reasoning = self.reasoning.instructions(instructions);
         self
     }
 
-    /// Sets the agent's system prompt.
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.agent = self.agent.system_prompt(prompt);
-        self
-    }
-
-    /// Selects the Everruns model runtime used by the loop.
-    pub fn model(mut self, model: AgentModel) -> Self {
-        self.agent = self.agent.model(model);
+    /// Supplies the model and provider used by the reasoning loop.
+    pub fn reasoner(mut self, reasoner: Reasoner) -> Self {
+        self.reasoning = self.reasoning.reasoner(reasoner);
         self
     }
 
     /// Sets the maximum Everruns reason/act iterations for one turn.
     pub fn max_iterations(mut self, max_iterations: usize) -> Self {
-        self.agent = self.agent.max_iterations(max_iterations);
+        self.reasoning = self.reasoning.max_iterations(max_iterations);
         self
     }
 
@@ -607,26 +572,26 @@ impl SvitResumeBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.agent = self.agent.allow_scripts(scripts);
+        self.reasoning = self.reasoning.allow_scripts(scripts);
         self
     }
 
-    /// Installs native `/bin` executables with explicit host grants.
-    pub fn executables(mut self, executables: Executables) -> Self {
-        self.agent = self.agent.executables(executables);
+    /// Installs host-provided `/bin` built-ins with explicit grants.
+    pub fn builtins(mut self, builtins: Builtins) -> Self {
+        self.reasoning = self.reasoning.builtins(builtins);
         self
     }
 
-    /// Reopens the process and resumes its durable agent thread.
+    /// Reopens the process and resumes its durable reasoning thread.
     pub async fn build(self) -> SvitResult<Svit> {
-        Ok(Svit::from_agent(self.agent.build().await?))
+        Ok(Svit::from_reasoning(self.reasoning.build().await?))
     }
 }
 
-/// Builder combining process definition and agent-loop configuration.
+/// Builder combining process definition and reasoning-loop configuration.
 pub struct SvitBuilder {
     process: ProcessBuilder,
-    agent: AgentBuilder,
+    reasoning: ReasoningLoopBuilder,
 }
 
 impl SvitBuilder {
@@ -660,27 +625,21 @@ impl SvitBuilder {
         self
     }
 
-    /// Names the agent loop for host diagnostics.
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.agent = self.agent.name(name);
+    /// Adds optional host instructions to Svit's system prompt.
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.reasoning = self.reasoning.instructions(instructions);
         self
     }
 
-    /// Sets the agent's system prompt.
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.agent = self.agent.system_prompt(prompt);
-        self
-    }
-
-    /// Selects the Everruns model runtime used by the loop.
-    pub fn model(mut self, model: AgentModel) -> Self {
-        self.agent = self.agent.model(model);
+    /// Supplies the model and provider used by the reasoning loop.
+    pub fn reasoner(mut self, reasoner: Reasoner) -> Self {
+        self.reasoning = self.reasoning.reasoner(reasoner);
         self
     }
 
     /// Sets the maximum Everruns reason/act iterations for one turn.
     pub fn max_iterations(mut self, max_iterations: usize) -> Self {
-        self.agent = self.agent.max_iterations(max_iterations);
+        self.reasoning = self.reasoning.max_iterations(max_iterations);
         self
     }
 
@@ -690,36 +649,36 @@ impl SvitBuilder {
         I: IntoIterator<Item = S>,
         S: Into<String>,
     {
-        self.agent = self.agent.allow_scripts(scripts);
+        self.reasoning = self.reasoning.allow_scripts(scripts);
         self
     }
 
-    /// Installs native `/bin` executables with explicit host grants.
-    pub fn executables(mut self, executables: Executables) -> Self {
-        self.agent = self.agent.executables(executables);
+    /// Installs host-provided `/bin` built-ins with explicit grants.
+    pub fn builtins(mut self, builtins: Builtins) -> Self {
+        self.reasoning = self.reasoning.builtins(builtins);
         self
     }
 
     /// Builds the process and its runnable loop as one Svit instance.
     pub async fn build(self) -> SvitResult<Svit> {
         let process = self.process.build()?;
-        let agent = self.agent.with_process(process).build().await?;
-        Ok(Svit::from_agent(agent))
+        let reasoning = self.reasoning.with_process(process).build().await?;
+        Ok(Svit::from_reasoning(reasoning))
     }
 }
 
-/// A running Everruns agent represented by one Svit process.
-pub struct Agent {
+/// A running Everruns reasoning represented by one Svit process.
+struct ReasoningLoop {
     process: Arc<Mutex<Process>>,
     runtime: InProcessRuntime,
     session_id: SessionId,
     messages: Vec<Message>,
-    executables: Option<Executables>,
+    builtins: Option<Builtins>,
 }
 
-impl Agent {
+impl ReasoningLoop {
     /// Runs one turn in the process-owned thread.
-    pub async fn run(&mut self, input: Message) -> AgentResult<TurnResult> {
+    pub async fn run(&mut self, input: Message) -> SvitResult<TurnResult> {
         let result = self
             .runtime
             .run_turn(self.session_id, InputMessage::from_message(&input))
@@ -743,22 +702,21 @@ impl Agent {
     }
 
     /// Returns a shared handle for host-side inspection of committed state.
-    pub fn process(&self) -> Arc<Mutex<Process>> {
+    fn process(&self) -> Arc<Mutex<Process>> {
         self.process.clone()
     }
 }
 
-struct AgentBuilder {
+struct ReasoningLoopBuilder {
     process: Option<Arc<Mutex<Process>>>,
-    access: AgentAccess,
-    name: String,
-    system_prompt: Option<String>,
-    model: Option<AgentModel>,
+    access: ReasoningAccess,
+    instructions: Option<String>,
+    reasoner: Option<Reasoner>,
     max_iterations: usize,
-    executables: Option<Executables>,
+    builtins: Option<Builtins>,
 }
 
-impl AgentBuilder {
+impl ReasoningLoopBuilder {
     fn new(process: Process) -> Self {
         Self::detached().with_process(process)
     }
@@ -766,12 +724,11 @@ impl AgentBuilder {
     fn detached() -> Self {
         Self {
             process: None,
-            access: AgentAccess::Full,
-            name: "svit-agent".into(),
-            system_prompt: None,
-            model: None,
+            access: ReasoningAccess::Full,
+            instructions: None,
+            reasoner: None,
             max_iterations: 8,
-            executables: None,
+            builtins: None,
         }
     }
 
@@ -780,18 +737,13 @@ impl AgentBuilder {
         self
     }
 
-    fn name(mut self, name: impl Into<String>) -> Self {
-        self.name = name.into();
+    fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
         self
     }
 
-    fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = Some(prompt.into());
-        self
-    }
-
-    fn model(mut self, model: AgentModel) -> Self {
-        self.model = Some(model);
+    fn reasoner(mut self, reasoner: Reasoner) -> Self {
+        self.reasoner = Some(reasoner);
         self
     }
 
@@ -806,98 +758,126 @@ impl AgentBuilder {
         S: Into<String>,
     {
         self.access =
-            AgentAccess::ReadExec(Arc::new(scripts.into_iter().map(Into::into).collect()));
+            ReasoningAccess::ReadExec(Arc::new(scripts.into_iter().map(Into::into).collect()));
         self
     }
 
-    fn executables(mut self, executables: Executables) -> Self {
-        self.executables = Some(executables);
+    fn builtins(mut self, builtins: Builtins) -> Self {
+        self.builtins = Some(builtins);
         self
     }
 
-    async fn build(self) -> AgentResult<Agent> {
-        let process = self.process.ok_or(AgentError::MissingProcess)?;
-        let model = self.model.ok_or(AgentError::MissingModel)?;
+    async fn build(self) -> SvitResult<ReasoningLoop> {
+        let process = self.process.ok_or(SvitError::MissingProcess)?;
+        let reasoner = self.reasoner.ok_or(SvitError::MissingReasoner)?;
+        let model = reasoner.model_spec();
+        let provider = reasoner.provider().clone();
+        let builtins = self
+            .builtins
+            .map(|builtins| {
+                builtins
+                    .resolve(&reasoner)
+                    .map_err(|_| SvitError::HttpTransportUnavailable)
+            })
+            .transpose()?;
         let stored_state = {
-            let process = process.lock().map_err(|_| AgentError::ProcessUnavailable)?;
-            load_agent_state(&process).map_err(AgentError::Engine)?
+            let process = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+            load_thread_state(&process).map_err(SvitError::from)?
         };
-        let system_prompt = self
-            .system_prompt
+        let instructions = self
+            .instructions
             .or_else(|| {
                 stored_state
                     .as_ref()
-                    .map(|state| state.system_prompt.clone())
+                    .and_then(|state| state.instructions.clone())
             })
-            .unwrap_or_default();
+            .filter(|instructions| !instructions.trim().is_empty());
+        let process_id = process
+            .lock()
+            .map_err(|_| SvitError::ProcessUnavailable)?
+            .id()
+            .clone();
+        let system_prompt = compose_system_prompt(&process_id, instructions.as_deref());
         let session_id = stored_state
             .as_ref()
             .map(|state| state.session_id)
             .unwrap_or_else(SessionId::new);
-        let executable_catalog = self
-            .executables
+        let builtin_catalog = builtins
             .as_ref()
-            .map(|tools| tools.catalog(process.clone()))
+            .map(Builtins::catalog)
             .unwrap_or_else(|| json!({}));
         {
             // THREAT[TM-CAP-005]: `/bin` is refreshed from current host
             // configuration before Everruns can run a turn.
-            let mut owned = process.lock().map_err(|_| AgentError::ProcessUnavailable)?;
-            owned.replace_executables(Value::from_json(executable_catalog)?)?;
-            initialize_agent_state(&mut owned, session_id, &system_prompt)?;
+            let mut owned = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+            owned.replace_builtins(Value::from_json(builtin_catalog)?)?;
+            initialize_thread_state(
+                &mut owned,
+                session_id,
+                instructions.as_deref(),
+                &system_prompt,
+            )?;
         }
 
         let capability = ProcessCapability {
             process: process.clone(),
             access: self.access,
-            executables: self.executables.clone(),
+            builtins: builtins.clone(),
         };
         let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
-        let harness =
-            HarnessBuilder::new(&self.name, &system_prompt).capability(capability_config.clone());
-        let harness_id = harness.harness_id();
-        let harness = harness.build();
-        let agent = RuntimeAgentBuilder::new(&self.name, &system_prompt)
-            .harness_id(harness_id)
-            .capability(capability_config.clone())
-            .max_iterations(self.max_iterations);
-        let agent_id = agent.agent_id();
-        let agent = agent.build();
-        let session = SessionBuilder::new(harness_id)
-            .id(session_id)
-            .agent(agent_id)
-            .capability(capability_config)
-            .max_iterations(self.max_iterations)
-            .build();
-        let event_bus = Arc::new(ProcessEventBus::new(process.clone(), system_prompt.clone()));
-        let message_store = Arc::new(ProcessMessageStore::new(process.clone()));
-        let backends = RuntimeBackends::in_memory()
-            .with_event_bus(event_bus)
-            .with_message_store(message_store);
-        let runtime = model
-            .apply(
-                InProcessRuntimeBuilder::new()
-                    .harness(harness)
-                    .agent(agent)
-                    .session(session)
-                    .capability(capability)
-                    .backends(backends),
-            )
+        let event_log = Arc::new(ProcessEventLog::new(
+            process.clone(),
+            instructions.clone(),
+            system_prompt.clone(),
+        ));
+        let backends = HostBackends::in_memory().with_event_log(event_log);
+        // Svit is an advanced Everruns host because the application facade owns
+        // its event log. This host builder is the boundary that installs Svit's
+        // process-backed EventLog while retaining Everruns' compact session model.
+        let runtime = InProcessRuntimeBuilder::new()
+            .single_session(|session| {
+                session
+                    .harness(process_id.as_str(), &system_prompt)
+                    .agent(process_id.as_str(), &system_prompt)
+                    .session_id(session_id)
+                    .harness_capability(capability_config.clone())
+                    .agent_capability(capability_config.clone())
+                    .session_capability(capability_config)
+                    .agent_max_iterations(self.max_iterations)
+                    .session_max_iterations(self.max_iterations)
+            })
+            .capability(capability)
+            .backends(backends)
+            .model_spec(model)
+            .provider(provider)
             .build()
             .await?;
         let messages = runtime.messages(session_id).await?;
-        Ok(Agent {
+        Ok(ReasoningLoop {
             process,
             runtime,
             session_id,
             messages,
-            executables: self.executables,
+            builtins,
         })
     }
 }
 
+fn compose_system_prompt(process_id: &ProcessId, instructions: Option<&str>) -> String {
+    let base = format!(
+        "{SVIT_SYSTEM_PROMPT}\n\nProcess address: {}",
+        process_id.as_str()
+    );
+    match instructions {
+        Some(instructions) => {
+            format!("{base}\n\n<instructions>\n{instructions}\n</instructions>")
+        }
+        None => base,
+    }
+}
+
 #[derive(Clone)]
-enum AgentAccess {
+enum ReasoningAccess {
     Full,
     ReadExec(Arc<BTreeSet<String>>),
 }
@@ -905,8 +885,8 @@ enum AgentAccess {
 #[derive(Clone)]
 struct ProcessCapability {
     process: Arc<Mutex<Process>>,
-    access: AgentAccess,
-    executables: Option<Executables>,
+    access: ReasoningAccess,
+    builtins: Option<Builtins>,
 }
 
 #[async_trait]
@@ -925,18 +905,18 @@ impl Capability for ProcessCapability {
 
     async fn system_prompt_contribution(&self, _context: &SystemPromptContext) -> Option<String> {
         let mut contribution = match &self.access {
-            AgentAccess::Full => {
+            ReasoningAccess::Full => {
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, write, remove, and exec. Discover executable manuals under \
-                 /bin; run /bin executables or /lib scripts through exec. /agent/system_prompt, \
-                 /agent/messages, and /agent/events are durable host-managed runtime projections."
+                 with discover, read, write, remove, and exec. Discover built-in manuals under \
+                 /bin; run /bin built-ins or /lib scripts through exec. /thread/system_prompt, \
+                 /thread/messages, and /thread/events are durable host-managed runtime projections."
                     .into()
             }
-            AgentAccess::ReadExec(allowed_scripts) => format!(
+            ReasoningAccess::ReadExec(allowed_scripts) => format!(
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, and exec. Discover executable manuals under /bin. Run only \
-                 these /lib scripts through exec: {}. /agent/system_prompt, /agent/messages, and \
-                 /agent/events are durable host-managed runtime projections.",
+                 with discover, read, and exec. Discover built-in manuals under /bin. Run only \
+                 these /lib scripts through exec: {}. /thread/system_prompt, /thread/messages, and \
+                 /thread/events are durable host-managed runtime projections.",
                 allowed_scripts
                     .iter()
                     .cloned()
@@ -944,9 +924,9 @@ impl Capability for ProcessCapability {
                     .join(", ")
             ),
         };
-        if self.executables.is_some() {
+        if self.builtins.is_some() {
             contribution.push_str(
-                " Native executables are listed under /bin and invoked only through exec(path, input).",
+                " Built-ins are listed under /bin and invoked only through exec(path, input).",
             );
         }
         Some(contribution)
@@ -1014,14 +994,14 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     );
 
     let exec_process = capability.process.clone();
-    let executables = capability.executables.clone();
+    let builtins = capability.builtins.clone();
     let allowed_scripts = match &capability.access {
-        AgentAccess::Full => None,
-        AgentAccess::ReadExec(scripts) => Some(Arc::clone(scripts)),
+        ReasoningAccess::Full => None,
+        ReasoningAccess::ReadExec(scripts) => Some(Arc::clone(scripts)),
     };
     let exec = FunctionTool::new(
         "exec",
-        "Execute an absolute /lib script or /bin native executable path.",
+        "Execute an absolute /lib script or /bin built-in path.",
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}, "input": {}},
@@ -1030,14 +1010,14 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
         move |arguments| {
             let process = exec_process.clone();
             let allowed_scripts = allowed_scripts.clone();
-            let executables = executables.clone();
+            let builtins = builtins.clone();
             async move {
                 let path = arguments["path"].as_str().unwrap_or_default();
                 if let Some(name) = path.strip_prefix("/bin/") {
-                    let Some(executables) = executables else {
-                        return tool_error("executable not found");
+                    let Some(builtins) = builtins else {
+                        return tool_error("built-in not found");
                     };
-                    return executables
+                    return builtins
                         .execute(name, arguments["input"].clone(), process)
                         .await;
                 }
@@ -1057,7 +1037,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
         },
     );
 
-    if matches!(capability.access, AgentAccess::ReadExec(_)) {
+    if matches!(capability.access, ReasoningAccess::ReadExec(_)) {
         return vec![discover, read, exec];
     }
 
@@ -1155,237 +1135,276 @@ fn execute_script(
 }
 
 #[derive(Clone)]
-// Svit owns durability: Everruns emits through this bus, and one process commit
-// appends the canonical event plus its derived guest-readable message projection.
-struct ProcessEventBus {
+// Svit owns durability: the Everruns EventLog SPI commits each canonical event
+// and its derived guest-readable message projection in one process transition.
+struct ProcessEventLog {
     process: Arc<Mutex<Process>>,
+    instructions: Option<Arc<str>>,
     system_prompt: Arc<str>,
 }
 
-impl ProcessEventBus {
-    fn new(process: Arc<Mutex<Process>>, system_prompt: String) -> Self {
+impl ProcessEventLog {
+    fn new(
+        process: Arc<Mutex<Process>>,
+        instructions: Option<String>,
+        system_prompt: String,
+    ) -> Self {
         Self {
             process,
+            instructions: instructions.map(Into::into),
             system_prompt: system_prompt.into(),
         }
     }
 }
 
 #[async_trait]
-impl everruns::core::EventEmitter for ProcessEventBus {
-    async fn emit(&self, request: EventRequest) -> EverrunsResult<Event> {
-        let mut process = self
-            .process
-            .lock()
-            .map_err(|_| event_error("Svit process lock is unavailable"))?;
-        let mut state = load_agent_state(&process)?.ok_or_else(|| event_error("missing /agent"))?;
-        if state.session_id != request.session_id {
-            return Err(event_error("event belongs to a different Everruns session"));
+impl EventReader for ProcessEventLog {
+    async fn read_page(&self, request: EventReadRequest) -> Result<EventPage, EventLogError> {
+        let process = self.process.lock().map_err(|_| EventLogError::Backend {
+            detail: "Svit process lock is unavailable".into(),
+        })?;
+        let Some(state) = load_thread_state(&process).map_err(event_log_corruption)? else {
+            return EventPage::new(Vec::new(), None, 0);
+        };
+        let current_high =
+            i32::try_from(state.events.len()).map_err(|_| EventLogError::Corruption {
+                detail: "Svit event count exceeds the Everruns sequence range".into(),
+            })?;
+        let (after, snapshot) = match request.cursor() {
+            None => (0, current_high),
+            Some(cursor) => {
+                if cursor.session_id() != request.session_id() {
+                    return Err(EventLogError::CrossSessionCursor {
+                        detail: "cursor belongs to another Everruns session".into(),
+                    });
+                }
+                match cursor.snapshot_high_watermark() {
+                    Some(snapshot) => {
+                        if snapshot > current_high {
+                            return Err(EventLogError::ExpiredCursor {
+                                detail: "cursor snapshot is not available in this Svit process"
+                                    .into(),
+                            });
+                        }
+                        if cursor.after_sequence() > snapshot {
+                            return Err(EventLogError::IncompatibleCursor {
+                                detail: "cursor position exceeds its snapshot".into(),
+                            });
+                        }
+                        (cursor.after_sequence(), snapshot)
+                    }
+                    None => (cursor.after_sequence(), current_high),
+                }
+            }
+        };
+        if state.session_id != request.session_id() || snapshot == 0 {
+            return EventPage::new(Vec::new(), None, 0);
         }
-        let sequence = i32::try_from(state.events.len() + 1)
-            .map_err(|_| event_error("Everruns event sequence limit exceeded"))?;
+
+        let limit = request.limit().get();
+        let mut events = state
+            .events
+            .into_iter()
+            .filter(|event| {
+                event
+                    .sequence
+                    .is_some_and(|sequence| sequence > after && sequence <= snapshot)
+            })
+            .take(limit + 1)
+            .collect::<Vec<_>>();
+        let has_more = events.len() > limit;
+        if has_more {
+            events.pop();
+        }
+        let next_cursor = has_more
+            .then(|| {
+                let last = events
+                    .last()
+                    .and_then(|event| event.sequence)
+                    .ok_or_else(|| EventLogError::Corruption {
+                        detail: "event page continuation has no sequence".into(),
+                    })?;
+                EventCursor::continuation(request.session_id(), last, snapshot)
+            })
+            .transpose()?;
+        EventPage::new(events, next_cursor, snapshot)
+    }
+}
+
+#[async_trait]
+impl EventLog for ProcessEventLog {
+    async fn append(&self, request: EventRequest) -> Result<Event, EventLogError> {
+        if request.is_ephemeral() {
+            return Err(EventLogError::InvalidAppend {
+                detail: "ephemeral events are sink-only".into(),
+            });
+        }
+        let mut process = self.process.lock().map_err(|_| EventLogError::Backend {
+            detail: "Svit process lock is unavailable".into(),
+        })?;
+        let mut state = load_thread_state(&process)
+            .map_err(event_log_corruption)?
+            .ok_or_else(|| EventLogError::Corruption {
+                detail: "missing Svit /thread state".into(),
+            })?;
+        if state.session_id != request.session_id {
+            return Err(EventLogError::InvalidAppend {
+                detail: "event belongs to a different Everruns session".into(),
+            });
+        }
+        let sequence =
+            i32::try_from(state.events.len() + 1).map_err(|_| EventLogError::InvalidAppend {
+                detail: "Everruns event sequence limit exceeded".into(),
+            })?;
         let event = request.into_event(EventId::new(), sequence);
         state.events.push(event.clone());
         state.messages = messages_from_events(&state.events);
 
         // THREAT[TM-DOS-003]: Prompts, model output, and tool values remain
         // untrusted; Svit value validation and process limits fail closed.
-        persist_agent_state(
+        persist_thread_state(
             &mut process,
             state.session_id,
+            self.instructions.as_deref(),
             self.system_prompt.as_ref(),
             state.events,
             state.messages,
-        )?;
+        )
+        .map_err(event_log_append)?;
         Ok(event)
     }
-}
 
-#[async_trait]
-impl EventBus for ProcessEventBus {
-    async fn collected_events(&self) -> Vec<Event> {
-        self.process
-            .lock()
-            .ok()
-            .and_then(|process| load_agent_state(&process).ok().flatten())
-            .map(|state| state.events)
-            .unwrap_or_default()
+    fn durability(&self) -> EventDurability {
+        EventDurability::Volatile
     }
 }
 
-#[derive(Clone)]
-struct ProcessMessageStore {
-    process: Arc<Mutex<Process>>,
-}
-
-impl ProcessMessageStore {
-    fn new(process: Arc<Mutex<Process>>) -> Self {
-        Self { process }
-    }
-
-    fn state(&self) -> EverrunsResult<AgentState> {
-        let process = self
-            .process
-            .lock()
-            .map_err(|_| store_error("Svit process lock is unavailable"))?;
-        load_agent_state(&process)?.ok_or_else(|| store_error("missing /agent"))
-    }
-}
-
-#[async_trait]
-impl MessageRetriever for ProcessMessageStore {
-    async fn get(
-        &self,
-        session_id: SessionId,
-        message_id: MessageId,
-    ) -> EverrunsResult<Option<Message>> {
-        let state = self.state()?;
-        if state.session_id != session_id {
-            return Ok(None);
-        }
-        Ok(state
-            .messages
-            .into_iter()
-            .find(|message| message.id == message_id))
-    }
-
-    async fn load(&self, session_id: SessionId) -> EverrunsResult<Vec<Message>> {
-        let state = self.state()?;
-        Ok(if state.session_id == session_id {
-            state.messages
-        } else {
-            Vec::new()
-        })
-    }
-}
-
-#[async_trait]
-impl RuntimeMessageStore for ProcessMessageStore {
-    async fn add_input_message(
-        &self,
-        session_id: SessionId,
-        input: InputMessage,
-    ) -> EverrunsResult<Message> {
-        if self.state()?.session_id != session_id {
-            return Err(store_error(
-                "message belongs to a different Everruns session",
-            ));
-        }
-        Ok(Message {
-            id: MessageId::new(),
-            role: input.role,
-            content: input.content,
-            phase: None,
-            thinking: None,
-            thinking_signature: None,
-            controls: input.controls,
-            metadata: input.metadata,
-            external_actor: None,
-            created_at: std::time::SystemTime::now().into(),
-        })
-    }
-
-    async fn store_message(&self, session_id: SessionId, message: Message) -> EverrunsResult<()> {
-        let state = self.state()?;
-        if state.session_id != session_id {
-            return Err(store_error(
-                "message belongs to a different Everruns session",
-            ));
-        }
-        if !state
-            .messages
-            .iter()
-            .any(|stored| message_semantically_matches(stored, &message))
-        {
-            return Err(store_error(
-                "message is missing from the canonical event projection",
-            ));
-        }
-        Ok(())
-    }
-}
-
-struct AgentState {
+struct ThreadState {
     session_id: SessionId,
+    instructions: Option<String>,
     system_prompt: String,
     messages: Vec<Message>,
     events: Vec<Event>,
 }
 
-fn initialize_agent_state(
+fn initialize_thread_state(
     process: &mut Process,
     session_id: SessionId,
+    instructions: Option<&str>,
     system_prompt: &str,
 ) -> EverrunsResult<()> {
-    match load_agent_state(process)? {
+    match load_thread_state(process)? {
         Some(state) if state.session_id != session_id => Err(event_error(
             "Svit process already owns a different Everruns session",
         )),
-        Some(state) if state.system_prompt == system_prompt => Ok(()),
-        Some(state) => persist_agent_state(
+        Some(state)
+            if state.instructions.as_deref() == instructions
+                && state.system_prompt == system_prompt =>
+        {
+            Ok(())
+        }
+        Some(state) => persist_thread_state(
             process,
             session_id,
+            instructions,
             system_prompt,
             state.events,
             state.messages,
         ),
-        None => persist_agent_state(process, session_id, system_prompt, Vec::new(), Vec::new()),
+        None => persist_thread_state(
+            process,
+            session_id,
+            instructions,
+            system_prompt,
+            Vec::new(),
+            Vec::new(),
+        ),
     }
 }
 
-fn load_agent_state(process: &Process) -> EverrunsResult<Option<AgentState>> {
-    let Some(value) = process.read(AGENT_STATE_PATH).map_err(event_error)? else {
+fn load_thread_state(process: &Process) -> EverrunsResult<Option<ThreadState>> {
+    let Some(value) = process.read(THREAD_STATE_PATH).map_err(event_error)? else {
         return Ok(None);
     };
     if matches!(value, Value::Null) {
         return Ok(None);
     }
     let json = value.to_json();
-    if json.get("format").and_then(JsonValue::as_str) != Some(AGENT_STATE_FORMAT) {
-        return Err(event_error("invalid /agent format"));
+    if json.get("format").and_then(JsonValue::as_str) != Some(THREAD_STATE_FORMAT) {
+        return Err(event_error("invalid /thread format"));
     }
     let session_id = json
         .get("session_id")
         .and_then(JsonValue::as_str)
-        .ok_or_else(|| event_error("missing /agent session_id"))?
+        .ok_or_else(|| event_error("missing /thread session_id"))?
         .parse()
         .map_err(event_error)?;
     let system_prompt = json
         .get("system_prompt")
         .and_then(JsonValue::as_str)
-        .ok_or_else(|| event_error("missing /agent system_prompt"))?
+        .ok_or_else(|| event_error("missing /thread system_prompt"))?
         .to_owned();
+    let instructions = match json.get("instructions") {
+        Some(JsonValue::String(instructions)) => Some(instructions.clone()),
+        Some(JsonValue::Null) => None,
+        _ => return Err(event_error("invalid /thread instructions")),
+    };
     let messages: Vec<Message> = serde_json::from_value(
         json.get("messages")
             .cloned()
-            .ok_or_else(|| event_error("missing /agent messages"))?,
+            .ok_or_else(|| event_error("missing /thread messages"))?,
     )
     .map_err(event_error)?;
     let events: Vec<Event> = serde_json::from_value(
         json.get("events")
             .cloned()
-            .ok_or_else(|| event_error("missing /agent events"))?,
+            .ok_or_else(|| event_error("missing /thread events"))?,
     )
     .map_err(event_error)?;
+    validate_thread_events(session_id, &events)?;
     let derived = messages_from_events(&events);
     if serde_json::to_value(&messages).map_err(event_error)?
         != serde_json::to_value(&derived).map_err(event_error)?
     {
         return Err(event_error(
-            "/agent messages do not match the Everruns event projection",
+            "/thread messages do not match the Everruns event projection",
         ));
     }
-    Ok(Some(AgentState {
+    Ok(Some(ThreadState {
         session_id,
+        instructions,
         system_prompt,
         messages,
         events,
     }))
 }
 
-fn persist_agent_state(
+fn validate_thread_events(session_id: SessionId, events: &[Event]) -> EverrunsResult<()> {
+    // THREAT[TM-AUD-001]: The process-backed EventLog accepts only one
+    // session with unique IDs and a contiguous canonical sequence.
+    let mut event_ids = HashSet::with_capacity(events.len());
+    for (index, event) in events.iter().enumerate() {
+        if event.session_id != session_id {
+            return Err(event_error(
+                "Svit thread state contains an event for another session",
+            ));
+        }
+        let expected = i32::try_from(index + 1)
+            .map_err(|_| event_error("Everruns event sequence limit exceeded"))?;
+        if event.sequence != Some(expected) {
+            return Err(event_error("Svit thread event sequence is invalid"));
+        }
+        if !event_ids.insert(event.id) {
+            return Err(event_error("Svit thread event ID is duplicated"));
+        }
+    }
+    Ok(())
+}
+
+fn persist_thread_state(
     process: &mut Process,
     session_id: SessionId,
+    instructions: Option<&str>,
     system_prompt: &str,
     events: Vec<Event>,
     messages: Vec<Message>,
@@ -1393,14 +1412,15 @@ fn persist_agent_state(
     // THREAT[TM-AUD-001]: Everruns events are canonical. The guest-readable
     // history is derived and committed at this host-only boundary.
     let value = Value::from_json(json!({
-        "format": AGENT_STATE_FORMAT,
+        "format": THREAD_STATE_FORMAT,
         "session_id": session_id.to_string(),
+        "instructions": instructions,
         "system_prompt": system_prompt,
         "messages": messages,
         "events": events,
     }))
     .map_err(event_error)?;
-    process.replace_agent_state(value).map_err(event_error)
+    process.replace_thread_state(value).map_err(event_error)
 }
 
 fn messages_from_events(events: &[Event]) -> Vec<Message> {
@@ -1474,21 +1494,18 @@ fn parse_structured_tool_result_text(text: &str) -> JsonValue {
     }
 }
 
-fn message_semantically_matches(left: &Message, right: &Message) -> bool {
-    left.role == right.role
-        && left.content == right.content
-        && left.phase == right.phase
-        && left.thinking == right.thinking
-        && left.thinking_signature == right.thinking_signature
-        && left.controls == right.controls
-        && left.metadata == right.metadata
-        && left.external_actor == right.external_actor
-}
-
 fn event_error(error: impl fmt::Display) -> AgentLoopError {
     AgentLoopError::event(error.to_string())
 }
 
-fn store_error(error: impl fmt::Display) -> AgentLoopError {
-    AgentLoopError::store(error.to_string())
+fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
+    EventLogError::Corruption {
+        detail: error.to_string(),
+    }
+}
+
+fn event_log_append(error: impl fmt::Display) -> EventLogError {
+    EventLogError::InvalidAppend {
+        detail: error.to_string(),
+    }
 }

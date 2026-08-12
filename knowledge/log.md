@@ -1,5 +1,73 @@
 # Svit Knowledge Update Log
 
+## 2026-08-11
+
+* **Everruns values at the boundary**: Removed Svit's public `AgentModel`
+  wrapper. A `Reasoner` now pairs the provider-visible model ID with the
+  Everruns `Provider`, including `OpenAI` configuration, and constructs the
+  credential-free `ModelSpec` at the host boundary.
+* **Facade for ordinary calls**: Native one-shot `llm` execution now uses the
+  `everruns::Agent` facade. Only the process-owned loop uses `everruns-host`,
+  because it must install Svit's canonical process-backed `EventLog`.
+* **Compact host assembly**: The process-owned loop now seeds its harness,
+  agent, and resumable session through Everruns' `single_session` builder.
+* **Svit-owned prompt**: Removed the independent agent name and public
+  `system_prompt` configuration. The process address now identifies the
+  Everruns harness and agent. Svit composes its own base prompt, including
+  durable memory-tree guidance, appends optional application `instructions`
+  inside an `<instructions>` block, persists instructions separately, and
+  recomposes fork prompts for the child address. Agent state advanced to
+  `svit-thread@6`.
+* **Reasoner boundary**: Replaced independent model/provider setters with one
+  `Reasoner` value across Svit and model-backed built-ins. The public error is
+  now `SvitError`, avoiding agent terminology in the configuration API;
+  built-ins remain separate explicit host capabilities.
+* **Thread projection**: Renamed the durable public `/agent` projection to
+  `/thread`, renamed the internal adapter and runnable example around reasoning,
+  advanced thread state to `svit-thread@6`, and advanced snapshots to format 6.
+* **Lampa value previews**: Shallow container previews now show bounded scalar
+  child values while keeping nested containers summarized by kind and item
+  count.
+* **Lampa mouse selection**: Plain left clicks on visible memory rows now map
+  through the current list viewport and update the selected value preview.
+* **Built-in extensions**: Split each built-in into its own module
+  and replaced the closed configuration switch with host registration through
+  `Builtin` and `BuiltinExtension`, following Bashkit's later-wins rule.
+  The common boundary bounds JSON input/output and exposes committed reads only.
+* **One built-in setup path**: Removed the parallel native setup and
+  custom-transport builder operations. Hosts always attach one `Builtins`
+  registry through `builtins`; `Builtins::standard()` marks the complete set
+  for reasoner resolution during Svit construction, while
+  `with_http_allowlist` layers explicit URL grants and later registrations win.
+* **Lampa built-in catalog**: Attached the standard built-ins to Lampa.
+  Svit's standard registry derives `llm` and `spawn` from its reasoner;
+  Lampa supplies only the explicit `LAMPA_HTTP_ALLOW` policy. Svit owns the
+  reusable redirect-denying, response-bounded reqwest transport.
+* **Svit host contract**: Committed transitions publish notifications rather
+  than process state. Hosts obtain owned value/version observations through an
+  atomic Svit operation and cannot retain the mutable process tree. `Inbox` is
+  the input sink; `Outbox` and `Events` are explicit independent observers over
+  private stream implementations. Terminal failures use the event observer with
+  sanitized diagnostics. Lampa consumes this contract instead of polling or
+  maintaining runtime configuration.
+* **Lampa host boundary**: Removed the standalone direct-`Process` script
+  runner. Lampa now has one mode: configure a Svit instance and present its
+  lifecycle, events, inbox, and outbox.
+* **Lampa list labels**: Array rows now show bounded scalar text, identifying
+  object fields when available, and container summaries otherwise.
+
+## 2026-08-10
+
+* **Everruns main**: Moved the workspace dependency from Everruns 0.17.25 to
+  the upstream `main` branch; `Cargo.lock` fixes the reviewed source commit.
+* **Host abstractions**: Replaced the retired runtime compatibility surface,
+  writable message store, event bus, and driver registry with
+  `everruns-host` `HostBackends`, the coherent `EventLog`/`EventReader` SPI,
+  and separate `ModelSpec`/`Provider` configuration.
+* **Canonical replay**: Advanced agent state to `svit-agent@4`, adopted the
+  initial `session.started` event, and reject resumed event streams whose
+  session, IDs, or contiguous sequence violate the event-log contract.
+
 ## 2026-08-09
 
 * **Everruns loop engine**: Replaced Agentyk with Everruns 0.17.25 behind the
@@ -7,7 +75,7 @@
   process-backed event bus, message store, and typed process capability.
 * **Durable projection**: Advanced agent state to `svit-agent@3`. Canonical
   Everruns events and their exact derived message projection commit under
-  `/agent` and are revalidated on resume.
+  `/thread` and are revalidated on resume.
 * **Provider surface**: Added `AgentModel` for the deterministic Everruns
   simulator, Everruns' OpenAI Responses driver, and host-provided Everruns
   driver registries. Removed the `svit-agentyk` adapter and Lampa's custom
@@ -21,10 +89,10 @@
 
 ## 2026-08-07
 
-* **Native executables**: Added `/bin/search` and `/bin/jq` over
+* **Built-ins**: Added `/bin/search` and `/bin/jq` over
   committed process text and explicit JSON, with no shell or ambient host
   interface.
-* **Executable discovery**: Added host-managed `/bin` manuals derived from
+* **Built-in discovery**: Added host-managed `/bin` manuals derived from
   installed native implementations, including schemas, output contracts,
   effect classes, and limits. Resume refreshes the catalog from current host grants.
 * **Explicit effects**: Added default-deny, host-allowlisted HTTP plus optional
@@ -34,7 +102,7 @@
   transactional script `exec`; it forks committed state, runs one child turn,
   rejects duplicate local addresses, and exposes child snapshots to the host.
 * **Tool security**: Added `TM-DOS-008`, `TM-ESC-003`, `TM-EFF-005`,
-  `TM-FORK-002`, and `TM-CAP-004` with focused agent-loop evidence for limits,
+  `TM-FORK-002`, and `TM-CAP-004` with focused reasoning-loop evidence for limits,
   host isolation, effect grants, fork lineage, and network policy.
 * **Tool limitations**: Recorded the bounded jq subset, non-transactional
   HTTP/model effects, and the non-durable local child registry as `L-035`
@@ -42,7 +110,7 @@
 * **Dependency review**: Added direct jaq, regex, and URL dependencies for the
   native implementations; no shell runtime is included.
 * **Compatibility**: Advanced process snapshots to format 5 for the durable
-  `/bin` executable catalog; agent state remains `svit-agent@2`.
+  `/bin` built-in catalog; agent state remains `svit-agent@2`.
 
 * **Lampa**: Added persistent inbox/outbox chat, complete committed process
   memory, and JSON item-preview panels with headless UI evidence.
@@ -56,20 +124,20 @@
   successful turns acknowledge the exact observed head and failures retain it.
 * **Message envelope**: Inbox and live outbox use Agentyk `Message` values with
   ordered `ContentPart` values rather than plain input and `TurnResult` output.
-* **Runtime projection**: `/agent` now exposes the configured system prompt,
+* **Runtime projection**: `/thread` now exposes the configured system prompt,
   event-derived message history, and canonical Agentyk events through the
   ordinary read-only runtime surface. Agent state format advanced to
   `svit-agent@2`.
-* **Durable thread**: Added host-managed, guest-readable `/agent` state so
+* **Durable thread**: Added host-managed, guest-readable `/thread` state so
   snapshots, restores, and forks carry the committed conversation event log.
 * **Subagents**: Defined a subagent as a Svit agent built around a forked child
   process; child turns inherit committed history and isolate future mutation.
-* **Consumer example**: Added credentialed `support-agent-v2`, using
+* **Consumer example**: Added credentialed `support-agent-svit`, using
   `gpt-5.6-terra` through one process-owned Svit inbox and outbox. Deterministic
   lifecycle, snapshot, and fork evidence remains in the test suite.
 * **Audit boundary**: Added `TM-AUD-001` and executable evidence preventing
   guest scripts and model tools from rewriting durable replay state.
-* **Compatibility**: Bumped snapshots to format 4 for the `/agent` root node.
+* **Compatibility**: Bumped snapshots to format 4 for the `/thread` root node.
 * **Limitations**: Recorded the one-thread-per-process constraint and the
   non-atomic boundary between agent event commits and external model/tool calls.
 

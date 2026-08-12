@@ -673,9 +673,9 @@ Domain operations such as search and committing a result are named Svit
 scripts, discovered and invoked through this generic surface. The adapter
 maps these names one-to-one to the process API and records the resulting process
 version in the Everruns event stream. Svit supplies a process-backed Everruns
-event bus and message store: canonical events and their derived message
-projection commit under `/agent`. Forking is allowed only at compatible
-committed boundaries.
+`EventLog` through `HostBackends`: canonical events and their derived message
+projection commit under `/thread`, and Everruns rebuilds model history from the
+same log. Forking is allowed only at compatible committed boundaries.
 
 Domain agents may receive an attenuated view of the same vocabulary. The
 support workflow exposes discovery, reads, and `exec` for a host-selected
@@ -865,6 +865,6 @@ Primary and project sources that informed the proposal:
   [Verus](https://verus-lang.github.io/verus/guide/overview.html), and
   [Creusot](https://creusot.rs/).
 - [Stateright Rust model checker](https://docs.rs/stateright/latest/stateright/).
-- [Agentyk](https://github.com/everruns/agentyk),
+- [Agentyk](https://github.com/everruns/threadyk),
   [Yolop](https://github.com/everruns/yolop), and
   [Everruns](https://github.com/everruns/everruns).
