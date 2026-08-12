@@ -70,19 +70,23 @@ objects prefer an identifying field such as `name`, `operation`, `type`, or
 `id`, and other containers show their kind and item count.
 
 The middle panel includes `/thread`, `/memory`, scripts, inbox, mounts, and
-system state. `Tab` moves focus between chat input, memory navigation, and
-preview scrolling. In the memory panel, use arrows or `j`/`k` to move,
-`Right` to expand, `Left` to collapse or move to the parent, and `Enter` to
-toggle nodes. Click a visible row to select it. Use `PageUp`/`PageDown` or the
-mouse wheel to scroll. Use `--model` or `SVIT_MODEL` to override the
-default model. Lampa uses OpenAI's Responses API for reasoning and function
-tools and exposes `search`, `jq`, `http`, `llm`, and `spawn` under `/bin`.
-`llm` and `spawn` reuse Lampa's selected model and OpenAI provider. HTTP is
-default-deny; grant comma-separated URL roots explicitly, for example:
+system state. Initially only `/` is expanded, leaving its top-level children
+closed. `Tab` moves focus forward between chat input, memory navigation, and
+preview scrolling; `Shift+Tab` moves backward. In the memory panel, use arrows
+or `j`/`k` to move, `Right` to expand, `Left` to collapse or move to the parent,
+and `Enter` to toggle nodes.
+Click a visible row to select it without recentering the current window. Use
+`PageUp`/`PageDown` or the mouse wheel to scroll. Use `--model` or `SVIT_MODEL`
+to override the default model. Conversation messages render as Markdown, and
+bare HTTP(S) URLs are emitted as clickable terminal hyperlinks. Lampa uses
+OpenAI's Responses API for reasoning and function tools and exposes `search`,
+`jq`, `http`, `llm`, and `spawn` under `/bin`.
+`llm` and `spawn` reuse Lampa's selected model and OpenAI provider. Lampa's
+research console grants the standard HTTP built-in without a destination
+allowlist:
 
 ```console
-LAMPA_HTTP_ALLOW=https://api.example.com/v1,https://docs.example.com \
-  OPENAI_API_KEY=... cargo run -p lampa
+OPENAI_API_KEY=... cargo run -p lampa
 ```
 
 Lampa's entry point only configures and builds the `Svit` instance. The TUI

@@ -18,6 +18,15 @@ All notable changes to Svit will be documented here.
   while the TUI consumes commit notifications, inbox, and outbox without
   polling process state or assembling built-ins. Remove the separate direct
   `Process` script-execution command.
+- Let Lampa select `Builtins::standard()` without HTTP policy configuration;
+  the standard registry grants unrestricted destinations for research hosts,
+  while `with_http_allowlist` remains available for attenuation.
+- Keep Lampa's memory viewport stable when selecting lower visible rows and
+  start with only the tree root expanded.
+- Navigate Lampa panels backward with `Shift+Tab` while retaining forward
+  traversal on plain `Tab`.
+- Render Lampa conversation messages as Markdown and emit bare HTTP(S) URLs as
+  OSC 8 terminal hyperlinks.
 
 ### Added
 

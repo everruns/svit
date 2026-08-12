@@ -3,11 +3,11 @@ use std::io;
 use std::time::Duration;
 
 use crossterm::event;
-use ratatui::backend::CrosstermBackend;
 use ratatui::{Terminal, TerminalOptions, Viewport};
 use svit::{ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
+use tuika::term::hyperlink::HyperlinkBackend;
 use tuika_codeformatters::TreeSitterHighlighter;
 
 const MEMORY_WIDTH: u16 = 30;
@@ -137,6 +137,7 @@ struct App {
     root: Value,
     expanded: BTreeSet<String>,
     memory_viewport_height: usize,
+    memory_window_start: usize,
     panel_bounds: PanelBounds,
     composer: TextInputState,
     transcript_scroll: ScrollState,
@@ -155,7 +156,7 @@ impl App {
     fn new(root: Value, version: u64, model: String) -> Self {
         let mut preview_scroll = ScrollState::new();
         preview_scroll.jump_to_top();
-        let expanded = expandable_paths(&root);
+        let expanded = BTreeSet::from(["/".into()]);
         let rows = tree_rows(&root, &expanded);
         Self {
             focus: Focus::Composer,
@@ -163,6 +164,7 @@ impl App {
             root,
             expanded,
             memory_viewport_height: 1,
+            memory_window_start: 0,
             panel_bounds: PanelBounds::default(),
             composer: TextInputState::new(),
             transcript_scroll: ScrollState::new(),
@@ -201,6 +203,7 @@ impl App {
         self.preview_cache = None;
         let selected = self.visible_index_or_ancestor(&selected_path);
         self.tree.select(Some(selected));
+        self.keep_tree_selection_visible();
         self.version = version;
     }
 
@@ -221,6 +224,7 @@ impl App {
         self.rows = tree_rows(&self.root, &self.expanded);
         self.tree
             .select(Some(self.visible_index_or_ancestor(selected_path)));
+        self.keep_tree_selection_visible();
     }
 
     fn toggle_selected(&mut self) {
@@ -248,6 +252,7 @@ impl App {
         let parent = &locator[..locator.len() - 1];
         if let Some(index) = self.rows.iter().position(|row| row.locator == parent) {
             self.tree.select(Some(index));
+            self.keep_tree_selection_visible();
         }
     }
 
@@ -268,6 +273,33 @@ impl App {
             selected.saturating_sub(distance)
         };
         self.tree.select(Some(next));
+        self.keep_tree_selection_visible();
+    }
+
+    fn memory_window(&self) -> VirtualWindow {
+        VirtualWindow::new(
+            self.rows.len(),
+            self.memory_viewport_height,
+            self.memory_window_start,
+        )
+    }
+
+    fn keep_tree_selection_visible(&mut self) {
+        let visible = self.memory_viewport_height.max(1).min(self.rows.len());
+        let selected = self
+            .tree
+            .selected()
+            .unwrap_or(0)
+            .min(self.rows.len().saturating_sub(1));
+        let mut start = self
+            .memory_window_start
+            .min(VirtualWindow::max_start_for(self.rows.len(), visible));
+        if selected < start {
+            start = selected;
+        } else if selected >= start.saturating_add(visible) {
+            start = selected.saturating_add(1).saturating_sub(visible);
+        }
+        self.memory_window_start = start;
     }
 
     fn push_user(&mut self, text: String) {
@@ -311,12 +343,7 @@ impl App {
                 self.focus = target;
                 if target == Focus::Memory {
                     let selected = self.tree.selected();
-                    let first_visible = VirtualWindow::around(
-                        self.rows.len(),
-                        self.memory_viewport_height,
-                        selected,
-                    )
-                    .start();
+                    let first_visible = self.memory_window().start();
                     let _ = self.tree.handle_mouse(
                         event,
                         self.rows.len(),
@@ -326,6 +353,7 @@ impl App {
                     if self.tree.selected() != selected {
                         self.preview_scroll.jump_to_top();
                     }
+                    self.keep_tree_selection_visible();
                 }
                 true
             }
@@ -387,7 +415,24 @@ impl App {
         if matches!(
             event,
             Event::Key(Key {
+                code: KeyCode::BackTab,
+                ..
+            })
+        ) {
+            self.focus = match self.focus {
+                Focus::Composer => Focus::Preview,
+                Focus::Memory => Focus::Composer,
+                Focus::Preview => Focus::Memory,
+            };
+            return AppAction::Continue;
+        }
+
+        if matches!(
+            event,
+            Event::Key(Key {
                 code: KeyCode::Tab,
+                ctrl: false,
+                alt: false,
                 ..
             })
         ) {
@@ -453,6 +498,7 @@ impl App {
                 if self.tree.selected() != selected {
                     self.preview_scroll.jump_to_top();
                 }
+                self.keep_tree_selection_visible();
             }
             Focus::Composer => {
                 if matches!(
@@ -528,7 +574,7 @@ fn run_terminal(
     let probes = UiProbes::default();
     let _session = TerminalSession::enter().map_err(|error| error.to_string())?;
     let mut terminal = Terminal::with_options(
-        CrosstermBackend::new(io::stdout()),
+        HyperlinkBackend::new(io::stdout(), true),
         TerminalOptions {
             viewport: Viewport::Fullscreen,
         },
@@ -600,6 +646,7 @@ fn has_children(value: &Value) -> bool {
     }
 }
 
+#[cfg(test)]
 fn expandable_paths(root: &Value) -> BTreeSet<String> {
     fn collect(value: &Value, path: &str, paths: &mut BTreeSet<String>) {
         if !has_children(value) {
@@ -799,7 +846,13 @@ fn item_count(kind: &str, count: usize) -> String {
 fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> Element {
     let memory_width = MEMORY_WIDTH.min(area.width.saturating_sub(48)).max(20);
     let preview_width = area.width.saturating_sub(memory_width) / 3;
+    let conversation_width = area
+        .width
+        .saturating_sub(memory_width)
+        .saturating_sub(preview_width);
+    let conversation_content_width = conversation_width.saturating_sub(4).max(1);
     app.memory_viewport_height = usize::from(area.height.saturating_sub(3)).max(1);
+    app.keep_tree_selection_visible();
     let preview_content_width = preview_width.saturating_sub(4).max(1);
     let selected_path = app.selected().path.clone();
     let cache_matches = app
@@ -822,9 +875,12 @@ fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> El
     let body = Flex::row()
         .grow(
             2,
-            probes
-                .conversation
-                .wrap(conversation_view(app, theme, &probes.composer)),
+            probes.conversation.wrap(conversation_view(
+                app,
+                theme,
+                &probes.composer,
+                conversation_content_width,
+            )),
         )
         .fixed(memory_width, probes.memory.wrap(tree_view(app, theme)))
         .grow(
@@ -844,9 +900,10 @@ fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> El
 }
 
 fn tree_view(app: &App, theme: &Theme) -> Element {
-    let lines = app
-        .rows
-        .iter()
+    let window = app.memory_window();
+    let lines = window
+        .range()
+        .map(|index| &app.rows[index])
         .map(|row| Line::from(row.label.clone()))
         .collect();
     let border = if app.focus == Focus::Memory {
@@ -856,9 +913,7 @@ fn tree_view(app: &App, theme: &Theme) -> Element {
     };
     element(
         Boxed::new(element(
-            SelectList::new(lines, &app.tree)
-                .viewport(app.memory_viewport_height.min(usize::from(u16::MAX)) as u16)
-                .scrollbar(true),
+            SelectList::windowed(lines, window, &app.tree).scrollbar(true),
         ))
         .title(" Memory ")
         .border_color(border)
@@ -866,8 +921,13 @@ fn tree_view(app: &App, theme: &Theme) -> Element {
     )
 }
 
-fn conversation_view(app: &mut App, theme: &Theme, probe: &RectProbe) -> Element {
-    let lines = timeline_lines(&app.timeline, theme);
+fn conversation_view(
+    app: &mut App,
+    theme: &Theme,
+    probe: &RectProbe,
+    content_width: u16,
+) -> Element {
+    let lines = timeline_lines(&app.timeline, content_width, theme);
     let viewport_height = 20usize;
     app.transcript_scroll.clamp(lines.len(), viewport_height);
     let transcript = element(Scroll::new(lines, &app.transcript_scroll).wrap(true));
@@ -1227,7 +1287,11 @@ fn preview_lines(path: &str, value: &Value, width: u16, theme: &Theme) -> Vec<Li
     }
 }
 
-fn timeline_lines(entries: &[TimelineEntry], theme: &Theme) -> Vec<Line<'static>> {
+fn timeline_lines(
+    entries: &[TimelineEntry],
+    content_width: u16,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
     if entries.is_empty() {
         return vec![Line::from(Span::styled(
             "Start a conversation. Messages are committed through the process inbox.",
@@ -1254,7 +1318,13 @@ fn timeline_lines(entries: &[TimelineEntry], theme: &Theme) -> Vec<Line<'static>
                 for part in &message.content {
                     match part {
                         ContentPart::Text(part) => {
-                            lines.extend(part.text.lines().map(|line| Line::from(line.to_owned())));
+                            lines.extend(tuika::components::markdown::to_lines(
+                                &part.text,
+                                content_width,
+                                theme,
+                                &StyleSheet::from_theme(theme),
+                                CodeHighlighter::With(&PreviewHighlighter::default()),
+                            ));
                         }
                         ContentPart::Image(_) | ContentPart::ImageFile(_) => {
                             lines.push(Line::from("[image]"));
@@ -1329,6 +1399,29 @@ mod tests {
         ))
     }
 
+    fn expand_paths(app: &mut App, paths: &[&str]) {
+        let selected_path = app.selected().path.clone();
+        app.expanded
+            .extend(paths.iter().map(|path| (*path).to_owned()));
+        app.rebuild_tree(&selected_path);
+    }
+
+    #[test]
+    fn initial_tree_opens_only_the_root() {
+        let app = App::new(
+            value!({
+                "thread": {"events": []},
+                "memory": {"profile": {"name": "Ada"}}
+            }),
+            0,
+            "test".into(),
+        );
+
+        assert_eq!(app.expanded, BTreeSet::from(["/".into()]));
+        assert!(app.rows.iter().any(|row| row.path == "/memory"));
+        assert!(!app.rows.iter().any(|row| row.path == "/memory/profile"));
+    }
+
     #[test]
     fn array_tree_rows_include_bounded_item_previews() {
         let long_text = format!(
@@ -1377,8 +1470,13 @@ mod tests {
         );
 
         assert_eq!(app.rows[0].label, "▾ /");
-        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
         assert!(app.rows.iter().any(|row| row.path == "/memory"));
+        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        expand_paths(
+            &mut app,
+            &["/thread", "/memory", "/memory/profile", "/memory/scores"],
+        );
+        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
         assert!(app.rows.iter().any(|row| row.label.ends_with("name")));
         let name_index = app
             .rows
@@ -1412,6 +1510,36 @@ mod tests {
         assert!(rendered.contains("Heading"));
         assert!(rendered.contains("bold"));
         assert!(!rendered.contains("**"));
+    }
+
+    #[test]
+    fn assistant_timeline_renders_markdown_and_styles_bare_urls() {
+        let theme = lampa_theme();
+        let entries = vec![TimelineEntry::Message(Box::new(Message::assistant(
+            "**Everruns**: https://everruns.com",
+        )))];
+        let lines = timeline_lines(&entries, 80, &theme);
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        let url = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .find(|span| span.content.contains("https://everruns.com"))
+            .unwrap();
+        let emphasized = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .find(|span| span.content == "Everruns")
+            .unwrap();
+
+        assert!(rendered.contains("Everruns"));
+        assert!(!rendered.contains("**"));
+        assert!(emphasized.style.add_modifier.contains(Modifier::BOLD));
+        assert_eq!(url.style.fg, Some(theme.code.link));
+        assert!(url.style.add_modifier.contains(Modifier::UNDERLINED));
     }
 
     #[test]
@@ -1530,6 +1658,7 @@ mod tests {
             1,
             "test".into(),
         );
+        expand_paths(&mut app, &["/memory"]);
         let selected = app
             .rows
             .iter()
@@ -1586,6 +1715,19 @@ mod tests {
     }
 
     #[test]
+    fn shift_tab_moves_backward_through_panels() {
+        let mut app = App::new(value!({}), 0, "test".into());
+        let shift_tab = Key::new(KeyCode::BackTab);
+
+        let _ = app.handle(&Event::Key(shift_tab));
+        assert_eq!(app.focus, Focus::Preview);
+        let _ = app.handle(&Event::Key(shift_tab));
+        assert_eq!(app.focus, Focus::Memory);
+        let _ = app.handle(&Event::Key(shift_tab));
+        assert_eq!(app.focus, Focus::Composer);
+    }
+
+    #[test]
     fn selecting_another_memory_item_starts_its_preview_at_the_top() {
         let mut app = App::new(value!({"thread": {}, "memory": {}}), 0, "test".into());
         app.focus = Focus::Memory;
@@ -1618,6 +1760,12 @@ mod tests {
             .unwrap();
         app.tree.select(Some(thread));
 
+        assert!(app.selected().label.contains("▸ thread"));
+        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        let _ = app.handle(&Event::Key(Key::new(KeyCode::Enter)));
+
+        assert!(app.selected().label.contains("▾ thread"));
+        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Enter)));
 
         assert!(app.selected().label.contains("▸ thread"));
@@ -1643,6 +1791,7 @@ mod tests {
             "test".into(),
         );
         app.focus = Focus::Memory;
+        expand_paths(&mut app, &["/memory", "/memory/profile"]);
         let profile = app
             .rows
             .iter()
@@ -1667,6 +1816,7 @@ mod tests {
         );
         app.focus = Focus::Memory;
         app.memory_viewport_height = 4;
+        expand_paths(&mut app, &["/memory"]);
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::PageDown)));
         assert_eq!(app.tree.selected(), Some(3));
@@ -1686,6 +1836,7 @@ mod tests {
             "test".into(),
         );
         app.memory_viewport_height = 4;
+        expand_paths(&mut app, &["/memory"]);
         let probes = layout(&mut app, 90, 24);
 
         let _ = app.handle(&panel_mouse(MouseKind::ScrollDown, probes.memory.rect()));
@@ -1719,6 +1870,7 @@ mod tests {
             0,
             "test".into(),
         );
+        expand_paths(&mut app, &["/memory"]);
         let probes = layout(&mut app, 90, 24);
         let bounds = probes.memory.rect();
 
@@ -1739,6 +1891,7 @@ mod tests {
             0,
             "test".into(),
         );
+        expand_paths(&mut app, &["/memory"]);
         let selected = app
             .rows
             .iter()
@@ -1746,9 +1899,7 @@ mod tests {
             .unwrap();
         app.tree.select(Some(selected));
         let probes = layout(&mut app, 90, 8);
-        let first_visible =
-            VirtualWindow::around(app.rows.len(), app.memory_viewport_height, Some(selected))
-                .start();
+        let first_visible = app.memory_window().start();
         let expected_path = app.rows[first_visible].path.clone();
         let bounds = probes.memory.rect();
 
@@ -1762,12 +1913,40 @@ mod tests {
     }
 
     #[test]
+    fn clicking_the_bottom_row_keeps_the_memory_window_stable() {
+        let mut app = App::new(
+            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
+            0,
+            "test".into(),
+        );
+        expand_paths(&mut app, &["/memory"]);
+        let selected = app
+            .rows
+            .iter()
+            .position(|row| row.path == "/memory/5")
+            .unwrap();
+        app.tree.select(Some(selected));
+        let probes = layout(&mut app, 90, 8);
+        let first_visible = app.memory_window().start();
+        let body = panel_body(probes.memory.rect());
+
+        let _ = app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::Down(MouseButton::Left),
+            body.x + 1,
+            body.bottom() - 1,
+        )));
+
+        assert_eq!(app.memory_window().start(), first_visible);
+    }
+
+    #[test]
     fn memory_tree_viewport_follows_an_offscreen_selection() {
         let mut app = App::new(
             value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
             0,
             "test".into(),
         );
+        expand_paths(&mut app, &["/memory"]);
         app.memory_viewport_height = 4;
         let selected = app
             .rows
@@ -1775,6 +1954,7 @@ mod tests {
             .position(|row| row.path == "/memory/8")
             .unwrap();
         app.tree.select(Some(selected));
+        app.keep_tree_selection_visible();
         let theme = lampa_theme();
 
         let frame = grid(&render(tree_view(&app, &theme).as_ref(), 30, 6, &theme));

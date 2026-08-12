@@ -56,6 +56,12 @@
   lifecycle, events, inbox, and outbox.
 * **Lampa list labels**: Array rows now show bounded scalar text, identifying
   object fields when available, and container summaries otherwise.
+* **Lampa tree viewport**: The memory tree now persists its visible window so
+  mouse selection does not recenter lower rows. Initial expansion stops at the
+  root, leaving top-level process sections closed.
+* **Lampa Markdown transcript**: Conversation text now uses Tuika's Markdown
+  formatting at the panel width, and Lampa's terminal backend emits bare web
+  URLs as OSC 8 hyperlinks.
 
 ## 2026-08-10
 

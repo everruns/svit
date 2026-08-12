@@ -71,6 +71,13 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa array rows show bounded scalar previews, prefer conventional object
   identity fields, fall back to the first scalar field, and summarize other
   containers by kind and item count.
+- Lampa opens only the memory-tree root and preserves the visible window when
+  a mouse click selects its bottom row; keyboard navigation scrolls only when
+  the selection leaves that window.
+- Lampa panel focus cycles forward with plain `Tab` and backward with
+  `Shift+Tab`.
+- Lampa assistant messages consume Markdown emphasis delimiters and style bare
+  HTTP(S) URLs as links before the hyperlink backend emits terminal targets.
 
 `just examples` and CI run examples, not only `cargo check --examples`.
 Examples requiring an API key or external service must be separated from the
