@@ -40,23 +40,23 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     );
     assert_eq!(
         process.read("/system/api/operations").unwrap(),
-        Some(&value!(["discover", "exec", "read", "remove", "write"]))
+        Some(value!(["discover", "exec", "read", "remove", "write"]))
     );
     assert_eq!(
         process.read("/system/runtime/language").unwrap(),
-        Some(&Value::String("svit-lisp@2".into()))
+        Some(Value::String("svit-lisp@2".into()))
     );
     assert_eq!(
         process.read("/system/identity/address").unwrap(),
-        Some(&Value::String("svit://local/tests/namespace".into()))
+        Some(Value::String("svit://local/tests/namespace".into()))
     );
     assert_eq!(
         process.read("/system/identity/authenticated").unwrap(),
-        Some(&Value::Bool(false))
+        Some(Value::Bool(false))
     );
     assert_eq!(
         process.read("/system/capabilities").unwrap(),
-        Some(&Value::Array(Vec::new()))
+        Some(Value::Array(Vec::new()))
     );
     assert!(matches!(
         process.write("/system/identity/authenticated", Value::Bool(true)),
@@ -92,7 +92,7 @@ fn thread_state_is_host_managed_and_guest_read_only() {
     assert_eq!(process.version(), version);
     assert_eq!(
         process.read("/thread/format").unwrap(),
-        Some(&value!("test@1"))
+        Some(value!("test@1"))
     );
 
     let oversized = Value::String("x".repeat(process.limits().max_text_bytes + 1));
@@ -139,15 +139,15 @@ fn fork_updates_discoverable_identity_and_lineage_without_changing_parent() {
 
     assert_eq!(
         parent.read("/system/lineage/parent").unwrap(),
-        Some(&Value::Null)
+        Some(Value::Null)
     );
     assert_eq!(
         child.read("/system/lineage/parent").unwrap(),
-        Some(&Value::String("svit://local/tests/lineage-parent".into()))
+        Some(Value::String("svit://local/tests/lineage-parent".into()))
     );
     assert_eq!(
         child.read("/system/identity/address").unwrap(),
-        Some(&Value::String("svit://local/tests/lineage-child".into()))
+        Some(Value::String("svit://local/tests/lineage-child".into()))
     );
 }
 
@@ -425,11 +425,11 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
     child.exec("/lib/emit", value!({"value": 2})).unwrap();
     assert_eq!(
         parent.read("/memory/value").unwrap(),
-        Some(&Value::Integer(1))
+        Some(Value::Integer(1))
     );
     assert_eq!(
         child.read("/memory/value").unwrap(),
-        Some(&Value::Integer(2))
+        Some(Value::Integer(2))
     );
     assert_eq!(parent.outbox().unwrap().len(), 1);
     assert_eq!(child.outbox().unwrap().len(), 1);

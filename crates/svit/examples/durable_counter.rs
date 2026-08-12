@@ -22,7 +22,7 @@ fn main() -> svit::Result<()> {
     let snapshot = process.snapshot()?;
     let mut restored = Process::restore(&snapshot)?;
     assert_eq!(restored.version(), 3);
-    assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(5)));
+    assert_eq!(restored.read("/memory/count")?, Some(Value::Integer(5)));
 
     let third = restored.exec("/lib/counter", value!({"by": 4}))?;
     assert_eq!(third.output, value!({"count": 9}));

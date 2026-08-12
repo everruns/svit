@@ -50,11 +50,11 @@ fn main() -> svit::Result<()> {
     assert_eq!(parent.read("/memory/analysis")?, None);
     assert_eq!(
         growth.read("/memory/analysis/lens")?,
-        Some(&Value::String("growth".into()))
+        Some(Value::String("growth".into()))
     );
     assert_eq!(
         efficiency.read("/memory/analysis/lens")?,
-        Some(&Value::String("efficiency".into()))
+        Some(Value::String("efficiency".into()))
     );
 
     println!("fork_research parent=unchanged growth=23 efficiency=-5");

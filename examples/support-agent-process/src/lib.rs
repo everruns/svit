@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use std::path::PathBuf;
-use svit::{Limits, Message, MessageIntent, Process, Script, SnapshotMount, Svit, Value};
+use svit::{Limits, Message, MessageIntent, Mount, Process, Script, Svit, Value};
 use thiserror::Error;
 
 const TICKET_DESTINATION: &str = "svit://local/support-tickets";
@@ -42,7 +42,7 @@ pub enum SupportError {
 pub async fn support_process(request_id: &str, question: &str) -> Result<Process, SupportError> {
     let limits = Limits::default();
     let docs_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("docs");
-    let support_docs = SnapshotMount::folder(docs_path, &limits)?;
+    let support_docs = Mount::folder(docs_path)?;
 
     let database = turso::Builder::new_local(":memory:").build().await?;
     let connection = database.connect()?;
@@ -58,7 +58,7 @@ pub async fn support_process(request_id: &str, question: &str) -> Result<Process
                  ('demo-account', 1, 1, 'identity-support-review');",
         )
         .await?;
-    let account_context = SnapshotMount::turso_query(
+    let account_context = Mount::turso_query(
         &connection,
         "SELECT account_id, email_verified, authenticator_enrolled, recovery_method \
          FROM account_context",
@@ -132,7 +132,7 @@ pub fn committed_support_result(
         .read("/memory/request/result")?
         .ok_or_else(|| invalid("missing result path"))?;
     let outbox = process.outbox()?;
-    validate_committed_support_result(result, &outbox, request_id)
+    validate_committed_support_result(&result, &outbox, request_id)
 }
 
 fn validate_committed_support_result(

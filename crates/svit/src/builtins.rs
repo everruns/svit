@@ -99,16 +99,23 @@ impl BuiltinContext {
         Self { process }
     }
 
-    /// Reads one committed process value.
+    /// Reads one process value, resolving mount nodes lazily.
     pub fn read(&self, path: &str) -> crate::Result<Option<Value>> {
-        let process = self
-            .process
+        self.process
             .lock()
-            .map_err(|_| crate::Error::BuiltinContextUnavailable)?;
-        process.read(path).map(|value| value.cloned())
+            .map_err(|_| crate::Error::BuiltinContextUnavailable)?
+            .read(path)
     }
 
-    /// Discovers direct children of one committed process path.
+    /// Describes one process or mount path: kind, access, and locality.
+    pub fn stat(&self, path: &str) -> crate::Result<Option<Value>> {
+        self.process
+            .lock()
+            .map_err(|_| crate::Error::BuiltinContextUnavailable)?
+            .stat(path)
+    }
+
+    /// Discovers direct children of one process or mount directory path.
     pub fn discover(&self, path: &str) -> crate::Result<Vec<String>> {
         self.process
             .lock()

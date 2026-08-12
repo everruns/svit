@@ -30,7 +30,7 @@ fn main() -> svit::Result<()> {
     let failure = bounded.exec("/lib/loop", Value::Null);
     assert!(matches!(failure, Err(Error::ExecutionLimitExceeded)));
     assert_eq!(bounded.version(), version_before);
-    assert_eq!(bounded.read("/memory/started")?, Some(&Value::Bool(false)));
+    assert_eq!(bounded.read("/memory/started")?, Some(Value::Bool(false)));
 
     println!("sandbox_limits ambient=denied loop=stopped state=unchanged");
     Ok(())

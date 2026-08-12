@@ -208,8 +208,8 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     fn id(&self) -> &ProcessId;
     /// Returns the committed process version.
     fn version(&self) -> u64;
-    /// Reads one committed process value.
-    fn read(&self, path: &str) -> Result<Option<&Value>>;
+    /// Reads one process value, resolving mount nodes lazily.
+    fn read(&self, path: &str) -> Result<Option<Value>>;
     /// Returns the current committed root hash.
     fn root_hash(&self) -> String;
     /// Durably commits one host write.

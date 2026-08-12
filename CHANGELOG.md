@@ -6,6 +6,21 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Replace construction-time snapshot mounts with virtual mounts. `/mounts/<name>`
+  commits only a descriptor — kind, host-disclosed source, locality, and granted
+  access — while nodes below it resolve through a host-attached `MountProvider`
+  when they are read, discovered, stated, or written. Mount data no longer
+  enters the committed root, so mount size is independent of process and
+  snapshot size.
+- Replace `SnapshotMount` with `Mount`, `MountProvider`, `MountDescriptor`,
+  `MountNode`, `MountPath`, `MountAccess`, and `Locality`. `Mount::folder`,
+  `Mount::writable_folder`, `Mount::value`, `Mount::writable_value`, and
+  `Mount::turso_query` cover the built-in providers.
+- `Process::read` and `DurableProcessHandle::read` return owned values because
+  mount nodes are resolved rather than borrowed from committed state.
+- Bump snapshots to format 7 for the descriptor-only `/mounts` schema and the
+  new `max_mount_entries` and `max_mount_writes` limits.
+
 - Track Everruns `main` and compose the process-owned loop through the
   `everruns-host` backend, canonical event-log, and provider/model contracts.
 - Configure each reasoning loop atomically through one `Reasoner` containing
@@ -29,6 +44,25 @@ All notable changes to Svit will be documented here.
   OSC 8 terminal hyperlinks.
 
 ### Added
+
+- `stat(path)` in Rust, Svit Lisp, the reasoning-loop tool set, and
+  `BuiltinContext`. Every node — committed or mounted — answers with one facts
+  record: kind, granted access, locality (`cache`, `local`, or `remote`),
+  mount, path, source, attachment, and provider facts such as byte size,
+  modification time, and a folder mount's git branch and commit.
+- Writable mounts. A descriptor grants `read`, `write`, or `read-write`.
+  Activation writes and removals below a granted mount are buffered and applied
+  at the commit point after every in-process validation, so a failed activation
+  applies none of them. External sources still cannot join the transaction.
+- `Process::attach_mount` and `Svit::attach_mount` so a host can restore mount
+  authority after a snapshot restore, which never carries providers.
+- Mount-aware `search`: the built-in walks a mount subtree node by node under
+  an independent node budget and reports when a bound truncated the walk.
+- Lampa mounts the current directory read-only as `cwd` and accepts
+  `--mount name=path` and `--mount-rw name=path`. Its `/mounts` tree is browsed
+  lazily — listings on expand, content on selection, bounded per directory —
+  and is discarded on each committed version.
+
 
 - Initial Rust workspace with the `svit` library and Lampa process console.
 - Transactional Svit Lisp activations, backed by Ketos, over one process state root.
@@ -71,6 +105,18 @@ All notable changes to Svit will be documented here.
 - Bounded Lampa array-row previews for scalar and object items.
 
 ### Security
+
+- `TM-CAP-007`: mount paths parse into validated segments that reject
+  traversal, separators, empty, oversized, and NUL content before a provider
+  observes the request.
+- `TM-CAP-008`: mount providers are runtime state and are never serialized; a
+  restored mount reads its descriptor with `attached: false` and fails closed
+  until the host reattaches it.
+- `TM-EFF-006`: mount writes are ordered with the process commit; a failed
+  activation applies none of them.
+- `TM-DOS-010`: mount listings, leaf reads, subtree searches, and console
+  listings are bounded independently of committed-value limits.
+
 
 - Guest environments use a fresh restricted Ketos interpreter with null I/O
   and a module loader that rejects every module.

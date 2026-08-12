@@ -123,7 +123,8 @@ base_hash                   SHA-256 of the canonical base without this field
 Origins have exact meanings:
 
 - `created` contains the initial limits, named memory values, scripts, and
-  mounts needed to construct the conventional version-zero root;
+  mount descriptors needed to construct the conventional version-zero root;
+  mount providers are host runtime state and are never persisted;
 - `fork` references an exact parent address, position, event hash, and root
   hash, then applies child identity, lineage, and empty Lisp-outbox rules;
 - `snapshot` references a validated store snapshot produced for replay

@@ -31,7 +31,7 @@ The initial process exposes one conventional namespace:
 ├── tasks/                  reserved; empty in this slice
 ├── inbox/                  host-managed durable input queue
 ├── children/               reserved; empty in this slice
-├── mounts/                 bounded read-only external snapshots
+├── mounts/                 virtual external resources, resolved lazily
 └── system/                 read-only runtime metadata
     ├── identity            logical address, explicitly unauthenticated
     ├── capabilities        empty in this slice
@@ -54,31 +54,64 @@ Each `/bin/<name>` record contains a description, input schema, output contract,
 effect class, and limits. `/thread` and `/bin` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
 through host APIs; `/tasks` and `/children` remain reserved and empty.
-Each mount contains `kind`, `mode: snapshot-read-only`, and bounded `data`.
-Folder mounts contain nested maps with UTF-8 file leaves; Turso mounts contain
-maps for the rows returned by one host-selected query. The guest may reflect
-over memory, scripts, and imported mount data. Host paths, SQL authority,
-connections, enforcement state, and host secrets never appear there.
+### Mounts
+
+A mount is a virtual namespace, not a copy. `/mounts/<name>` commits only a
+descriptor — `kind`, host-disclosed `source`, `locality`, and granted `access`
+— while nodes below it resolve through a host-attached `MountProvider` at the
+moment they are read, discovered, stated, or written. No source data enters the
+committed root, so mount size is independent of process size and snapshot cost.
+
+Every node answers `stat` with the same facts record: `kind`
+(`directory`, `leaf`, or `missing`), `access`, `locality`, `mount`, `path`,
+`source`, `attached`, and provider `facts` such as byte size, modification
+time, or the folder's git branch and commit. Committed nodes answer the same
+shape with `locality: cache`, so one vocabulary describes the whole tree and a
+caller can weigh the cost of a read before making it.
+
+`locality` is the cost class, not a guarantee: `cache` is already in host
+memory, `local` is host-machine I/O, and `remote` is network-bound and
+fallible. A materialized Turso query reports `cache` rather than claiming a
+live remote view.
+
+Reading a node returns its content when the provider has one and its facts
+otherwise; a folder directory has no content, while a cached value node does.
+Reading a mount root always returns facts, which is where mount metadata lives.
+
+`access` is `read`, `write`, or `read-write`. Writes and removals below a
+granted mount reach the external source. During an activation they are buffered
+and applied at the commit point, after every in-process validation, so a failed
+activation leaves the source untouched. Mount sources are external systems, so
+this is effect ordering, not distributed atomicity.
+
+Providers are host authority and are never serialized. Restoring a snapshot
+restores mount identity without mount authority: the root still reads its
+descriptor with `attached: false`, and every other operation fails closed until
+the host calls `attach_mount`. Fork shares the providers the host attached,
+because attaching them was the host's decision.
+
 The process builder assembles initial memory from separately named items into a
 text-keyed map and initial scripts through `library(name, script)` so both
-durable namespaces are explicit at the setup boundary. It attaches a prepared
-`SnapshotMount` through `mount(name, mount)`; import finishes before process
-construction and activation.
-Rust callers, the Svit reasoning loop, and Svit Lisp use the same five generic
+durable namespaces are explicit at the setup boundary. It attaches a `Mount`
+through `mount(name, mount)`.
+Rust callers, the Svit reasoning loop, and Svit Lisp use the same six generic
 process operations:
 
 ```text
 discover(path)
 read(path)
+stat(path)
 write(path, value)
 remove(path)
 exec(path, input)
 ```
 
 `discover` returns deterministic immediate child names across memory, scripts,
-mount snapshots, reserved nodes, and system state at every map or array depth. `read` returns a
-value. `write` and `remove` modify `/memory` or one typed `/lib/<name>` entry.
-`/mounts` and `/bin` are read-only. The agent-facing `exec` resolves
+mount directories, reserved nodes, and system state at every map or array
+depth. `read` returns a value. `stat` returns the facts record for one node.
+`write` and `remove` modify `/memory`, one typed `/lib/<name>` entry, or a leaf
+below a mount whose descriptor grants writes. The `/mounts` descriptor map
+itself and `/bin` are read-only. The agent-facing `exec` resolves
 `/lib/<name>` to a transactional script activation or `/bin/<name>` to an
 attached built-in. `Process::exec` and Svit Lisp accept only `/lib` paths
 because a serializable process does not own host built-in authority.

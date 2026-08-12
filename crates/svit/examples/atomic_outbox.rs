@@ -23,7 +23,7 @@ fn main() -> svit::Result<()> {
     let failure = payer.exec("/lib/payment", value!({"amount": 25, "fail": true}));
     assert!(matches!(failure, Err(Error::Script(_))));
     assert_eq!(payer.version(), version_before);
-    assert_eq!(payer.read("/memory/balance")?, Some(&Value::Integer(100)));
+    assert_eq!(payer.read("/memory/balance")?, Some(Value::Integer(100)));
     assert!(payer.outbox()?.is_empty());
 
     let committed = payer.exec("/lib/payment", value!({"amount": 25, "fail": false}))?;

@@ -23,8 +23,8 @@ use tokio::task::JoinHandle;
 
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
-    Activation, ActivationHook, Builtins, Limits, MessageIntent, Process, ProcessBuilder,
-    ProcessId, Reasoner, Script, SnapshotMount, Value,
+    Activation, ActivationHook, Builtins, Limits, MessageIntent, Mount, Process, ProcessBuilder,
+    ProcessId, Reasoner, Script, Value,
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
@@ -311,14 +311,31 @@ impl Svit {
             .discover(path)?)
     }
 
-    /// Reads a cloned committed value from the process.
+    /// Reads one owned value from the process, resolving mounts lazily.
     pub fn read(&self, path: &str) -> SvitResult<Option<Value>> {
         Ok(self
             .process
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
-            .read(path)?
-            .cloned())
+            .read(path)?)
+    }
+
+    /// Returns the facts record describing one process or mount path.
+    pub fn stat(&self, path: &str) -> SvitResult<Option<Value>> {
+        Ok(self
+            .process
+            .lock()
+            .map_err(|_| SvitError::ProcessUnavailable)?
+            .stat(path)?)
+    }
+
+    /// Attaches or replaces one mount provider on the running process.
+    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> SvitResult<()> {
+        Ok(self
+            .process
+            .lock()
+            .map_err(|_| SvitError::ProcessUnavailable)?
+            .attach_mount(name, mount)?)
     }
 
     /// Reads one owned value and its committed process version atomically.
@@ -327,7 +344,7 @@ impl Svit {
             .process
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?;
-        Ok((process.read(path)?.cloned(), process.version()))
+        Ok((process.read(path)?, process.version()))
     }
 
     /// Commits a host write through the process path contract.
@@ -607,8 +624,8 @@ impl SvitBuilder {
         self
     }
 
-    /// Adds a bounded read-only process mount.
-    pub fn mount(mut self, name: impl Into<String>, mount: SnapshotMount) -> Self {
+    /// Attaches a named virtual mount below `/mounts`.
+    pub fn mount(mut self, name: impl Into<String>, mount: Mount) -> Self {
         self.process = self.process.mount(name, mount);
         self
     }
@@ -907,16 +924,21 @@ impl Capability for ProcessCapability {
         let mut contribution = match &self.access {
             ReasoningAccess::Full => {
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, write, remove, and exec. Discover built-in manuals under \
-                 /bin; run /bin built-ins or /lib scripts through exec. /thread/system_prompt, \
+                 with discover, read, stat, write, remove, and exec. Discover built-in manuals \
+                 under /bin; run /bin built-ins or /lib scripts through exec. External resources \
+                 appear under /mounts and are resolved one node at a time: discover a mount \
+                 directory, stat a node to learn its kind, granted access, and locality (cache, \
+                 local, or remote), then read the leaf you need. /thread/system_prompt, \
                  /thread/messages, and /thread/events are durable host-managed runtime projections."
                     .into()
             }
             ReasoningAccess::ReadExec(allowed_scripts) => format!(
                 "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, and exec. Discover built-in manuals under /bin. Run only \
-                 these /lib scripts through exec: {}. /thread/system_prompt, /thread/messages, and \
-                 /thread/events are durable host-managed runtime projections.",
+                 with discover, read, stat, and exec. Discover built-in manuals under /bin. \
+                 External resources appear under /mounts and are resolved one node at a time \
+                 through discover, stat, and read. Run only these /lib scripts through exec: {}. \
+                 /thread/system_prompt, /thread/messages, and /thread/events are durable \
+                 host-managed runtime projections.",
                 allowed_scripts
                     .iter()
                     .cloned()
@@ -984,8 +1006,37 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                 match process.read(path) {
                     Ok(value) => tool_json(json!({
                         "path": path,
-                        "value": value.map(Value::to_json),
+                        "value": value.map(|value| value.to_json()),
                         "version": process.version(),
+                    })),
+                    Err(error) => tool_error(error.to_string()),
+                }
+            }
+        },
+    );
+
+    let stat_process = capability.process.clone();
+    let stat = FunctionTool::new(
+        "stat",
+        "Describe one Svit process or mount path: kind, granted access, \
+         locality (cache, local, or remote), and source facts. Use it before \
+         reading an unfamiliar mount node.",
+        json!({
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"]
+        }),
+        move |arguments| {
+            let process = stat_process.clone();
+            async move {
+                let path = arguments["path"].as_str().unwrap_or_default();
+                let Ok(process) = process.lock() else {
+                    return tool_error("Svit process lock is unavailable");
+                };
+                match process.stat(path) {
+                    Ok(value) => tool_json(json!({
+                        "path": path,
+                        "value": value.map(|value| value.to_json()),
                     })),
                     Err(error) => tool_error(error.to_string()),
                 }
@@ -1038,7 +1089,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     );
 
     if matches!(capability.access, ReasoningAccess::ReadExec(_)) {
-        return vec![discover, read, exec];
+        return vec![discover, read, stat, exec];
     }
 
     let write_process = capability.process.clone();
@@ -1097,7 +1148,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
         },
     );
 
-    vec![discover, read, write, remove, exec]
+    vec![discover, read, stat, write, remove, exec]
 }
 
 fn execute_script(

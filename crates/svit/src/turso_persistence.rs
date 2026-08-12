@@ -13,7 +13,7 @@ use crate::persistence::{
     DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
     ProcessStore,
 };
-use crate::{Activation, Error, Process, ProcessId, Result, Value};
+use crate::{Activation, Error, Mount, Process, ProcessId, Result, Value};
 
 const SCHEMA_VERSION: &str = "1";
 const BASE_FORMAT: &str = "svit-base@1";
@@ -1148,9 +1148,36 @@ impl DurableProcess {
         self.process.version()
     }
 
-    /// Reads one committed process value.
-    pub fn read(&self, path: &str) -> Result<Option<&Value>> {
+    /// Reads one process value, resolving mount nodes lazily.
+    pub fn read(&self, path: &str) -> Result<Option<Value>> {
         self.process.read(path)
+    }
+
+    /// Describes one process or mount path.
+    pub fn stat(&self, path: &str) -> Result<Option<Value>> {
+        self.process.stat(path)
+    }
+
+    /// Reattaches one mount provider to a resumed durable process.
+    ///
+    /// Providers are never persisted, so a resumed process resolves nothing
+    /// below its mount descriptors until the host attaches them again. The
+    /// mount's identity must match the committed descriptor: changing it is a
+    /// state transition, which a durable process only accepts through a
+    /// recorded write.
+    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> Result<()> {
+        let name = name.into();
+        let descriptor = mount.provider().descriptor().to_value();
+        let recorded = match self.process.read("/mounts")? {
+            Some(Value::Map(mounts)) => mounts.get(&name).cloned(),
+            _ => None,
+        };
+        if recorded.as_ref() != Some(&descriptor) {
+            return Err(Error::InvalidPersistence(format!(
+                "mount identity for {name} differs from the persisted descriptor"
+            )));
+        }
+        self.process.attach_mount(name, mount)
     }
 
     /// Returns the current committed root hash.
@@ -1164,7 +1191,6 @@ impl DurableProcess {
         candidate.write(path, value)?;
         let value = candidate
             .read(path)?
-            .cloned()
             .ok_or_else(|| Error::InvalidPersistence("committed write is missing".into()))?;
         self.commit_candidate(
             candidate,
@@ -1315,7 +1341,7 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::version(self)
     }
 
-    fn read(&self, path: &str) -> Result<Option<&Value>> {
+    fn read(&self, path: &str) -> Result<Option<Value>> {
         DurableProcess::read(self, path)
     }
 

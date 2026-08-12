@@ -1,7 +1,7 @@
 #![cfg(feature = "persistence-turso")]
 
 use svit::{
-    DurableProcessHandle, Error, EventQuery, Process, ProcessId, ProcessStore, Script,
+    DurableProcessHandle, Error, EventQuery, Mount, Process, ProcessId, ProcessStore, Script,
     TursoProcessStore, Value, value,
 };
 
@@ -38,8 +38,8 @@ async fn committed_events_resume_without_reexecuting_guest_code() {
         .await
         .unwrap();
     assert_eq!(resumed.version(), 1);
-    assert_eq!(resumed.read("/memory/count").unwrap(), Some(&value!(2)));
-    assert_eq!(resumed.read("/memory/last").unwrap(), Some(&value!(2)));
+    assert_eq!(resumed.read("/memory/count").unwrap(), Some(value!(2)));
+    assert_eq!(resumed.read("/memory/last").unwrap(), Some(value!(2)));
 
     let events = resumed
         .query(EventQuery::new().path_prefix("/memory"))
@@ -74,7 +74,7 @@ async fn local_database_reopens_by_address() {
     let resumed = ProcessStore::resume(&reopened, &address).await.unwrap();
     assert_eq!(
         resumed.read("/memory/state").unwrap(),
-        Some(&value!("committed"))
+        Some(value!("committed"))
     );
 }
 
@@ -92,8 +92,8 @@ async fn fork_references_history_until_the_child_is_cut() {
 
     let mut child = parent.fork("svit://local/persistence/child").await.unwrap();
     child.write("/memory/count", value!(2)).await.unwrap();
-    assert_eq!(parent.read("/memory/count").unwrap(), Some(&value!(1)));
-    assert_eq!(child.read("/memory/count").unwrap(), Some(&value!(2)));
+    assert_eq!(parent.read("/memory/count").unwrap(), Some(value!(1)));
+    assert_eq!(child.read("/memory/count").unwrap(), Some(value!(2)));
 
     assert!(parent.cut().await.is_err());
     let child_snapshot = child.snapshot().await.unwrap();
@@ -113,11 +113,11 @@ async fn fork_references_history_until_the_child_is_cut() {
         .unwrap();
     assert_eq!(
         resumed_parent.read("/memory/count").unwrap(),
-        Some(&value!(1))
+        Some(value!(1))
     );
     assert_eq!(
         resumed_child.read("/memory/count").unwrap(),
-        Some(&value!(2))
+        Some(value!(2))
     );
     assert!(
         resumed_parent
@@ -170,11 +170,11 @@ async fn stale_writer_cannot_publish_or_mutate_its_local_process() {
         Err(Error::PersistenceConflict)
     ));
     assert_eq!(stale.version(), 0);
-    assert_eq!(stale.read("/memory/count").unwrap(), Some(&value!(0)));
+    assert_eq!(stale.read("/memory/count").unwrap(), Some(value!(0)));
 
     let resumed = store.resume("svit://local/persistence/cas").await.unwrap();
     assert_eq!(resumed.version(), 1);
-    assert_eq!(resumed.read("/memory/count").unwrap(), Some(&value!(1)));
+    assert_eq!(resumed.read("/memory/count").unwrap(), Some(value!(1)));
 }
 
 #[tokio::test]
@@ -250,4 +250,49 @@ async fn every_process_transition_has_a_replayable_uniform_event() {
             .output,
         value!("ready")
     );
+}
+
+#[tokio::test]
+// THREAT[TM-CAP-008]
+async fn a_resumed_process_reattaches_mount_authority_explicitly() {
+    let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mount-data");
+    let store = TursoProcessStore::memory().await.unwrap();
+    let process = Process::builder("svit://local/persistence/mounts")
+        .unwrap()
+        .mount("files", Mount::folder(&folder).unwrap())
+        .build()
+        .unwrap();
+    let durable = store.create(process).await.unwrap();
+    drop(durable);
+
+    let mut resumed = store
+        .resume("svit://local/persistence/mounts")
+        .await
+        .unwrap();
+
+    // Descriptors persist; providers do not.
+    assert_eq!(
+        resumed.read("/mounts/files").unwrap().unwrap().to_json()["attached"],
+        false
+    );
+    assert!(matches!(
+        resumed.read("/mounts/files/greeting.txt"),
+        Err(Error::MountUnavailable(_))
+    ));
+
+    // A mount with different identity is a state transition, not a reattach.
+    assert!(matches!(
+        resumed.attach_mount("files", Mount::writable_folder(&folder).unwrap()),
+        Err(Error::InvalidPersistence(_))
+    ));
+
+    resumed
+        .attach_mount("files", Mount::folder(&folder).unwrap())
+        .unwrap();
+
+    assert_eq!(
+        resumed.read("/mounts/files/greeting.txt").unwrap(),
+        Some(value!("hello from a real folder\n"))
+    );
+    assert_eq!(resumed.version(), 0);
 }

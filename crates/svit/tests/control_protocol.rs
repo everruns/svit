@@ -79,7 +79,7 @@ fn concurrent_clients_cannot_commit_the_same_process_version() {
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
         restored.read("/memory/count").unwrap(),
-        Some(&Value::Integer(1))
+        Some(Value::Integer(1))
     );
 }
 
@@ -115,7 +115,7 @@ fn version_cas_prevents_duplicate_commit_after_receipt_eviction() {
     let restored = Process::restore(&controller.snapshot().unwrap()).unwrap();
     assert_eq!(
         restored.read("/memory/count").unwrap(),
-        Some(&Value::Integer(3))
+        Some(Value::Integer(3))
     );
 }
 

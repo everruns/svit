@@ -19,10 +19,13 @@ cargo run -p svit --example builtins
 preconditions: one commits, a stale request conflicts without mutation, and a
 retry against the observed version commits exactly once.
 
-`mounted_resources` imports a real UTF-8 folder and the result of a host-chosen
-Turso query as bounded, read-only snapshots. The script reads both through the
-ordinary `/mounts` hierarchy. No host path, database connection, or SQL
-authority enters the activation.
+`mounted_resources` mounts a real UTF-8 folder, the result of a host-chosen
+Turso query, and a writable scratch folder. Scripts read and stat them through
+the ordinary `/mounts` hierarchy, one node at a time; the snapshot holds mount
+descriptors rather than mount data. A granted write reaches the real folder at
+the activation's commit point, while the read-only mount refuses the same
+write. No host path, database connection, or SQL authority enters the
+activation.
 
 `process_reasoning` runs the simulated Everruns driver through `svit::Svit`.
 It obtains inbox and outbox handles, starts the loop, submits one durable
@@ -51,7 +54,7 @@ Commit derives those fields from committed state, writes the result exactly
 once, and atomically appends an authorized ticket intent. Generic writes,
 removes, and other scripts are not available to the model.
 
-The process exposes imported data under `/mounts/support_docs` and
+The process exposes mounted data under `/mounts/support_docs` and
 `/mounts/account_context`, request and committed result state under
 `/memory/request`, scripts under `/lib`, and the queued ticket under
 `/system/outbox`.

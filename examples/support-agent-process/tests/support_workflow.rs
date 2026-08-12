@@ -51,11 +51,11 @@ async fn commit_is_idempotent_and_uses_retrieved_sources() {
         process
             .read("/memory/request/retrieval/account/recovery_method")
             .unwrap(),
-        Some(&value!("identity-support-review"))
+        Some(value!("identity-support-review"))
     );
     assert!(matches!(
         process
-            .read("/mounts/support_docs/data/account-recovery.md")
+            .read("/mounts/support_docs/account-recovery.md")
             .unwrap(),
         Some(svit::Value::String(document))
             if document.contains("identity verification is required")

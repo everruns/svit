@@ -51,9 +51,10 @@ and converts all results to bounded Svit values before commit.
 | `(value-array value ...)` | Construct a persistent array, including an empty array |
 | `(value-null? value)` | Test whether a value is the persistent null value |
 | `(discover path)` | List immediate children at an absolute process path |
-| `(read path)` | Read from the transactional process hierarchy, including mount snapshots |
-| `(write path value)` | Stage a `/memory` or typed `/lib/<name>` update |
-| `(remove path)` | Stage a `/memory` or `/lib/<name>` removal |
+| `(read path)` | Read from the transactional process hierarchy, resolving mount nodes lazily |
+| `(stat path)` | Describe one node: kind, granted access, locality, and source facts |
+| `(write path value)` | Stage a `/memory`, typed `/lib/<name>`, or granted mount-leaf update |
+| `(remove path)` | Stage a `/memory`, `/lib/<name>`, or granted mount-node removal |
 | `(exec script input)` | Execute a named script inside the same activation transaction |
 | `(log-info! message fields?)` | Append a bounded activation log record |
 | `(send! address message)` | Buffer a message intent for atomic commit |
@@ -80,11 +81,21 @@ by Svit. Script records never enter the guest data model.
 ## Process operation semantics
 
 All process operations use absolute paths. `discover` and `read` traverse the
-transactional hierarchy. Folder and Turso query data below `/mounts` is a
-recorded, read-only snapshot. `write` and `remove` mutate `/memory` values or one
-typed `/lib/<name>` entry; `/system` and reserved nodes are read-only. A
-library write is a map with required text `source` and optional text
-`documentation`.
+transactional hierarchy. `stat` returns the facts record for one node: `kind`,
+`access`, `locality`, `mount`, `path`, `source`, `attached`, and provider
+`facts`.
+
+Paths below `/mounts/<name>` resolve through the host-attached provider at call
+time rather than from committed state. One `read` resolves one node under the
+activation's limits: a leaf returns its content, a directory returns its facts,
+and `discover` lists its children. A mount with no attached provider fails
+closed.
+
+`write` and `remove` mutate `/memory` values, one typed `/lib/<name>` entry, or
+a leaf below a mount whose descriptor grants writes; `/system` and reserved
+nodes are read-only. A library write is a map with required text `source` and
+optional text `documentation`. Mount writes are buffered for the activation and
+applied at the commit point, so a failed activation applies none of them.
 
 Nested `exec` uses the same working memory, staged library changes, logs,
 message intents, and activation deadline. It has an independent maximum depth
@@ -96,9 +107,11 @@ failure before commit discards the complete activation working copy.
 ## Isolation and authority
 
 The runtime installs `GlobalIo::null()` and `NullModuleLoader`, and creates a
-fresh interpreter for every activation. Guest code may read imported mount
-values but receives no live filesystem or database authority and no ambient filesystem,
-network, environment, host process, module, clock, or randomness capability.
+fresh interpreter for every activation. Guest code reaches mount sources only
+through host-attached providers under the descriptor's granted access. It never
+receives a path, handle, connection, or credential, and has no ambient
+filesystem, network, environment, host process, module, clock, or randomness
+capability.
 Rust functions capture only the process working copy and bounded activation
 buffers.
 

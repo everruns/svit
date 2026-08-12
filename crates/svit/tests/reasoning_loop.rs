@@ -939,7 +939,7 @@ async fn builtin_spawn_runs_and_retains_an_isolated_child_svit() {
     let child = Process::restore(&snapshot).unwrap();
     assert_eq!(
         child.read("/system/lineage/parent").unwrap(),
-        Some(&value!("svit://local/native-parent"))
+        Some(value!("svit://local/native-parent"))
     );
     let messages = child.read("/thread/messages").unwrap().unwrap().to_json();
     assert!(messages.to_string().contains("analyze this"));

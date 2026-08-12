@@ -91,7 +91,7 @@ The default features are:
 | Feature | Purpose |
 | --- | --- |
 | `persistence-turso` | Local Turso event-store implementation and its concrete event, snapshot, and process-handle types |
-| `turso-mount` | Host-side import of a bounded Turso query as a read-only snapshot mount |
+| `turso-mount` | Host-side materialization of a bounded Turso query as a mount |
 
 Build with `--no-default-features` to compile the process runtime and
 persistence traits without Turso. Either Turso feature can be enabled
@@ -116,7 +116,11 @@ objects prefer an identifying field such as `name`, `operation`, `type`, or
 `id`, and other containers show their kind and item count.
 
 The middle panel includes `/thread`, `/memory`, scripts, inbox, mounts, and
-system state. Initially only `/` is expanded, leaving its top-level children
+system state. Lampa mounts the current directory read-only as `cwd` and accepts
+`--mount name=path` and `--mount-rw name=path` for additional roots. Mount rows
+are labelled with their locality and browsed lazily: a directory is listed when
+you expand it and a node is read when you select it, so opening the console
+never walks the mounted source. Initially only `/` is expanded, leaving its top-level children
 closed. `Tab` moves focus forward between chat input, memory navigation, and
 preview scrolling; `Shift+Tab` moves backward. In the memory panel, use arrows
 or `j`/`k` to move, `Right` to expand, `Left` to collapse or move to the parent,
@@ -282,10 +286,16 @@ just support-agent-svit
 
 ## What works now
 
-- One discoverable process namespace containing host-managed `/thread`, mutable `/memory`, named
-  `/lib` scripts, read-only folder and Turso query snapshots under `/mounts`,
-  reserved `/tasks` and `/children`, a host-managed durable `/inbox`, plus read-only `/system`
-  metadata and the outbox.
+- One discoverable process namespace containing host-managed `/thread`, mutable
+  `/memory`, named `/lib` scripts, virtual external resources under `/mounts`,
+  reserved `/tasks` and `/children`, a host-managed durable `/inbox`, plus
+  read-only `/system` metadata and the outbox.
+- Virtual mounts: `/mounts/<name>` commits a descriptor, and folder or
+  materialized query nodes below it resolve lazily through a host-attached
+  provider. `stat(path)` reports each node's kind, granted access, locality
+  (`cache`, `local`, or `remote`), and source facts such as size, modification
+  time, and a folder's git branch and commit. Writes below a mount that grants
+  them apply at the activation's commit point.
 - Named script installation, inspection, replacement, and removal through the
   same generic path operations used for memory.
 - Transactional activations: memory, staged scripts, and message intents all

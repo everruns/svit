@@ -27,9 +27,9 @@
   schema, output, effect class, and limits. `/bin` is refreshed on resume and
   never grants authority.
 
-The current implementation slice is local and in memory. It supports bounded,
-read-only snapshot mounts imported from a folder or host-selected Turso query.
-Scheduling, remote message delivery, durable live projections, guest-script
+The current implementation slice is local and in memory. It supports virtual
+mounts over a real folder or a materialized host-selected Turso query,
+resolved one node at a time. Scheduling, remote message delivery, durable live projections, guest-script
 external capabilities, distributed identity, and production isolation are
 deferred. Optional built-ins remain outside Svit Lisp and process
 transactions.
@@ -37,6 +37,8 @@ transactions.
 `/thread` contains host-managed, guest-readable loop and replay state. The
 namespace reserves `/tasks` and `/children`; `/inbox` is a host-managed durable
 input queue. `/mounts` contains
-read-only snapshot records with `kind`, `mode`, and `data`. `/system/identity`
+one descriptor per mount with `kind`, `source`, `locality`, and `access`; nodes
+below a descriptor resolve lazily through the host-attached provider, and
+`stat(path)` reports each node's kind, access, locality, and source facts. `/system/identity`
 contains a logical address marked `authenticated: false`; it grants no
 authority.

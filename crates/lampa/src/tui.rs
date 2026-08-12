@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::time::Duration;
 
@@ -16,6 +16,14 @@ const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
 const MAX_INLINE_VALUE_BYTES: usize = 160;
 const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
+/// Mount children shown under one directory row.
+///
+/// A mount directory has no committed size, so the browser bounds what it
+/// lists rather than trusting the source.
+const MAX_MOUNT_CHILDREN: usize = 200;
+
+/// Placeholder for a mount node the browser has not resolved yet.
+static PENDING_VALUE: Value = Value::Null;
 
 fn lampa_theme() -> Theme {
     let text = Color::Rgb(230, 230, 232);
@@ -109,14 +117,122 @@ fn panel_body(rect: Rect) -> Rect {
 struct TreeRow {
     label: String,
     path: String,
-    locator: Vec<PathPart>,
     expandable: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PathPart {
-    Key(String),
-    Index(usize),
+/// Lazily resolved view of the `/mounts` subtree.
+///
+/// Mount data is not part of the committed root, so the console resolves one
+/// node at a time: listings when a directory is opened, content when a node is
+/// selected. Nothing below `/mounts` is fetched until it is on screen.
+#[derive(Default)]
+struct MountBrowser {
+    children: BTreeMap<String, Vec<String>>,
+    directories: BTreeMap<String, bool>,
+    values: BTreeMap<String, Value>,
+    truncated: BTreeSet<String>,
+}
+
+impl MountBrowser {
+    fn clear(&mut self) {
+        self.children.clear();
+        self.directories.clear();
+        self.values.clear();
+        self.truncated.clear();
+    }
+
+    fn is_directory(&self, path: &str) -> Option<bool> {
+        self.directories.get(path).copied()
+    }
+
+    fn children(&self, path: &str) -> &[String] {
+        self.children.get(path).map(Vec::as_slice).unwrap_or(&[])
+    }
+
+    fn value(&self, path: &str) -> Option<&Value> {
+        self.values.get(path)
+    }
+
+    /// Resolves exactly what the current tree and selection need.
+    fn resolve(&mut self, svit: &Svit, expanded: &BTreeSet<String>, root: &Value, selected: &str) {
+        if expanded.contains("/mounts")
+            && let Some(Value::Map(mounts)) = value_at_path(root, "/mounts")
+        {
+            for name in mounts.keys() {
+                self.resolve_kind(svit, &format!("/mounts/{name}"));
+            }
+        }
+        // Expanded paths iterate parent-before-child, so a directory's kind is
+        // always known by the time its own listing is requested.
+        for path in expanded.iter().filter(|path| is_mount_path(path)) {
+            if self.children.contains_key(path) || self.is_directory(path) != Some(true) {
+                continue;
+            }
+            let mut names = match svit.discover(path) {
+                Ok(names) => names,
+                Err(error) => {
+                    self.children.insert(path.clone(), Vec::new());
+                    self.values
+                        .insert(path.clone(), Value::String(error.to_string()));
+                    continue;
+                }
+            };
+            if names.len() > MAX_MOUNT_CHILDREN {
+                names.truncate(MAX_MOUNT_CHILDREN);
+                self.truncated.insert(path.clone());
+            }
+            for name in &names {
+                self.resolve_kind(svit, &format!("{path}/{name}"));
+            }
+            self.children.insert(path.clone(), names);
+        }
+        if is_mount_path(selected) && !self.values.contains_key(selected) {
+            let value = match svit.read(selected) {
+                Ok(Some(value)) => value,
+                Ok(None) => Value::Null,
+                Err(error) => Value::String(error.to_string()),
+            };
+            self.values.insert(selected.to_owned(), value);
+        }
+    }
+
+    fn resolve_kind(&mut self, svit: &Svit, path: &str) {
+        if self.directories.contains_key(path) {
+            return;
+        }
+        let directory = matches!(
+            svit.stat(path),
+            Ok(Some(Value::Map(ref facts)))
+                if facts.get("kind") == Some(&Value::String("directory".into()))
+        );
+        self.directories.insert(path.to_owned(), directory);
+    }
+}
+
+fn is_mount_path(path: &str) -> bool {
+    path.starts_with("/mounts/")
+}
+
+fn value_at_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
+    if path == "/" {
+        return Some(root);
+    }
+    let mut current = root;
+    for segment in path.trim_start_matches('/').split('/') {
+        current = match current {
+            Value::Map(values) => values.get(segment)?,
+            Value::Array(values) => values.get(segment.parse::<usize>().ok()?)?,
+            _ => return None,
+        };
+    }
+    Some(current)
+}
+
+fn parent_path(path: &str) -> String {
+    match path.rsplit_once('/') {
+        Some(("", _)) | None => "/".into(),
+        Some((parent, _)) => parent.into(),
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -136,6 +252,7 @@ struct App {
     tree: SelectState,
     root: Value,
     expanded: BTreeSet<String>,
+    mounts: MountBrowser,
     memory_viewport_height: usize,
     memory_window_start: usize,
     panel_bounds: PanelBounds,
@@ -157,12 +274,14 @@ impl App {
         let mut preview_scroll = ScrollState::new();
         preview_scroll.jump_to_top();
         let expanded = BTreeSet::from(["/".into()]);
-        let rows = tree_rows(&root, &expanded);
+        let mounts = MountBrowser::default();
+        let rows = tree_rows(&root, &expanded, &mounts);
         Self {
             focus: Focus::Composer,
             tree: SelectState::new(),
             root,
             expanded,
+            mounts,
             memory_viewport_height: 1,
             memory_window_start: 0,
             panel_bounds: PanelBounds::default(),
@@ -186,20 +305,35 @@ impl App {
     }
 
     fn selected_value(&self) -> &Value {
-        self.selected()
-            .locator
-            .iter()
-            .fold(&self.root, |value, part| match (value, part) {
-                (Value::Map(values), PathPart::Key(key)) => &values[key],
-                (Value::Array(values), PathPart::Index(index)) => &values[*index],
-                _ => unreachable!("tree locators are built from the current root"),
-            })
+        let path = &self.selected().path;
+        if is_mount_path(path) {
+            return self.mounts.value(path).unwrap_or(&PENDING_VALUE);
+        }
+        value_at_path(&self.root, path).unwrap_or(&PENDING_VALUE)
+    }
+
+    /// Fetches the mount nodes the current tree and selection need.
+    ///
+    /// Called once per frame so mount reads follow what is on screen instead
+    /// of walking the whole source.
+    fn resolve_mounts(&mut self, svit: &Svit) {
+        let selected = self.selected().path.clone();
+        let before = self.mounts.children.len() + self.mounts.values.len();
+        self.mounts
+            .resolve(svit, &self.expanded, &self.root, &selected);
+        if before != self.mounts.children.len() + self.mounts.values.len() {
+            self.preview_cache = None;
+            self.rebuild_tree(&selected);
+        }
     }
 
     fn refresh_process(&mut self, root: Value, version: u64) {
         let selected_path = self.selected().path.clone();
         self.root = root;
-        self.rows = tree_rows(&self.root, &self.expanded);
+        // Mount sources are external; a new committed version is the natural
+        // point to stop trusting what was resolved earlier.
+        self.mounts.clear();
+        self.rows = tree_rows(&self.root, &self.expanded, &self.mounts);
         self.preview_cache = None;
         let selected = self.visible_index_or_ancestor(&selected_path);
         self.tree.select(Some(selected));
@@ -221,7 +355,7 @@ impl App {
     }
 
     fn rebuild_tree(&mut self, selected_path: &str) {
-        self.rows = tree_rows(&self.root, &self.expanded);
+        self.rows = tree_rows(&self.root, &self.expanded, &self.mounts);
         self.tree
             .select(Some(self.visible_index_or_ancestor(selected_path)));
         self.keep_tree_selection_visible();
@@ -245,12 +379,11 @@ impl App {
             self.rebuild_tree(&path);
             return;
         }
-        let locator = &self.selected().locator;
-        if locator.is_empty() {
+        if path == "/" {
             return;
         }
-        let parent = &locator[..locator.len() - 1];
-        if let Some(index) = self.rows.iter().position(|row| row.locator == parent) {
+        let parent = parent_path(&path);
+        if let Some(index) = self.rows.iter().position(|row| row.path == parent) {
             self.tree.select(Some(index));
             self.keep_tree_selection_visible();
         }
@@ -595,6 +728,9 @@ fn run_terminal(
             while let Ok(message) = outbox.try_recv() {
                 app.push_assistant(message);
             }
+            // Mounts resolve here, once per frame, so the console fetches only
+            // the nodes the visible tree and current selection need.
+            app.resolve_mounts(svit);
 
             terminal
                 .draw(|frame| {
@@ -683,7 +819,7 @@ fn expandable_paths(root: &Value) -> BTreeSet<String> {
     paths
 }
 
-fn tree_rows(root: &Value, expanded: &BTreeSet<String>) -> Vec<TreeRow> {
+fn tree_rows(root: &Value, expanded: &BTreeSet<String>, mounts: &MountBrowser) -> Vec<TreeRow> {
     let root_marker = if has_children(root) {
         if expanded.contains("/") {
             "▾ "
@@ -696,53 +832,117 @@ fn tree_rows(root: &Value, expanded: &BTreeSet<String>) -> Vec<TreeRow> {
     let mut rows = vec![TreeRow {
         label: format!("{root_marker}/"),
         path: "/".into(),
-        locator: Vec::new(),
         expandable: has_children(root),
     }];
     if expanded.contains("/") {
-        flatten_memory(root, "", "", true, &[], expanded, &mut rows);
+        flatten_memory(root, "/", "", true, expanded, mounts, &mut rows);
     }
     rows
 }
 
+/// One displayable child of a tree node.
+struct TreeChild {
+    label: String,
+    path: String,
+    expandable: bool,
+}
+
+/// Lists the children of one path from committed state or the mount browser.
+fn tree_children(
+    root: &Value,
+    path: &str,
+    expanded: &BTreeSet<String>,
+    mounts: &MountBrowser,
+) -> Vec<TreeChild> {
+    if is_mount_path(path) {
+        let mut children = mounts
+            .children(path)
+            .iter()
+            .map(|name| {
+                let child_path = format!("{path}/{name}");
+                TreeChild {
+                    label: name.clone(),
+                    expandable: mounts.is_directory(&child_path).unwrap_or(false),
+                    path: child_path,
+                }
+            })
+            .collect::<Vec<_>>();
+        if mounts.truncated.contains(path) {
+            children.push(TreeChild {
+                label: format!("… first {MAX_MOUNT_CHILDREN} entries"),
+                path: format!("{path}/…"),
+                expandable: false,
+            });
+        }
+        return children;
+    }
+
+    let separator = if path == "/" { "" } else { path };
+    match value_at_path(root, path) {
+        Some(Value::Map(values)) => values
+            .iter()
+            .map(|(name, child)| {
+                let child_path = format!("{separator}/{name}");
+                TreeChild {
+                    label: mount_label(path, name, child),
+                    // An unresolved mount root stays openable so the first
+                    // expansion is what triggers the listing.
+                    expandable: if is_mount_path(&child_path) {
+                        mounts.is_directory(&child_path).unwrap_or(true)
+                    } else {
+                        has_children(child)
+                    },
+                    path: child_path,
+                }
+            })
+            .collect(),
+        Some(Value::Array(values)) => values
+            .iter()
+            .enumerate()
+            .map(|(index, child)| TreeChild {
+                label: format!("[{index}] - {}", tree_item_summary(child)),
+                path: format!("{separator}/{index}"),
+                expandable: has_children(child),
+            })
+            .collect(),
+        _ => {
+            let _ = expanded;
+            Vec::new()
+        }
+    }
+}
+
+/// Labels a mount root with the locality its descriptor declares.
+fn mount_label(parent: &str, name: &str, value: &Value) -> String {
+    if parent != "/mounts" {
+        return name.to_owned();
+    }
+    match value {
+        Value::Map(fields) => match fields.get("locality") {
+            Some(Value::String(locality)) => format!("{name} ({locality})"),
+            _ => name.to_owned(),
+        },
+        _ => name.to_owned(),
+    }
+}
+
 fn flatten_memory(
-    value: &Value,
+    root: &Value,
     path: &str,
     indent: &str,
     last_parent: bool,
-    parent_locator: &[PathPart],
     expanded: &BTreeSet<String>,
+    mounts: &MountBrowser,
     rows: &mut Vec<TreeRow>,
 ) {
-    let children: Vec<(String, PathPart, &Value)> = match value {
-        Value::Map(values) => values
-            .iter()
-            .map(|(name, value)| (name.clone(), PathPart::Key(name.clone()), value))
-            .collect(),
-        Value::Array(values) => values
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                (
-                    format!("[{index}] - {}", tree_item_summary(value)),
-                    PathPart::Index(index),
-                    value,
-                )
-            })
-            .collect(),
-        _ => return,
-    };
+    let children = tree_children(root, path, expanded, mounts);
     let next_indent = format!("{indent}{}", if last_parent { "  " } else { "│ " });
     let child_count = children.len();
-    for (index, (name, part, child)) in children.into_iter().enumerate() {
+    for (index, child) in children.into_iter().enumerate() {
         let last = index + 1 == child_count;
         let branch = if last { "└─" } else { "├─" };
-        let child_path = match &part {
-            PathPart::Index(child_index) => format!("{path}/{child_index}"),
-            PathPart::Key(_) => format!("{path}/{name}"),
-        };
-        let marker = if has_children(child) {
-            if expanded.contains(&child_path) {
+        let marker = if child.expandable {
+            if expanded.contains(&child.path) {
                 "▾ "
             } else {
                 "▸ "
@@ -750,22 +950,19 @@ fn flatten_memory(
         } else {
             "  "
         };
-        let mut locator = parent_locator.to_vec();
-        locator.push(part);
         rows.push(TreeRow {
-            label: format!("{next_indent}{branch}{marker}{name}"),
-            path: child_path.clone(),
-            locator: locator.clone(),
-            expandable: has_children(child),
+            label: format!("{next_indent}{branch}{marker}{}", child.label),
+            path: child.path.clone(),
+            expandable: child.expandable,
         });
-        if expanded.contains(&child_path) {
+        if expanded.contains(&child.path) {
             flatten_memory(
-                child,
-                &child_path,
+                root,
+                &child.path,
                 &next_indent,
                 last,
-                &locator,
                 expanded,
+                mounts,
                 rows,
             );
         }
@@ -1407,6 +1604,76 @@ mod tests {
     }
 
     #[test]
+    fn mount_rows_stay_empty_until_the_browser_resolves_them() {
+        let root = value!({
+            "memory": {},
+            "mounts": {"cwd": {
+                "access": "read",
+                "kind": "folder",
+                "locality": "local",
+                "source": "/work"
+            }}
+        });
+        let expanded = BTreeSet::from(["/".to_owned(), "/mounts".into(), "/mounts/cwd".into()]);
+        let mut mounts = MountBrowser::default();
+
+        let unresolved = tree_rows(&root, &expanded, &mounts);
+
+        // The mount root is openable and labelled with its locality, but the
+        // committed tree holds no children to show.
+        assert!(unresolved.iter().any(|row| row.path == "/mounts/cwd"
+            && row.expandable
+            && row.label.contains("cwd (local)")));
+        assert!(
+            !unresolved
+                .iter()
+                .any(|row| row.path.starts_with("/mounts/cwd/"))
+        );
+
+        mounts
+            .children
+            .insert("/mounts/cwd".into(), vec!["src".into(), "README.md".into()]);
+        mounts.directories.insert("/mounts/cwd".into(), true);
+        mounts.directories.insert("/mounts/cwd/src".into(), true);
+        mounts
+            .directories
+            .insert("/mounts/cwd/README.md".into(), false);
+
+        let resolved = tree_rows(&root, &expanded, &mounts);
+
+        let mount_rows: Vec<_> = resolved
+            .iter()
+            .filter(|row| row.path.starts_with("/mounts/cwd/"))
+            .map(|row| (row.path.as_str(), row.expandable))
+            .collect();
+        assert_eq!(
+            mount_rows,
+            [("/mounts/cwd/src", true), ("/mounts/cwd/README.md", false)]
+        );
+    }
+
+    #[test]
+    fn a_truncated_mount_listing_says_so_instead_of_looking_complete() {
+        let root = value!({"memory": {}, "mounts": {"cwd": {
+            "access": "read", "kind": "folder", "locality": "local", "source": "/work"
+        }}});
+        let expanded = BTreeSet::from(["/".to_owned(), "/mounts".into(), "/mounts/cwd".into()]);
+        let mut mounts = MountBrowser::default();
+        mounts.directories.insert("/mounts/cwd".into(), true);
+        mounts
+            .children
+            .insert("/mounts/cwd".into(), vec!["a".into()]);
+        mounts.truncated.insert("/mounts/cwd".into());
+
+        let rows = tree_rows(&root, &expanded, &mounts);
+
+        assert!(
+            rows.iter()
+                .any(|row| row.label.contains("first 200 entries"))
+        );
+    }
+
+    #[test]
     fn initial_tree_opens_only_the_root() {
         let app = App::new(
             value!({
@@ -1438,7 +1705,7 @@ mod tests {
                 long_text
             ]
         });
-        let rows = tree_rows(&root, &expandable_paths(&root));
+        let rows = tree_rows(&root, &expandable_paths(&root), &MountBrowser::default());
         let label = |path: &str| {
             rows.iter()
                 .find(|row| row.path == path)
