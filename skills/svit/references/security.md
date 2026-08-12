@@ -4,8 +4,8 @@ Guest scripts, activation input, snapshots, messages, and addresses are
 untrusted. The initial guest has no external capabilities. State changes and
 buffered messages commit atomically only after value and script validation.
 
-Optional native executables live under `/bin` and are dispatched by the
-host-side generic `exec`; they are not guest functions. Data executables accept
+Optional built-ins live under `/bin` and are dispatched by the host-side
+generic `exec`; they are not guest functions. Data built-ins accept
 committed process values or explicit JSON and have no shell or ambient host
 interface. Network and model calls require explicit host configuration and
 remain non-transactional. Local `spawn` children are not included in the parent

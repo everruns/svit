@@ -1,10 +1,10 @@
 # Svit
 
-Svit is a research-stage agent process runtime. One Svit agent owns a process,
+Svit is a research-stage process runtime. One Svit instance owns a process,
 a durable conversation thread, named restricted-Lisp scripts, bounded
 transactional execution, snapshots, and forks—without giving guest code an
 operating system. Everruns implements the current reason/act loop inside the
-Svit agent API.
+Svit API.
 
 The current implementation is a deliberately small vertical slice. It is
 runnable and tested, but it is not yet a production multi-tenant platform or a
@@ -51,16 +51,6 @@ fn main() -> svit::Result<()> {
 }
 ```
 
-Run one standalone script through the CLI:
-
-```console
-cargo run -p lampa -- exec path/to/script.svit-script '{"input": "value"}'
-```
-
-The CLI creates a fresh process, installs the script as `main`, executes one
-activation, and prints committed memory, output, and version as JSON. It is a
-smoke-test tool, not a persistent process supervisor.
-
 For an interactive process, start Lampa with an OpenAI API key:
 
 ```console
@@ -71,18 +61,35 @@ OPENAI_API_KEY=... cargo run -p lampa
 
 Three persistent panels show the inbox/outbox conversation and runtime events,
 the complete committed process memory tree, and the selected item. Container
-previews are bounded, shallow summaries; leaf previews render JSON text as
-highlighted JSON, detected source text with tree-sitter syntax highlighting,
-and other text as Markdown. Leaf rendering is capped at 64 KiB so a large value
-cannot stall the TUI.
-The middle panel includes `/agent`, `/memory`, scripts, inbox, mounts, and
+previews are bounded, shallow summaries that show scalar child values and
+summarize nested containers. Leaf previews render JSON text as highlighted
+JSON, detected source text with tree-sitter syntax highlighting, and other text
+as Markdown. Leaf rendering is capped at 64 KiB so a large value cannot stall
+the TUI. Array rows show a bounded item preview: scalar values appear inline,
+objects prefer an identifying field such as `name`, `operation`, `type`, or
+`id`, and other containers show their kind and item count.
+
+The middle panel includes `/thread`, `/memory`, scripts, inbox, mounts, and
 system state. `Tab` moves focus between chat input, memory navigation, and
 preview scrolling. In the memory panel, use arrows or `j`/`k` to move,
 `Right` to expand, `Left` to collapse or move to the parent, and `Enter` to
-toggle nodes. Use `PageUp`/`PageDown` or the mouse wheel to scroll. Use
-`--model` or `SVIT_MODEL` to override the
+toggle nodes. Click a visible row to select it. Use `PageUp`/`PageDown` or the
+mouse wheel to scroll. Use `--model` or `SVIT_MODEL` to override the
 default model. Lampa uses OpenAI's Responses API for reasoning and function
-tools.
+tools and exposes `search`, `jq`, `http`, `llm`, and `spawn` under `/bin`.
+`llm` and `spawn` reuse Lampa's selected model and OpenAI provider. HTTP is
+default-deny; grant comma-separated URL roots explicitly, for example:
+
+```console
+LAMPA_HTTP_ALLOW=https://api.example.com/v1,https://docs.example.com \
+  OPENAI_API_KEY=... cargo run -p lampa
+```
+
+Lampa's entry point only configures and builds the `Svit` instance. The TUI
+then sends through `Inbox`, renders completed messages from `outbox`, and
+refreshes memory through `Svit::read_versioned` after
+`SvitEvent::Committed`; it does not retain a `Process`, assemble runtimes, or
+poll the process tree.
 
 ## Generic process contract
 
@@ -96,26 +103,29 @@ remove(path)          -> transactional memory or library removal
 exec(path, input)     -> execute a path with explicit runtime authority
 ```
 
-The agent-facing `exec` resolves `/lib` scripts and installed `/bin`
-executables. Bare `Process::exec` and nested Svit Lisp `exec` resolve only
+The model-facing `exec` resolves `/lib` scripts and installed `/bin` built-ins.
+Bare `Process::exec` and nested Svit Lisp `exec` resolve only
 `/lib`, because serializable guest state never owns native host authority.
 Builders, snapshots, restore, and fork are process lifecycle APIs.
 
-## Process-owned agent loop
+## Process-owned reasoning loop
 
-`svit::Svit` owns both the Everruns loop and its process. The configured system
-prompt, event-derived message history, and canonical Everruns events are
-committed under the host-managed, guest-readable `/agent` node. Restoring a
-process resumes that conversation, and forking it creates an isolated child
-agent process with inherited history:
+`svit::Svit` owns both the Everruns loop and its process. Svit constructs the
+system prompt from its fixed runtime contract and process address. A host may
+add optional `instructions`; Svit appends them verbatim inside an
+`<instructions>` block. The instructions, composed prompt, event-derived
+message history, and canonical Everruns events are committed under the
+host-managed, guest-readable `/thread` node. Restoring a process resumes that
+conversation, and forking it creates an isolated child process with
+inherited instructions and a prompt recomposed for the child address:
 
 ```rust,no_run
-use svit::{AgentModel, ContentPart, Message, Svit};
+use svit::{ContentPart, Message, OpenAI, Reasoner, Svit};
 
-# async fn example(api_key: String) -> svit::SvitResult<()> {
-let mut svit = Svit::builder("svit://local/demo/agent")?
-    .system_prompt("Work entirely through your Svit process.")
-    .model(AgentModel::openai("gpt-5.6-terra", api_key))
+# async fn example() -> Result<(), Box<dyn std::error::Error>> {
+let mut svit = Svit::builder("svit://local/demo/process")?
+    .instructions("Work entirely through your Svit process.")
+    .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
     .build()
     .await?;
 
@@ -126,7 +136,7 @@ svit.start()?;
 inbox.send(Message::user_multimodal(vec![ContentPart::text(
     "Remember that the release color is blue.",
 )]))?;
-let answer = outbox.recv().await.expect("completed agent turn");
+let answer = outbox.recv().await.expect("completed reasoning turn");
 assert!(!answer.text().unwrap_or_default().is_empty());
 
 drop(inbox);
@@ -139,24 +149,31 @@ let snapshot = svit.snapshot()?;
 
 `start` launches the independently running local loop. `Inbox::send` commits an
 Everruns `Message`, including its ordered `ContentPart` values, before waking
-the loop. The live outbox emits the durable assistant `Message` for each
-completed turn. `block` seals the inbox, drains committed messages, and joins
-the loop. A subagent is another `Svit` built around a fork returned by
+the loop. `Svit::outbox` returns an `Outbox` observer that emits the durable
+assistant `Message` for each completed turn. `Svit::events` returns an `Events`
+observer for commit notifications and sanitized terminal failures. Calling
+either method again creates another observer. A host observes an owned value/version pair through
+`read_versioned`; it never receives a shared mutable process-tree handle. These
+notifications do not replace the durable `/thread/events` log. `block` seals the inbox, drains committed
+messages, and joins the loop. A subagent is another `Svit` built around a fork returned by
 `svit.fork_process(child_address)`.
 
-### Native executables
+### Built-ins
 
-Install native executables when the process needs search or structured-data processing:
+Install host-provided built-ins when the process needs search or structured-data processing:
 
 ```rust
-use svit::Executables;
+use svit::Builtins;
 
 # async fn build() -> svit::SvitResult<svit::Svit> {
-# use svit::{AgentModel, SimTurn};
+# use svit::{LLMSIM_MODEL_ID, LlmSimConfig, Reasoner, llm_sim_provider};
 let svit = svit::Svit::builder("svit://local/tools")?
     .memory("records", svit::value!([{"name": "beta", "active": true}]))
-    .executables(Executables::new())
-    .model(AgentModel::scripted([SimTurn::text("done")]))
+    .builtins(Builtins::new())
+    .reasoner(Reasoner::new(
+        LLMSIM_MODEL_ID,
+        llm_sim_provider(LlmSimConfig::fixed("done")),
+    ))
     .build()
     .await?;
 # Ok(svit)
@@ -165,10 +182,10 @@ let svit = svit::Svit::builder("svit://local/tools")?
 
 The process receives `/bin/search` and `/bin/jq`. `search` runs a bounded
 Rust regular expression over text below a committed process path; `jq` runs a
-bounded filter over an explicit JSON input. Neither executable can access the host
+bounded filter over an explicit JSON input. Neither built-in can access the host
 filesystem, environment, or processes.
 
-Executables are discovered, inspected, and invoked through the generic process
+Built-ins are discovered, inspected, and invoked through the generic process
 operations:
 
 ```text
@@ -178,26 +195,43 @@ exec("/bin/search", input)     -> bounded search result
 exec("/lib/analyze", input)    -> transactional Lisp activation
 ```
 
-`/bin` is a host-managed executable catalog. Its records are manuals, not
-authority: editing a snapshot cannot install an executable. Resume refreshes
-the catalog from the currently attached executable runtime before the agent runs.
+`/bin` is a host-managed built-in catalog. Its records are manuals, not
+authority: editing a snapshot cannot install a built-in. Resume refreshes the
+catalog from the currently attached built-in registry before reasoning begins.
 
-`Executables::http` installs `/bin/http` only with a host URL allowlist and
-transport. `Executables::llm` installs a fixed host-selected `/bin/llm`;
-`Executables::spawn` installs `/bin/spawn`, which forks committed state, runs one child
-turn, and retains the child for `Svit::child_snapshot`. These effectful executables
-are host-side executables, not Svit Lisp functions, and do not join an
+Hosts can implement `Builtin` and register it by name with
+`Builtins::builtin`, or bundle related implementations behind
+`BuiltinExtension`. Later registrations replace earlier entries with the
+same name, matching Bashkit's custom-builtin rule. Each call receives explicit
+JSON input and a `BuiltinContext` that exposes committed `read` and
+`discover` operations only. An extension is trusted native host code: any
+filesystem, network, or other capability it captures is an explicit host grant,
+not a Svit sandbox capability.
+
+`Builtins::http` installs `/bin/http` only with a host URL allowlist and
+transport. `Builtins::llm` installs a fixed host-selected `/bin/llm`;
+`Builtins::spawn` installs `/bin/spawn`, which forks committed state, runs one child
+turn, and retains the child for `Svit::child_snapshot`. These effectful built-ins
+are host-side built-ins, not Svit Lisp functions, and do not join an
 activation transaction.
 
-Run the live process-owned support-agent scenario with `OPENAI_API_KEY` set:
+`Builtins::standard()` selects the complete standard set. HTTP is default-deny;
+`with_http_allowlist` replaces its URL grants. The single `builtins` builder
+operation installs the registry; during Svit construction, it derives `llm`
+and `spawn` from that instance's `Reasoner` and creates Svit's redirect-denying,
+response-bounded `ReqwestHttpTransport`. Later registrations still replace
+standard entries, so a specialized host can replace `http` through
+`Builtins::http` before passing the registry to Svit.
+
+Run the live process-owned `support-agent-svit` scenario with `OPENAI_API_KEY` set:
 
 ```console
-just support-agent-v2
+just support-agent-svit
 ```
 
 ## What works now
 
-- One discoverable process namespace containing host-managed `/agent`, mutable `/memory`, named
+- One discoverable process namespace containing host-managed `/thread`, mutable `/memory`, named
   `/lib` scripts, read-only folder and Turso query snapshots under `/mounts`,
   reserved `/tasks` and `/children`, a host-managed durable `/inbox`, plus read-only `/system`
   metadata and the outbox.
@@ -216,8 +250,8 @@ just support-agent-v2
   syntax, integer, estimated guest-memory, value, text, script, log, message,
   and staged-script limits.
 - Typed host activation hooks that may rewrite, deny, or observe activations.
-- Opt-in `/bin/search` and `/bin/jq` executables plus host-granted `http`,
-  `llm`, and isolated one-turn `spawn` executables.
+- Opt-in `/bin/search` and `/bin/jq` built-ins plus host-granted `http`, `llm`,
+  and isolated one-turn `spawn` built-ins.
 - Reflection over committed memory and the named script library.
 - Discoverable system metadata for the logical address, runtime, API, limits,
   lineage, and the explicitly empty capability set. The address is marked
@@ -267,7 +301,7 @@ individual `/lib/<name>` entries. A library write supplies a map containing
 read-only. Nested `exec` shares the outer activation transaction, deadline,
 and bounded execution depth.
 
-## Executable examples
+## Built-in examples
 
 Every Rust example contains assertions and deterministic output:
 
@@ -279,17 +313,18 @@ cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 cargo run -p svit --example mounted_resources
-cargo run -p svit --example process_owned_agent
-cargo run -p svit --example executables
+cargo run -p svit --example process_reasoning
+cargo run -p svit --example builtins
 ```
 
 They cover persistence and restore, functional self-reflection, rollback of a
 state-plus-message transaction, isolated forks, denied ambient APIs, a bounded
 infinite loop, two clients resolving an optimistic concurrency conflict, and
-bounded snapshots of a real folder and a Turso query. The process-owned agent
+bounded snapshots of a real folder and a Turso query. The process reasoning
 example resumes one Everruns-backed thread and continues it in an isolated
-subagent process. The native executables example searches committed process data and
-filters an explicit JSON value without host filesystem access. See
+subagent process. The built-ins example searches committed process
+data, filters explicit JSON, and registers a host extension with read-only
+process context. See
 [examples/README.md](examples/README.md), or run all of them with `just examples`.
 
 ## Current security status
@@ -321,9 +356,9 @@ storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
 
-Opt-in HTTP, model calls, and local one-turn child execution are native
-executables, not guest-script authority or durable effect delivery. Their results are
-recorded in the agent event stream, but the effects themselves are neither
+Opt-in HTTP, model calls, and local one-turn child execution are host built-ins,
+not guest-script authority or durable effect delivery. Their results are
+recorded in the reasoning event stream, but the effects themselves are neither
 transactional nor replay-safe.
 
 The control protocol currently has an in-memory reference adapter, not a

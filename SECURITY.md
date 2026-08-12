@@ -45,18 +45,18 @@ decoded value limits enforced by the controller.
 The Everruns capability's full-access mode exposes all five generic process
 operations. Domain agents should use its attenuated read/exec mode to omit
 generic mutation tools and allow only host-selected scripts. Prompt instructions
-are not an authorization boundary. Independently running agent loops expose
+are not an authorization boundary. Independently running reasoning loops expose
 terminal failures through a capped, sanitized operational error stream; hosts
 must not treat diagnostic text as trusted content.
 
-`Executables` configures native programs under `/bin`, invoked through the same
+`Builtins` configures host-provided programs under `/bin`, invoked through the same
 generic `exec(path, input)` operation used for `/lib` scripts. `search` reads
 committed process values and `jq` processes explicit JSON. Neither has a host filesystem,
 executable, or environment interface. HTTP appears only with a host-supplied
 default-deny `HttpAllowlist` and transport; `llm` and `spawn` require
 host-selected drivers.
 
-`/bin` projects manuals for the exact executables installed by the current
+`/bin` projects manuals for the exact built-ins installed by the current
 host, including schemas, effect classes, and limits. It is read-only and descriptive:
 host runtime registration remains the authority boundary. Resume replaces any
 snapshot-carried catalog before the agent runs so stale metadata cannot restore

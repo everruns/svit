@@ -1,4 +1,4 @@
-# Executable examples
+# Built-in examples
 
 The Rust examples are deterministic acceptance tests for the initial process
 runtime. Run them from the repository root:
@@ -11,7 +11,8 @@ cargo run -p svit --example fork_research
 cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 cargo run -p svit --example mounted_resources
-cargo run -p svit --example process_owned_agent
+cargo run -p svit --example process_reasoning
+cargo run -p svit --example builtins
 ```
 
 `multi_client_control` demonstrates two clients using optimistic version
@@ -23,14 +24,18 @@ Turso query as bounded, read-only snapshots. The script reads both through the
 ordinary `/mounts` hierarchy. No host path, database connection, or SQL
 authority enters the activation.
 
-`process_owned_agent` runs the simulated Everruns driver through `svit::Svit`.
+`process_reasoning` runs the simulated Everruns driver through `svit::Svit`.
 It obtains inbox and outbox handles, starts the loop, submits one durable
 Everruns `Message` with content parts, receives the assistant message while the
 loop is live, and then blocks until the committed queue drains.
 
-## Everruns support-agent demo
+`builtins` runs the default `search` and `jq` implementations and a custom
+`BuiltinExtension`. The extension reads committed process state through
+`BuiltinContext` without receiving process mutation authority.
 
-`support-agent/` runs `gpt-5.6-terra` through the process-owned Everruns loop.
+## Everruns support-agent-process demo
+
+`support-agent-process/` runs `gpt-5.6-terra` through the process-owned Everruns loop.
 The support model sees an attenuated Svit capability surface:
 
 - `discover`: list children under any Svit process path;
@@ -52,13 +57,13 @@ The process exposes imported data under `/mounts/support_docs` and
 `/system/outbox`.
 `/system/identity`, `/system/api`, `/system/limits`, `/system/lineage`, and
 `/system/runtime` are discoverable runtime metadata. Reserved `/tasks` and
-`/children` remain empty; this v1 example does not use the process inbox.
+`/children` remain empty.
 
 Run the live path with `OPENAI_API_KEY` injected by Doppler:
 
 ```console
 doppler run --project PROJECT --config CONFIG -- \
-  cargo run -p svit-support-agent
+  cargo run -p svit-support-agent-process
 ```
 
 The demo does not contact Jira, Linear, or another production system. It only
@@ -66,9 +71,9 @@ shows the committed ticket intent in the Svit outbox. The displayed answer is
 loaded from the validated committed result; independent final text from the
 model is ignored.
 
-## Process-owned support agent v2
+## Svit-owned support agent
 
-`support-agent-v2/` is the live reference for the new ownership model. It uses
+`support-agent-svit/` is the live reference for the new ownership model. It uses
 OpenAI `gpt-5.6-terra` and demonstrates:
 
 - a root agent constructed through `svit::Svit`, with Everruns behind the Svit API;
@@ -78,7 +83,7 @@ OpenAI `gpt-5.6-terra` and demonstrates:
 Run it with `OPENAI_API_KEY` injected by Doppler:
 
 ```console
-doppler run --project PROJECT --config CONFIG -- just support-agent-v2
+doppler run --project PROJECT --config CONFIG -- just support-agent-svit
 ```
 
 This credentialed demo is excluded from `just examples`; deterministic loop,
