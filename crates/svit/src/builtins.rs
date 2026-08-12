@@ -25,7 +25,7 @@ pub use http::{
     ReqwestHttpTransport,
 };
 
-use http::HttpBuiltin;
+use http::{HttpBuiltin, HttpPolicy};
 use jq::JqBuiltin;
 use llm::LlmBuiltin;
 use search::SearchBuiltin;
@@ -220,7 +220,7 @@ pub struct Builtins {
     entries: BTreeMap<String, Arc<dyn Builtin>>,
     children: ChildRegistry,
     standard_model_builtins: bool,
-    http_allowlist: Option<HttpAllowlist>,
+    http_policy: Option<HttpPolicy>,
 }
 
 impl Default for Builtins {
@@ -229,7 +229,7 @@ impl Default for Builtins {
             entries: BTreeMap::new(),
             children: ChildRegistry::default(),
             standard_model_builtins: false,
-            http_allowlist: None,
+            http_policy: None,
         };
         builtins.register("search", Box::new(SearchBuiltin));
         builtins.register("jq", Box::new(JqBuiltin));
@@ -247,19 +247,20 @@ impl Builtins {
     ///
     /// `search` and `jq` are available immediately. During construction, Svit
     /// resolves `http`, `llm`, and `spawn` from the instance's configuration.
-    /// HTTP is default-deny until [`Self::with_http_allowlist`] supplies grants.
+    /// Selecting the standard set explicitly grants unrestricted HTTP. Hosts
+    /// can attenuate it with [`Self::with_http_allowlist`].
     /// Later registrations replace any standard built-in with the same name.
     pub fn standard() -> Self {
         Self {
             standard_model_builtins: true,
-            http_allowlist: Some(HttpAllowlist::new()),
+            http_policy: Some(HttpPolicy::Unrestricted),
             ..Self::default()
         }
     }
 
     /// Adds the standard `http` built-in with the supplied URL grants.
     pub fn with_http_allowlist(mut self, http_allowlist: HttpAllowlist) -> Self {
-        self.http_allowlist = Some(http_allowlist);
+        self.http_policy = Some(HttpPolicy::Allowlist(http_allowlist));
         self
     }
 
@@ -298,21 +299,20 @@ impl Builtins {
     }
 
     pub(crate) fn resolve(mut self, reasoner: &Reasoner) -> Result<Self, HttpTransportError> {
-        let http_allowlist = self.http_allowlist.take();
-        if http_allowlist.is_none() && !self.standard_model_builtins {
+        let http_policy = self.http_policy.take();
+        if http_policy.is_none() && !self.standard_model_builtins {
             return Ok(self);
         }
 
-        if let Some(http_allowlist) = http_allowlist
+        if let Some(http_policy) = http_policy
             && !self.entries.contains_key("http")
         {
-            self.register(
-                "http",
-                Box::new(HttpBuiltin::new(
-                    http_allowlist,
-                    ReqwestHttpTransport::new()?,
-                )),
-            );
+            let transport = ReqwestHttpTransport::new()?;
+            let builtin = match http_policy {
+                HttpPolicy::Unrestricted => HttpBuiltin::unrestricted(transport),
+                HttpPolicy::Allowlist(allowlist) => HttpBuiltin::new(allowlist, transport),
+            };
+            self.register("http", Box::new(builtin));
         }
         if self.standard_model_builtins && !self.entries.contains_key("llm") {
             self.register("llm", Box::new(LlmBuiltin::new(reasoner.clone())));
@@ -387,5 +387,24 @@ fn json_exceeds_limit(value: &JsonValue, limit: usize) -> bool {
     match serde_json::to_vec(value) {
         Ok(bytes) => bytes.len() > limit,
         Err(_) => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn standard_registry_grants_unrestricted_http_tm_cap_004() {
+        assert!(matches!(
+            Builtins::standard().http_policy,
+            Some(HttpPolicy::Unrestricted)
+        ));
+        assert!(matches!(
+            Builtins::standard()
+                .with_http_allowlist(HttpAllowlist::new())
+                .http_policy,
+            Some(HttpPolicy::Allowlist(_))
+        ));
     }
 }

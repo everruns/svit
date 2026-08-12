@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use svit::{Builtins, HttpAllowlist, OpenAI, Reasoner, Svit};
+use svit::{Builtins, OpenAI, Reasoner, Svit};
 
 mod tui;
 
@@ -27,7 +27,7 @@ async fn run() -> Result<(), String> {
             &model,
             OpenAI::from_env().map_err(|error| error.to_string())?,
         ))
-        .builtins(Builtins::standard().with_http_allowlist(lampa_http_allowlist()))
+        .builtins(Builtins::standard())
         .build()
         .await
         .map_err(|error| error.to_string())?;
@@ -48,17 +48,4 @@ fn parse_model(arguments: &mut impl Iterator<Item = String>) -> Result<String, S
         }
         Some(_) => Err("usage: lampa [--model <model>]".into()),
     }
-}
-
-fn lampa_http_allowlist() -> HttpAllowlist {
-    env::var("LAMPA_HTTP_ALLOW")
-        .ok()
-        .map(|roots| {
-            roots
-                .split(',')
-                .map(str::trim)
-                .filter(|root| !root.is_empty())
-                .fold(HttpAllowlist::new(), HttpAllowlist::allow)
-        })
-        .unwrap_or_default()
 }

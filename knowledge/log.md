@@ -37,12 +37,13 @@
 * **One built-in setup path**: Removed the parallel native setup and
   custom-transport builder operations. Hosts always attach one `Builtins`
   registry through `builtins`; `Builtins::standard()` marks the complete set
-  for reasoner resolution during Svit construction, while
-  `with_http_allowlist` layers explicit URL grants and later registrations win.
+  for reasoner resolution during Svit construction. The standard research set
+  grants unrestricted HTTP destinations, while `with_http_allowlist`
+  attenuates that grant and later registrations win.
 * **Lampa built-in catalog**: Attached the standard built-ins to Lampa.
   Svit's standard registry derives `llm` and `spawn` from its reasoner;
-  Lampa supplies only the explicit `LAMPA_HTTP_ALLOW` policy. Svit owns the
-  reusable redirect-denying, response-bounded reqwest transport.
+  Lampa supplies no HTTP policy. Svit owns the reusable redirect-denying,
+  response-bounded reqwest transport.
 * **Svit host contract**: Committed transitions publish notifications rather
   than process state. Hosts obtain owned value/version observations through an
   atomic Svit operation and cannot retain the mutable process tree. `Inbox` is

@@ -52,8 +52,9 @@ must not treat diagnostic text as trusted content.
 `Builtins` configures host-provided programs under `/bin`, invoked through the same
 generic `exec(path, input)` operation used for `/lib` scripts. `search` reads
 committed process values and `jq` processes explicit JSON. Neither has a host filesystem,
-executable, or environment interface. HTTP appears only with a host-supplied
-default-deny `HttpAllowlist` and transport; `llm` and `spawn` require
+executable, or environment interface. Selecting `Builtins::standard()` is an
+explicit host grant of unrestricted HTTP destinations; hosts can attenuate it
+with `HttpAllowlist` or replace the transport. `llm` and `spawn` require
 host-selected drivers.
 
 `/bin` projects manuals for the exact built-ins installed by the current

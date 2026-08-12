@@ -124,18 +124,18 @@ mutation. Extension implementations are trusted native host code and may use
 only additional capabilities deliberately captured during registration.
 
 `Builtins::standard()` selects the complete set through the same `builtins`
-builder operation used for every host registry. HTTP starts default-deny and
-`with_http_allowlist` replaces its URL grants. At Svit construction it installs
-`search` and `jq`, derives `llm` and `spawn` from the same instance `Reasoner`,
-and resolves `http` from the allowlist
-with Svit's bounded transport. Later built-in registrations win, including
-a specialized host's explicit `http` adapter. Presentation hosts do not
+builder operation used for every host registry. Selecting the standard set is
+an explicit unrestricted HTTP-destination grant; `with_http_allowlist`
+attenuates it. At Svit construction it installs `search` and `jq`, derives
+`llm` and `spawn` from the same instance `Reasoner`, and resolves `http` with
+Svit's bounded transport. Later built-in registrations win, including a
+specialized host's explicit `http` adapter. Presentation hosts do not
 reconstruct this registry after the Svit instance is built.
 
-HTTP is default-deny and appears only when the host supplies an `HttpAllowlist`
-and transport. `/bin/llm` uses one host-selected model and driver. Neither
-executable is a Svit activation, and external effects cannot be rolled back with
-process state.
+Hosts choosing a smaller built-in set have no HTTP authority unless they add
+it explicitly with an allowlist and transport. `/bin/llm` uses one
+host-selected model and driver. Neither executable is a Svit activation, and
+external effects cannot be rolled back with process state.
 
 A running Svit publishes host-only operational events. A commit event is a
 notification that state changed; it does not expose the process root. The host

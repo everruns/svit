@@ -47,16 +47,18 @@ The following scenarios execute with assertions and deterministic output under
 - the agent reads its projected instructions, composed system prompt, message
   history, and canonical events through the runtime capability during a turn.
 - `/bin/search` reads committed process text and `/bin/jq` filters explicit
-  JSON; focused integration tests cover data limits, default-deny and
-  host-routed HTTP, nested model selection, and local child spawn.
+  JSON; focused tests cover data limits, unrestricted standard HTTP,
+  allowlist-denied and host-routed HTTP, nested model selection, and local
+  child spawn.
 - `/bin` discovery exposes installed built-in manuals, while
   resume removes catalog entries for absent host grants.
 - a host `BuiltinExtension` contributes a discoverable built-in that can
   read committed state through the restricted context; the common dispatcher
   rejects oversized extension output.
-- Lampa projects `http`, `jq`, `llm`, `search`, and `spawn` under `/bin` while
-  selecting only HTTP policy; Svit's reusable reqwest transport rejects
-  redirect escape and oversized streamed responses.
+- Lampa projects `http`, `jq`, `llm`, `search`, and `spawn` under `/bin` by
+  selecting the standard registry without additional HTTP policy; Svit's
+  reusable reqwest transport rejects redirect escape and oversized streamed
+  responses.
 - the Svit standard built-in setup derives the full catalog from one instance's
   `Reasoner`; commit events are notifications, and an atomic
   Svit contract read returns an owned value/version pair after inbox and

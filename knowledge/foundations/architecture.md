@@ -81,9 +81,11 @@ advanced Everruns host: it composes the compact single-session host builder and
 `HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
 history from that canonical log. Svit's standard built-in setup derives local
 `search` and `jq` plus model-backed `llm` and `spawn` from the instance
-configuration. Lampa supplies only explicit HTTP policy through
-`LAMPA_HTTP_ALLOW` roots. Svit supplies the reusable redirect-denying,
-response-bounded transport. HTTP URL authority remains default-deny.
+configuration. Lampa selects that standard registry without additional HTTP
+policy; selecting the complete research registry explicitly grants unrestricted
+HTTP destinations. Svit supplies the reusable redirect-denying,
+response-bounded transport, and other hosts may attenuate destinations with an
+allowlist.
 Each append commits the canonical event and its derived guest-readable message
 projection together in the Svit process root. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a

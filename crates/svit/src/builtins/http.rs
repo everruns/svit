@@ -147,7 +147,7 @@ impl HttpTransport for ReqwestHttpTransport {
     }
 }
 
-/// Default-deny URL policy for `/bin/http`.
+/// URL allowlist for hosts that attenuate `/bin/http`.
 #[derive(Clone, Default)]
 pub struct HttpAllowlist {
     roots: Vec<Url>,
@@ -184,15 +184,37 @@ impl HttpAllowlist {
     }
 }
 
+#[derive(Clone)]
+pub(super) enum HttpPolicy {
+    Unrestricted,
+    Allowlist(HttpAllowlist),
+}
+
+impl HttpPolicy {
+    fn allows(&self, candidate: &Url) -> bool {
+        match self {
+            Self::Unrestricted => true,
+            Self::Allowlist(allowlist) => allowlist.allows(candidate),
+        }
+    }
+}
+
 pub(super) struct HttpBuiltin {
-    allowlist: HttpAllowlist,
+    policy: HttpPolicy,
     transport: Arc<dyn HttpTransport>,
 }
 
 impl HttpBuiltin {
     pub(super) fn new(allowlist: HttpAllowlist, transport: impl HttpTransport + 'static) -> Self {
         Self {
-            allowlist,
+            policy: HttpPolicy::Allowlist(allowlist),
+            transport: Arc::new(transport),
+        }
+    }
+
+    pub(super) fn unrestricted(transport: impl HttpTransport + 'static) -> Self {
+        Self {
+            policy: HttpPolicy::Unrestricted,
             transport: Arc::new(transport),
         }
     }
@@ -202,7 +224,7 @@ impl HttpBuiltin {
 impl Builtin for HttpBuiltin {
     fn manual(&self) -> BuiltinManual {
         BuiltinManual::new(
-            "Make one host-allowlisted HTTP request through the configured transport.",
+            "Make one HTTP request through the configured host transport.",
             json!({
                 "type": "object",
                 "properties": {
@@ -217,7 +239,7 @@ impl Builtin for HttpBuiltin {
         .effect("external")
         .output("JSON object containing status, response headers, and UTF-8-lossy body text.")
         .limits([
-            "Host URL allowlist and transport apply.",
+            "Host HTTP policy and transport apply.",
             "30 second timeout.",
             "256 KiB request and response bodies.",
         ])
@@ -233,9 +255,9 @@ impl Builtin for HttpBuiltin {
             Ok(url) if matches!(url.scheme(), "http" | "https") => url,
             _ => return BuiltinResult::error("invalid HTTP URL"),
         };
-        // THREAT[TM-CAP-004]: A model URL grants no authority. The host
-        // allowlist is checked before the host transport runs.
-        if !self.allowlist.allows(&url) {
+        // THREAT[TM-CAP-004]: The host selects unrestricted or attenuated HTTP
+        // when it constructs the built-in registry; model input cannot widen it.
+        if !self.policy.allows(&url) {
             return BuiltinResult::error("HTTP URL is not allowed");
         }
         let headers = match parse_headers(arguments.get("headers")) {
@@ -333,6 +355,14 @@ mod tests {
     use std::thread::JoinHandle;
 
     use super::*;
+
+    #[test]
+    fn unrestricted_policy_accepts_any_http_origin_tm_cap_004() {
+        let policy = HttpPolicy::Unrestricted;
+
+        assert!(policy.allows(&Url::parse("https://example.com/research").unwrap()));
+        assert!(policy.allows(&Url::parse("http://127.0.0.1:8080/status").unwrap()));
+    }
 
     fn serve_once(response: &'static [u8]) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

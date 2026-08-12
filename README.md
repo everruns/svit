@@ -215,13 +215,14 @@ turn, and retains the child for `Svit::child_snapshot`. These effectful built-in
 are host-side built-ins, not Svit Lisp functions, and do not join an
 activation transaction.
 
-`Builtins::standard()` selects the complete standard set. HTTP is default-deny;
-`with_http_allowlist` replaces its URL grants. The single `builtins` builder
-operation installs the registry; during Svit construction, it derives `llm`
-and `spawn` from that instance's `Reasoner` and creates Svit's redirect-denying,
-response-bounded `ReqwestHttpTransport`. Later registrations still replace
-standard entries, so a specialized host can replace `http` through
-`Builtins::http` before passing the registry to Svit.
+`Builtins::standard()` selects the complete standard set and explicitly grants
+unrestricted HTTP destinations. `with_http_allowlist` attenuates that grant for
+hosts that need URL policy. The single `builtins` builder operation installs
+the registry; during Svit construction, it derives `llm` and `spawn` from that
+instance's `Reasoner` and creates Svit's redirect-denying, response-bounded
+`ReqwestHttpTransport`. Later registrations still replace standard entries, so
+a specialized host can replace `http` through `Builtins::http` before passing
+the registry to Svit.
 
 Run the live process-owned `support-agent-svit` scenario with `OPENAI_API_KEY` set:
 

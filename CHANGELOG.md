@@ -53,8 +53,9 @@ All notable changes to Svit will be documented here.
 - A live `support-agent-svit` consumer using `gpt-5.6-terra` through a
   process-owned Svit inbox and outbox.
 - One Svit built-in setup path, with `Builtins::standard()` deriving `llm`
-  and `spawn` from the instance reasoner, accepting explicit HTTP policy,
-  and using a reusable redirect-denying, response-bounded reqwest transport.
+  and `spawn` from the instance reasoner, granting unrestricted research HTTP
+  unless attenuated, and using a reusable redirect-denying, response-bounded
+  reqwest transport.
 - Explicit Svit `Inbox`, `Outbox`, and `Events` ports, commit notifications,
   atomic owned value/version reads, and sanitized terminal failures without
   exposing the mutable process tree or channel implementation.
