@@ -51,6 +51,52 @@ fn main() -> svit::Result<()> {
 }
 ```
 
+Persist process transitions as Turso-backed events when resume, queries,
+fork references, snapshots, and cuts must survive beyond one `Process` value:
+
+```rust,no_run
+use svit::{EventQuery, Process, TursoProcessStore, value};
+
+# async fn example() -> svit::Result<()> {
+let store = TursoProcessStore::open("svit.db").await?;
+let process = Process::builder("svit://local/demo/persisted")?
+    .memory("status", value!("new"))
+    .build()?;
+let mut durable = store.create(process).await?;
+durable.write("/memory/status", value!("ready")).await?;
+
+drop(durable);
+let resumed = store.resume("svit://local/demo/persisted").await?;
+let events = resumed
+    .query(EventQuery::new().path_prefix("/memory"))
+    .await?;
+assert_eq!(events.len(), 1);
+# Ok(())
+# }
+```
+
+`DurableProcess` publishes its in-memory candidate only after the event, path
+projection, and address-head compare-and-swap commit in one Turso transaction.
+Resume validates content hashes, the base-bound event chain, typed mutations,
+versions, and complete resulting root hashes without rerunning guest code.
+
+Persistence is adapter-neutral at the public boundary. `ProcessStore` creates
+and resumes a `DurableProcessHandle`; `PersistedEventRecord` and
+`PersistenceSnapshotRecord` expose query and snapshot metadata without Turso
+types. `DefaultProcessStore` aliases `TursoProcessStore` when the default
+`persistence-turso` feature is enabled.
+
+The default features are:
+
+| Feature | Purpose |
+| --- | --- |
+| `persistence-turso` | Local Turso event-store implementation and its concrete event, snapshot, and process-handle types |
+| `turso-mount` | Host-side import of a bounded Turso query as a read-only snapshot mount |
+
+Build with `--no-default-features` to compile the process runtime and
+persistence traits without Turso. Either Turso feature can be enabled
+independently.
+
 For an interactive process, start Lampa with an OpenAI API key:
 
 ```console
@@ -246,6 +292,9 @@ just support-agent-svit
   commit, or none do.
 - Structured `log-info!` records and deterministic buffered `send!` intents.
 - Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
+- Local Turso event persistence for core process mutations, deterministic
+  resume, bounded queries, exact-boundary forks, on-demand snapshots, and safe
+  history cuts.
 - Forks that copy committed memory and scripts into an independently mutable
   child without copying the parent's outbox. Agent-process forks also inherit
   committed conversation history and isolate future turns.
@@ -356,8 +405,8 @@ described in [SECURITY.md](SECURITY.md).
 
 Svit does not yet provide scheduling, timers, background activations, message
 delivery, retries, global routing, authenticated identity, authorization,
-filesystem or network read-through projections, secrets, durable process
-storage, distributed migration, exactly-once effects, snapshot
+filesystem or network read-through projections, secrets, durable reasoning or
+control-receipt storage, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
 

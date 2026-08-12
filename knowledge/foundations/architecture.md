@@ -147,7 +147,9 @@ Module names may evolve; the ownership boundary is the decision.
 ## Deferred architecture
 
 Schedulers, durable effect delivery, read-through or writable projections,
-durable process databases, distributed routing, auth services, migrations
+reasoning/control integration for the implemented
+[single-Svit event persistence](persistence.md) adapter, distributed routing,
+auth services, migrations
 between hosts, and production Wasm/OS isolation are outside this slice. See
 [Limitations](../operations/limitations.md).
 

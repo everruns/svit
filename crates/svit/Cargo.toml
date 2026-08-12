@@ -9,6 +9,11 @@ description.workspace = true
 keywords.workspace = true
 categories.workspace = true
 
+[features]
+default = ["persistence-turso", "turso-mount"]
+persistence-turso = ["dep:turso"]
+turso-mount = ["dep:turso"]
+
 [dependencies]
 async-trait.workspace = true
 everruns.workspace = true
@@ -25,5 +30,16 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-turso.workspace = true
+turso = { workspace = true, optional = true }
 url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[example]]
+name = "event_persistence"
+required-features = ["persistence-turso"]
+
+[[example]]
+name = "mounted_resources"
+required-features = ["turso-mount"]

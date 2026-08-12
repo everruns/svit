@@ -525,27 +525,23 @@ committing activations.
 
 ## 11. Persistence and replay
 
-Keep storage behind traits. The reference implementation should include an
-in-memory event log and snapshot store. A durable host supplies its own adapter.
+Keep storage behind immutable-base, ordered-read, append-CAS, and base-install
+operations. The adopted first durable adapter stores one uniform transaction
+event type in a local Turso database partitioned by address. Database
+transactions atomically maintain head CAS, event rows, path projections,
+snapshots, fork references, and cuts. A deterministic reducer
+reconstructs process state without re-executing guest code or external effects.
+The core `DurableProcess` slice is implemented. Reasoning events and control
+receipts remain under implementation; they must use ordinary process-tree
+transactions rather than a second event domain.
 
-The durable source of truth is a versioned sequence of committed transition
-events and state patches. Periodic snapshots accelerate restore but are
-disposable:
-
-```text
-reduce(snapshot N, events N+1..M) == reduce(events 0..M)
-```
-
-Each snapshot records at least:
-
-```text
-format_version, runtime_semantics_version, process_id, sequence,
-root_value, root_hash, grants_metadata, timers, lineage
-```
-
-The actual secret or host connection behind a capability is not serialized.
-Restore resolves a capability reference through the destination host and fails
-closed if it cannot be re-established.
+Each event carries its address, stable position, previous record hash, process
+version transition, ordered mutations, optional atomic receipt delta, derived
+touched paths, resulting root hash, and event hash. On-demand snapshots bound
+replay, detach forks, support migration, and establish safe history cuts; they
+are not written per transition. Host authority is never serialized. The exact
+resume, fork, query, snapshot, cut, crash, and S3 contracts are defined in
+[Single-Svit Event Persistence](../foundations/persistence.md).
 
 Process history and an agent conversation history are related but distinct.
 Svit should not hide its state mutations inside model chat messages. An agent
@@ -636,7 +632,7 @@ svit-codec      canonical encoding, hashes, schema migration
 svit-script     interpreter boundary and Svit Lisp language contract
 svit-ketos      prototype Ketos implementation
 svit-host       supervisor, activation loop, quotas, capability broker
-svit-store      event/snapshot traits and in-memory implementation
+svit-store      event/snapshot contract and Turso implementation
 svit-protocol   addresses, messages, snapshots, effect envelopes
 svit-model      executable/model-checkable abstract machine
 lampa           local REPL, inspection, replay, and hostile-script runner

@@ -2,6 +2,24 @@
 
 ## 2026-08-11
 
+* **Single-Svit event persistence design**: Adopted one uniform address-keyed
+  transaction event type in a local Turso database. An immutable base plus event
+  tail supports deterministic resume, exact-position forks, complete memory
+  changes, SQL queries, atomic receipts, on-demand snapshots, and safe history
+  cuts. Reasoning events are ordinary tree mutations rather than a second agent
+  event domain. Turso transactions own event append, head CAS, projections,
+  fork references, and cuts; the portable event contract remains adapter-neutral.
+* **Local Turso process store**: Implemented address-keyed base-plus-event-tail
+  persistence for host mutations, activations, inbox transitions, deterministic
+  resume, hash-validated queries, exact-boundary forks, on-demand snapshots, and
+  safe cuts. Head CAS keeps failed stale writes out of both Turso and the local
+  process. Runnable reasoning and control receipts remain explicit follow-up
+  work rather than being claimed complete.
+* **Persistence adapter boundary**: Added adapter-neutral `ProcessStore`,
+  `DurableProcessHandle`, event-record, and snapshot-record traits. The default
+  `TursoProcessStore` implementation is now behind the enabled-by-default
+  `persistence-turso` feature; `--no-default-features` compiles the runtime and
+  contracts without Turso, while `turso-mount` can be selected independently.
 * **Everruns values at the boundary**: Removed Svit's public `AgentModel`
   wrapper. A `Reasoner` now pairs the provider-visible model ID with the
   Everruns `Provider`, including `OpenAI` configuration, and constructs the

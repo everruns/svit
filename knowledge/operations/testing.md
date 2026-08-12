@@ -25,6 +25,8 @@ Applies to the initial vertical slice as it is implemented.
 5. Property and fuzz tests for serialization and isolation boundaries (not yet implemented).
 6. Documentation tests for public Rust APIs.
 7. Headless Tuika rendering and input-state tests for terminal interfaces.
+8. Cargo feature-matrix checks for the adapter-neutral core, Turso persistence,
+   and Turso snapshot mounts independently.
 
 ## Examples as acceptance tests
 
@@ -127,6 +129,11 @@ identifiers. If an interpreter detail prevents a stable value, keep it outside
 guest-observable state and document it.
 
 ## Repository tooling
+
+`just check-features` runs Clippy with no default features, with only
+`persistence-turso`, and with only `turso-mount`. This proves the default Turso
+adapter is removable and neither Turso integration accidentally requires the
+other.
 
 Python repository validators use `unittest` so they run without extra
 dependencies:

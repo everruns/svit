@@ -157,7 +157,9 @@ original result but cannot duplicate the state transition.
 A durable host must atomically persist the new process root, version, outbox,
 and request receipt. If that atomic storage transaction is not implemented, the
 host may claim compare-and-swap safety but not durable result replay across a
-crash.
+crash. The adopted event boundary is implemented for `DurableProcess`, but
+atomic control receipts remain under implementation as specified in
+[Single-Svit Event Persistence](../foundations/persistence.md).
 
 Receipt lookup is part of the authorized operation. A remote host must
 authenticate and authorize the caller before checking a receipt, then partition

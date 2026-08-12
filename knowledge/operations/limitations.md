@@ -22,7 +22,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-003` | Outgoing Lisp messages are committed intents only | Routing, delivery, retries, ordering across hosts, and dead letters are not implemented; local inbox submission is explicit host API |
 | `L-004` | Addresses are local validated identifiers, not authenticated identities | Possessing or naming an address proves no authority |
 | `L-005` | Svit Lisp has no live or writable external capabilities | Guest code can read recorded snapshot mounts and `/bin` manuals but cannot execute `/bin` or access network, live filesystem/database handles, models, secrets, or clocks; host-side built-in dispatch does not widen the Lisp surface |
-| `L-006` | No durable database adapter | Snapshots are caller-managed values or bytes; process residency is in memory |
+| `L-006` | Durable persistence covers only the core process slice | The address-keyed local Turso adapter persists host writes/removals, activations, inbox changes, forks, snapshots, queries, and cuts; runnable reasoning, control receipts, built-in refresh, crash qualification, and distributed ownership are not wired or proven |
 | `L-007` | No live-stack serialization | Coroutines, closures, userdata, VM bytecode, and in-progress activations are not snapshotted |
 | `L-008` | Svit Lisp is a restricted versioned subset | Full Scheme, Common Lisp, and unrestricted Ketos compatibility are unsupported |
 | `L-009` | Ketos exposes wall-clock execution limits, not deterministic instruction fuel | Budget-boundary success can vary with host load; deterministic replay is only claimed for activations that complete within budget |
@@ -45,7 +45,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-026` | `/tasks` and `/children` are reserved empty nodes; `/inbox` accepts only explicit local host submissions | Discovery does not imply scheduling, remote delivery, or child supervision behavior; the optional local `spawn` registry is not stored under `/children` |
 | `L-027` | Mounts are construction-time read-only snapshots | External changes are not observed until the host imports a new mount into a new process; writes and effect intents are not implemented |
 | `L-028` | Folder and Turso snapshot values support the current persistent value model only | Folder files and SQL text must be UTF-8; symbolic links, special files, and Turso blobs are rejected; callers must prevent concurrent folder-tree replacement during import |
-| `L-029` | The Turso Rust database engine dependency is pre-release | SQL compatibility and operational behavior may change before its stable release; snapshot mount callers must test upgrades |
+| `L-029` | The Turso Rust database engine dependency is pre-release | SQL compatibility and operational behavior may change before its stable release; snapshot-mount callers and the persistence adapter must test upgrades and crash behavior |
 | `L-030` | Turso mount construction has no internal query deadline | Callers must wrap expensive or remote host-selected queries in an outer timeout before process construction |
 | `L-031` | One Svit process owns exactly one Everruns conversation thread | Multiple participants or independent threads require separate processes in the current implementation |
 | `L-032` | Agent events and script activations commit separately around external model and tool calls | Recovery of an incomplete turn is at-least-once for external actions; a whole model turn is not one atomic Svit activation |
@@ -57,6 +57,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-038` | `/bin` stores built-in manuals, not built-in authority | A bare restored `Process` may contain historical manuals; building or resuming `Svit` refreshes them from the attached `Builtins`, and only that host runtime can dispatch `/bin` paths |
 | `L-039` | The current Everruns `main` graph includes fetch, Bash, and A2A dependencies that Svit does not expose | The locked graph contains two unmaintained transitive crates and additional crate-specific license exceptions; remove the audit exceptions when Everruns makes those modules optional or replaces their dependencies |
 | `L-040` | Host-defined `Builtin` implementations are trusted native code, not sandboxed guest extensions | Svit bounds their JSON input/output and supplies only a read-only process context, but an implementation can use any host capability it deliberately captures; hosts must review extensions as part of the trusted computing base |
+| `L-041` | The adapter-neutral persistence traits specify behavior, not shared storage primitives | A non-Turso adapter must independently enforce event integrity, CAS, fork-reference, snapshot, query-bound, and cut invariants; the current executable evidence covers `TursoProcessStore` only |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

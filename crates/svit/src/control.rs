@@ -474,6 +474,12 @@ fn failure(error: Error) -> ControlFailure {
         Error::InboxConflict => "inbox_conflict",
         Error::ChildUnavailable => "child_unavailable",
         Error::BuiltinContextUnavailable => "builtin_context_unavailable",
+        Error::PersistenceNotFound(_) => "persistence_not_found",
+        Error::PersistenceAlreadyExists(_) => "persistence_already_exists",
+        Error::PersistenceConflict => "persistence_conflict",
+        Error::PersistenceReferenced => "persistence_referenced",
+        Error::InvalidPersistence(_) => "invalid_persistence",
+        Error::PersistenceUnavailable => "persistence_unavailable",
     };
     ControlFailure {
         code: code.into(),

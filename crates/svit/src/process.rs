@@ -24,6 +24,7 @@ use crate::error::sanitize_diagnostic;
 use crate::hooks::{
     ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction, SharedHook,
 };
+use crate::persistence::Mutation;
 use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
 
 const SNAPSHOT_FORMAT: u32 = 6;
@@ -174,6 +175,7 @@ impl ProcessBuilder {
 }
 
 /// In-memory, serializable Svit process.
+#[derive(Clone)]
 pub struct Process {
     id: ProcessId,
     version: u64,
@@ -285,11 +287,12 @@ impl Process {
         }
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
 
         // THREAT[TM-EFF-001]: Validate the complete replacement root before
         // the single committed-root assignment.
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -311,8 +314,9 @@ impl Process {
         }
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -328,11 +332,12 @@ impl Process {
         inbox.push(value);
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
 
         // THREAT[TM-MSG-002]: Inbox delivery becomes visible only after the
         // complete replacement root validates.
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -362,11 +367,12 @@ impl Process {
         inbox.remove(0);
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
 
         // THREAT[TM-MSG-002]: A completed turn acknowledges only the exact
         // inbox head it observed, preventing silent drop or reordering.
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -382,11 +388,12 @@ impl Process {
         root.insert("thread".into(), value);
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
 
         // THREAT[TM-AUD-001]: Only the trusted host receives this mutation
         // boundary; guest write/remove paths deliberately exclude `/thread`.
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -401,8 +408,9 @@ impl Process {
         root.insert("bin".into(), value);
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        let version = next_process_version(self.version)?;
         self.root = Arc::new(new_root);
-        self.version += 1;
+        self.version = version;
         Ok(())
     }
 
@@ -423,6 +431,11 @@ impl Process {
     /// The script must define `main(input)`. Any error leaves memory, scripts,
     /// outbox, and version unchanged.
     pub fn exec(&mut self, path: &str, input: Value) -> Result<Activation> {
+        let prepared = self.prepare_exec(path, input)?;
+        Ok(self.commit_prepared(prepared))
+    }
+
+    pub(crate) fn prepare_exec(&self, path: &str, input: Value) -> Result<PreparedActivation> {
         let script = library_path(path)?
             .ok_or_else(|| Error::InvalidPath(path.into()))?
             .to_owned();
@@ -449,22 +462,29 @@ impl Process {
             .as_ref()
             .map(|request| request.script.clone())
             .unwrap_or_else(|_| script);
-        let result = request.and_then(|request| self.exec_inner(request));
+        let result = request.and_then(|request| {
+            let mut candidate = self.clone();
+            candidate
+                .exec_inner(request)
+                .map(|(activation, mutations)| PreparedActivation {
+                    candidate,
+                    activation,
+                    mutations,
+                    event_script: event_script.clone(),
+                    version_before,
+                })
+        });
 
-        if !self.hooks.is_empty() {
-            let status = match &result {
-                Ok(activation) => ActivationStatus::Committed {
-                    version: activation.version,
-                },
-                Err(error) => ActivationStatus::Failed {
-                    error: sanitize_diagnostic(error),
-                },
-            };
+        if !self.hooks.is_empty()
+            && let Err(error) = &result
+        {
             let event = ActivationEvent {
                 process_id: self.id.clone(),
                 script: event_script,
                 version_before,
-                status,
+                status: ActivationStatus::Failed {
+                    error: sanitize_diagnostic(error),
+                },
             };
             for hook in self.hooks.iter() {
                 hook.after_activation(&event);
@@ -472,6 +492,43 @@ impl Process {
         }
 
         result
+    }
+
+    pub(crate) fn commit_prepared(&mut self, prepared: PreparedActivation) -> Activation {
+        self.root = prepared.candidate.root;
+        self.version = prepared.candidate.version;
+        if !self.hooks.is_empty() {
+            let event = ActivationEvent {
+                process_id: self.id.clone(),
+                script: prepared.event_script,
+                version_before: prepared.version_before,
+                status: ActivationStatus::Committed {
+                    version: prepared.activation.version,
+                },
+            };
+            for hook in self.hooks.iter() {
+                hook.after_activation(&event);
+            }
+        }
+        prepared.activation
+    }
+
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn fail_prepared(&self, prepared: &PreparedActivation, error: &Error) {
+        if self.hooks.is_empty() {
+            return;
+        }
+        let event = ActivationEvent {
+            process_id: self.id.clone(),
+            script: prepared.event_script.clone(),
+            version_before: prepared.version_before,
+            status: ActivationStatus::Failed {
+                error: sanitize_diagnostic(error),
+            },
+        };
+        for hook in self.hooks.iter() {
+            hook.after_activation(&event);
+        }
     }
 
     /// Serializes a committed process boundary.
@@ -549,7 +606,29 @@ impl Process {
         })
     }
 
-    fn exec_inner(&mut self, request: ActivationRequest) -> Result<Activation> {
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn apply_persisted_mutations(
+        &mut self,
+        version_before: u64,
+        version_after: u64,
+        mutations: &[Mutation],
+    ) -> Result<()> {
+        if self.version != version_before || version_before.checked_add(1) != Some(version_after) {
+            return Err(Error::InvalidPersistence(
+                "process version transition is invalid".into(),
+            ));
+        }
+        let mut root = self.root.as_ref().clone();
+        for mutation in mutations {
+            apply_mutation(&mut root, mutation)?;
+        }
+        validate_root(&root, &self.id, &self.limits)?;
+        self.root = Arc::new(root);
+        self.version = version_after;
+        Ok(())
+    }
+
+    fn exec_inner(&mut self, request: ActivationRequest) -> Result<(Activation, Vec<Mutation>)> {
         request.input.validate(&self.limits, false)?;
         let memory = self
             .read("/memory")?
@@ -586,7 +665,7 @@ impl Process {
             validate_script_source(name, script.source(), &self.limits)?;
         }
 
-        let version = self.version + 1;
+        let version = next_process_version(self.version)?;
         let staged_messages = lock(&state.messages)?.clone();
         let committed_messages = staged_messages
             .into_iter()
@@ -628,13 +707,44 @@ impl Process {
         self.root = Arc::new(new_root);
         self.version = version;
 
-        Ok(Activation {
-            output,
-            logs: lock(&state.logs)?.clone(),
-            messages: committed_messages,
-            version,
-            root_hash: self.root_hash(),
-        })
+        let mut mutations = lock(&state.mutations)?.clone();
+        if !committed_messages.is_empty() {
+            mutations.push(Mutation::Append {
+                path: "/system/outbox".into(),
+                values: committed_messages.iter().map(message_to_value).collect(),
+            });
+        }
+
+        Ok((
+            Activation {
+                output,
+                logs: lock(&state.logs)?.clone(),
+                messages: committed_messages,
+                version,
+                root_hash: self.root_hash(),
+            },
+            mutations,
+        ))
+    }
+}
+
+#[cfg_attr(not(feature = "persistence-turso"), allow(dead_code))]
+pub(crate) struct PreparedActivation {
+    candidate: Process,
+    activation: Activation,
+    mutations: Vec<Mutation>,
+    event_script: String,
+    version_before: u64,
+}
+
+#[cfg(feature = "persistence-turso")]
+impl PreparedActivation {
+    pub(crate) fn candidate(&self) -> &Process {
+        &self.candidate
+    }
+
+    pub(crate) fn mutations(&self) -> &[Mutation] {
+        &self.mutations
     }
 }
 
@@ -1058,6 +1168,7 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
 struct RuntimeState {
     committed_root: Arc<Value>,
     memory: Arc<Mutex<Value>>,
+    mutations: Arc<Mutex<Vec<Mutation>>>,
     logs: Arc<Mutex<Vec<LogRecord>>>,
     messages: Arc<Mutex<Vec<StagedMessage>>>,
     library_changes: Arc<Mutex<LibraryChanges>>,
@@ -1069,6 +1180,7 @@ impl RuntimeState {
         Self {
             committed_root: Arc::new(committed_root),
             memory: Arc::new(Mutex::new(memory)),
+            mutations: Arc::new(Mutex::new(Vec::new())),
             logs: Arc::new(Mutex::new(Vec::new())),
             messages: Arc::new(Mutex::new(Vec::new())),
             library_changes: Arc::new(Mutex::new(Vec::new())),
@@ -1123,6 +1235,7 @@ impl RuntimeState {
     fn checkpoint(&self) -> Result<RuntimeCheckpoint> {
         Ok(RuntimeCheckpoint {
             memory: lock(&self.memory)?.clone(),
+            mutations: lock(&self.mutations)?.clone(),
             logs: lock(&self.logs)?.clone(),
             messages: lock(&self.messages)?.clone(),
             library_changes: lock(&self.library_changes)?.clone(),
@@ -1131,6 +1244,7 @@ impl RuntimeState {
 
     fn restore(&self, checkpoint: RuntimeCheckpoint) -> Result<()> {
         *lock(&self.memory)? = checkpoint.memory;
+        *lock(&self.mutations)? = checkpoint.mutations;
         *lock(&self.logs)? = checkpoint.logs;
         *lock(&self.messages)? = checkpoint.messages;
         *lock(&self.library_changes)? = checkpoint.library_changes;
@@ -1141,9 +1255,13 @@ impl RuntimeState {
         if let Some(memory_path) = memory_path(path)? {
             value.validate(limits, false)?;
             let mut candidate = lock(&self.memory)?.clone();
-            set_value_path(&mut candidate, memory_path, value)?;
+            set_value_path(&mut candidate, memory_path, value.clone())?;
             candidate.validate(limits, false)?;
             *lock(&self.memory)? = candidate;
+            lock(&self.mutations)?.push(Mutation::Set {
+                path: path.into(),
+                value,
+            });
             return Ok(());
         }
         if let Some(name) = library_path(path)? {
@@ -1153,7 +1271,11 @@ impl RuntimeState {
             if changes.len() >= limits.max_staged_scripts {
                 return Err(Error::ResourceLimitExceeded("staged scripts"));
             }
-            changes.push((name.into(), Some(script)));
+            changes.push((name.into(), Some(script.clone())));
+            lock(&self.mutations)?.push(Mutation::Set {
+                path: path.into(),
+                value: Value::Script(script),
+            });
             return Ok(());
         }
         Err(Error::InvalidPath(path.into()))
@@ -1165,6 +1287,7 @@ impl RuntimeState {
             remove_value_path(&mut candidate, memory_path)?;
             candidate.validate(limits, false)?;
             *lock(&self.memory)? = candidate;
+            lock(&self.mutations)?.push(Mutation::Remove { path: path.into() });
             return Ok(());
         }
         if let Some(name) = library_path(path)? {
@@ -1176,6 +1299,7 @@ impl RuntimeState {
                 return Err(Error::ResourceLimitExceeded("staged scripts"));
             }
             changes.push((name.into(), None));
+            lock(&self.mutations)?.push(Mutation::Remove { path: path.into() });
             return Ok(());
         }
         Err(Error::InvalidPath(path.into()))
@@ -1184,6 +1308,7 @@ impl RuntimeState {
 
 struct RuntimeCheckpoint {
     memory: Value,
+    mutations: Vec<Mutation>,
     logs: Vec<LogRecord>,
     messages: Vec<StagedMessage>,
     library_changes: LibraryChanges,
@@ -1616,6 +1741,93 @@ fn set_value_path(root: &mut Value, path: &str, value: Value) -> Result<()> {
     }
 }
 
+#[cfg(feature = "persistence-turso")]
+fn apply_mutation(root: &mut Value, mutation: &Mutation) -> Result<()> {
+    match mutation {
+        Mutation::Set { path, value } => {
+            persisted_path(path)?;
+            set_value_path(root, path, value.clone())
+        }
+        Mutation::Remove { path } => {
+            persisted_path(path)?;
+            remove_value_path(root, path)
+        }
+        Mutation::Append { path, values } => {
+            let target = value_path_mut(root, persisted_path(path)?)?;
+            let Value::Array(target) = target else {
+                return Err(Error::InvalidPersistence(
+                    "append target is not an array".into(),
+                ));
+            };
+            target.extend(values.iter().cloned());
+            Ok(())
+        }
+        Mutation::RemoveFront {
+            path,
+            expected_value_hash,
+        } => {
+            let target = value_path_mut(root, persisted_path(path)?)?;
+            let Value::Array(target) = target else {
+                return Err(Error::InvalidPersistence(
+                    "remove-front target is not an array".into(),
+                ));
+            };
+            let first = target
+                .first()
+                .ok_or_else(|| Error::InvalidPersistence("remove-front target is empty".into()))?;
+            if root_hash(first)? != *expected_value_hash {
+                return Err(Error::InvalidPersistence(
+                    "remove-front precondition failed".into(),
+                ));
+            }
+            target.remove(0);
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "persistence-turso")]
+fn persisted_path(path: &str) -> Result<&str> {
+    let path = path
+        .strip_prefix('/')
+        .ok_or_else(|| Error::InvalidPersistence("event path is not absolute".into()))?;
+    if path.is_empty() {
+        return Err(Error::InvalidPersistence(
+            "event cannot replace the complete root".into(),
+        ));
+    }
+    Ok(path)
+}
+
+#[cfg(feature = "persistence-turso")]
+fn value_path_mut<'a>(root: &'a mut Value, path: &str) -> Result<&'a mut Value> {
+    let mut current = root;
+    for segment in path.split('/') {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(Error::InvalidPersistence("event path is invalid".into()));
+        }
+        current = match current {
+            Value::Map(values) => values
+                .get_mut(segment)
+                .ok_or_else(|| Error::InvalidPersistence("event path is missing".into()))?,
+            Value::Array(values) => {
+                let index = segment
+                    .parse::<usize>()
+                    .map_err(|_| Error::InvalidPersistence("event array path is invalid".into()))?;
+                values
+                    .get_mut(index)
+                    .ok_or_else(|| Error::InvalidPersistence("event path is missing".into()))?
+            }
+            _ => {
+                return Err(Error::InvalidPersistence(
+                    "event path crosses a scalar".into(),
+                ));
+            }
+        };
+    }
+    Ok(current)
+}
+
 fn remove_value_path(root: &mut Value, path: &str) -> Result<()> {
     let segments = path_segments(path)?;
     if segments.is_empty() {
@@ -1820,6 +2032,12 @@ fn root_hash(root: &Value) -> Result<String> {
         .map_err(|error| Error::InvalidSnapshot(sanitize_diagnostic(error)))?;
     let digest = Sha256::digest(bytes);
     Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn next_process_version(version: u64) -> Result<u64> {
+    version
+        .checked_add(1)
+        .ok_or(Error::ResourceLimitExceeded("process version"))
 }
 
 fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>> {

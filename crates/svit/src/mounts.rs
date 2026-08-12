@@ -5,6 +5,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
+#[cfg(feature = "turso-mount")]
 use turso::{Connection, IntoParams};
 
 use crate::{Error, Limits, Result, Value};
@@ -36,6 +37,7 @@ impl SnapshotMount {
     /// Each row is a map keyed by its result-column names. Turso blobs are
     /// rejected because Svit's persistent value model does not yet include
     /// byte strings.
+    #[cfg(feature = "turso-mount")]
     pub async fn turso_query(
         connection: &Connection,
         sql: impl AsRef<str>,
@@ -154,6 +156,7 @@ fn validate_mount_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "turso-mount")]
 fn validate_columns(columns: &[String]) -> Result<()> {
     let unique = columns.iter().collect::<BTreeSet<_>>();
     if columns.is_empty() || unique.len() != columns.len() || columns.iter().any(String::is_empty) {
@@ -307,6 +310,7 @@ mod tests {
 
     #[tokio::test]
     // THREAT[TM-DOS-007]
+    #[cfg(feature = "turso-mount")]
     async fn turso_query_mount_records_typed_rows() {
         let database = turso::Builder::new_local(":memory:").build().await.unwrap();
         let connection = database.connect().unwrap();

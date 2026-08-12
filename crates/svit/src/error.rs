@@ -72,6 +72,30 @@ pub enum Error {
     /// The in-memory process controller cannot access its serialized state.
     #[error("process controller unavailable")]
     ControlUnavailable,
+
+    /// No persisted process exists at the requested logical address.
+    #[error("persisted process not found: {0}")]
+    PersistenceNotFound(String),
+
+    /// A persisted process already exists at the requested logical address.
+    #[error("persisted process already exists: {0}")]
+    PersistenceAlreadyExists(String),
+
+    /// The persisted head changed before this transaction could commit.
+    #[error("persisted process head conflict")]
+    PersistenceConflict,
+
+    /// Retained fork history prevents the requested lifecycle change.
+    #[error("persisted process history is referenced by a fork")]
+    PersistenceReferenced,
+
+    /// Persisted bytes or metadata violate the event-source invariants.
+    #[error("invalid persisted process: {0}")]
+    InvalidPersistence(String),
+
+    /// The persistence engine could not complete an operation safely.
+    #[error("persistence store unavailable")]
+    PersistenceUnavailable,
 }
 
 /// Convenient result alias for the Svit API.

@@ -73,6 +73,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-EFF` | Atomicity and external-effect ordering |
 | `TM-INT` | Panics and diagnostic disclosure |
 | `TM-AUD` | Audit and replay integrity |
+| `TM-PERS` | Durable event integrity and atomicity |
 | `TM-SUP` | Interpreter and dependency supply chain |
 
 ## Initial threats
@@ -87,6 +88,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-DOS-006` | Nested script execution resets the wall-time budget or exhausts the native stack | Shared activation deadline plus an independent hard nested-exec depth | MITIGATED for Svit Lisp nested `exec` |
 | `TM-DOS-007` | Importing a hostile folder or SQL result exhausts host resources before process validation | Incremental entry/text bounds and an outer host deadline for SQL execution | PARTIAL — materialized data is bounded; SQL execution has no mount-owned deadline |
 | `TM-DOS-008` | A model-authored built-in request monopolizes CPU, memory, or output | Common JSON input/output caps; linear-time bounded regex search; jq filter/result caps with recursive and generator constructs rejected | PARTIAL — built-in and extension output rejection evidence passes; extension CPU work and jaq still require native-process outer containment |
+| `TM-DOS-009` | A hostile event, replay tail, fork chain, or query exhausts storage-process resources | Event byte cap, replay/fork/query count limits, and bounded query text | PARTIAL — focused event-query limit evidence passes; aggregate database size, snapshot bytes, and wall-time budgets remain |
 | `TM-ESC-001` | Guest reaches filesystem, network, environment, modules, FFI, or host processes | Fresh VM, null I/O, null module loader, typed host functions, and denial tests | MITIGATED for the Svit Lisp API |
 | `TM-ESC-002` | Malformed guest value exploits interpreter/Rust conversion | Immutable typed containers, total conversion over supported types, checked sizes, and fuzzing | PARTIAL — unsupported-function and boundary tests pass; fuzzing remains |
 | `TM-ESC-003` | A model-authored built-in request reaches the host filesystem, executable search path, or inherited environment | Built-ins accept only committed process values or explicit JSON and expose no shell, filesystem, process, or environment interface | PARTIAL — focused tests pass; the surrounding agent runtime remains native in-process code |
@@ -103,6 +105,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-SNAP-002` | Snapshot hash is mistaken for authenticity | Document hash as integrity only; future authenticity requires host signatures | OPEN |
 | `TM-FORK-001` | Child writes mutate parent or sibling | Isolated committed roots, empty child outbox, and fork tests | MITIGATED for the in-memory process API |
 | `TM-FORK-002` | `spawn` amplifies parent authority or aliases parent state | Fork committed state through `Process::fork`, supply child model authority separately, reserve child addresses, and retain isolated child snapshots | PARTIAL — focused isolation and lineage evidence passes; durable supervision and capability attenuation are not implemented |
+| `TM-FORK-003` | A history cut removes an event boundary still needed to restore a fork | Transactional fork-reference index; refuse parent cuts until each child is detached by its own snapshot cut | MITIGATED for the local Turso process store |
 | `TM-CAP-001` | A string or reflected value forges authority | Mounts contain persistent snapshot values only; future live references use unforgeable host handles | MITIGATED for snapshot mounts |
 | `TM-CAP-002` | An untrusted model uses generic mutation or an unintended script beyond its domain workflow | Host-selected tool attenuation and script allowlisting before process activation | MITIGATED for the Everruns read/exec capability mode |
 | `TM-CAP-003` | A folder mount escapes its configured root through a link or special file | Host-only root selection, link and special-file rejection, bounded UTF-8 import, and no guest-visible handles | PARTIAL — encountered links are rejected; concurrent source-tree replacement is caller-controlled |
@@ -112,6 +115,8 @@ The same ID appears in at least one focused test before status changes to
 | `TM-AUTH-001` | Client-controlled identifiers are mistaken for authenticated identity or a tenant boundary | API and docs distinguish identifiers from identity; a future transport authenticates and authorizes before tenant-scoped receipt lookup | REQUIRED |
 | `TM-INT-001` | Panic crosses the activation boundary or poisons committed state | Panic containment outside guest transaction and unchanged-state tests | REQUIRED |
 | `TM-AUD-001` | Guest code or model tools rewrite durable thread history or diverge its message projection from canonical events | Host-managed `/thread` mutation boundary, process-backed `EventLog`, event-derived messages, and session/ID/sequence/projection validation on resume | MITIGATED for the in-memory process API |
+| `TM-PERS-001` | Corrupted, reordered, deleted, or spliced persisted events reconstruct attacker-selected state | Content-addressed blobs, base-bound hash chain, stable positions, typed reducer, complete root validation, and resulting-root checks | PARTIAL — corruption and resume/reducer evidence passes; authenticated storage and systematic fault injection remain |
+| `TM-PERS-002` | A failed or concurrent durable append publishes a partial event, projection, head, or in-memory state | One immediate Turso transaction plus address-head compare-and-swap; publish the prepared process only after commit | MITIGATED for the local Turso process store |
 | `TM-SUP-001` | Vulnerable interpreter or dependency compromises the boundary | Lockfile, pinned toolchain, audit/deny/vet gates, and defense-in-depth isolation plan | REQUIRED |
 
 ## Security claims for the initial slice

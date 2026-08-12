@@ -16,6 +16,7 @@ test:
 # Run every deterministic acceptance example.
 examples:
     cargo run --locked -p svit --example durable_counter
+    cargo run --locked -p svit --example event_persistence
     cargo run --locked -p svit --example self_authoring_library
     cargo run --locked -p svit --example atomic_outbox
     cargo run --locked -p svit --example fork_research
@@ -41,8 +42,14 @@ check-okf:
         echo "okf-lint not installed; skipping upstream lint"
     fi
 
+# Prove the persistence contract and each Turso integration compile independently.
+check-features:
+    cargo clippy -p svit --no-default-features --all-targets --locked -- -D warnings
+    cargo clippy -p svit --no-default-features --features persistence-turso --all-targets --locked -- -D warnings
+    cargo clippy -p svit --no-default-features --features turso-mount --all-targets --locked -- -D warnings
+
 # Run local formatting, linting, tests, docs, and repository validators.
-check: check-okf
+check: check-okf check-features
     cargo fmt --all -- --check
     cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
     cargo test --workspace --locked

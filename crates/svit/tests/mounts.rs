@@ -1,7 +1,10 @@
 use std::path::PathBuf;
 
-use svit::{Error, Limits, Process, Script, SnapshotMount, value};
+#[cfg(feature = "turso-mount")]
+use svit::Script;
+use svit::{Error, Limits, Process, SnapshotMount, value};
 
+#[cfg(feature = "turso-mount")]
 const READ_MOUNTS: &str = r#"
     (define (main input)
       (value-map
@@ -14,6 +17,7 @@ fn fixture_folder() -> PathBuf {
 }
 
 #[tokio::test]
+#[cfg(feature = "turso-mount")]
 async fn folder_and_turso_mounts_are_guest_readable_and_snapshot_stable() {
     let limits = Limits::default();
     let database = turso::Builder::new_local(":memory:").build().await.unwrap();
