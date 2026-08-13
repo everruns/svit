@@ -31,9 +31,18 @@
   of materializing it, reporting when a bound truncated the walk
   (`TM-DOS-010`).
 * **Lampa mounts the working directory**: The console mounts the current
-  directory read-only as `cwd`, accepts `--mount name=path` and
-  `--mount-rw name=path`, and browses `/mounts` lazily — listings on expand,
-  content on selection, bounded per directory, and discarded on each commit.
+  directory read-only as `cwd` and accepts `--mount name=path` and
+  `--mount-rw name=path`.
+* **One console namespace**: Lampa holds no copy of the process root and no
+  separate mount browser. It resolves every node — memory, scripts, system
+  metadata, or mounted folder — through `discover`, `stat`, and `read`, so
+  mounts are represented through the same interface as the rest of the tree.
+  Listings are fetched on expand, content on selection and for array-item
+  summaries, bounded per directory, and re-resolved on each commit. A `content`
+  fact on directory nodes completes the vocabulary the console needs to
+  distinguish an array from a map without reading it. Restoring the selected
+  row across a commit is now explicit state rather than a side effect of
+  holding the whole root.
 * **Compatibility**: Bumped snapshots to format 7 for the descriptor-only
   `/mounts` schema and the `max_mount_entries` and `max_mount_writes` limits.
 

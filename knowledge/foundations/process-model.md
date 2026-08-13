@@ -65,9 +65,16 @@ committed root, so mount size is independent of process size and snapshot cost.
 Every node answers `stat` with the same facts record: `kind`
 (`directory`, `leaf`, or `missing`), `access`, `locality`, `mount`, `path`,
 `source`, `attached`, and provider `facts` such as byte size, modification
-time, or the folder's git branch and commit. Committed nodes answer the same
-shape with `locality: cache`, so one vocabulary describes the whole tree and a
-caller can weigh the cost of a read before making it.
+time, or the folder's git branch and commit. A `content` fact names the shape —
+`object`, `array`, `text/plain`, `svit-script`, or `scalar` — so a caller can
+tell an array from a map without reading either. Committed nodes answer the
+same shape with `locality: cache`, so one vocabulary describes the whole tree
+and a caller can weigh the cost of a read before making it.
+
+Because `discover`, `stat`, and `read` answer for committed state and mounts
+alike, a client browses one namespace. The Lampa console relies on exactly
+that: it holds no committed root of its own and resolves every node — memory,
+scripts, or mounted folder — through the same three operations.
 
 `locality` is the cost class, not a guarantee: `cache` is already in host
 memory, `local` is host-machine I/O, and `remote` is network-bound and

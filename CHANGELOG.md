@@ -20,6 +20,12 @@ All notable changes to Svit will be documented here.
   mount nodes are resolved rather than borrowed from committed state.
 - Bump snapshots to format 7 for the descriptor-only `/mounts` schema and the
   new `max_mount_entries` and `max_mount_writes` limits.
+- Browse one namespace in Lampa. The console no longer holds a copy of the
+  process root or a separate mount browser: every node is resolved through
+  `discover`, `stat`, and `read`, so a mounted folder is browsed exactly like
+  committed memory. Listings are fetched on expand, content on selection and
+  for array-item summaries, bounded at 200 children per directory, and
+  re-resolved on each committed version.
 
 - Track Everruns `main` and compose the process-owned loop through the
   `everruns-host` backend, canonical event-log, and provider/model contracts.
@@ -59,9 +65,10 @@ All notable changes to Svit will be documented here.
 - Mount-aware `search`: the built-in walks a mount subtree node by node under
   an independent node budget and reports when a bound truncated the walk.
 - Lampa mounts the current directory read-only as `cwd` and accepts
-  `--mount name=path` and `--mount-rw name=path`. Its `/mounts` tree is browsed
-  lazily — listings on expand, content on selection, bounded per directory —
-  and is discarded on each committed version.
+  `--mount name=path` and `--mount-rw name=path`.
+- A `content` fact on directory nodes (`object` or `array`) completes the
+  `stat` vocabulary, so a client can tell an array from a map without reading
+  it.
 
 
 - Initial Rust workspace with the `svit` library and Lampa process console.
@@ -103,6 +110,12 @@ All notable changes to Svit will be documented here.
   atomic owned value/version reads, and sanitized terminal failures without
   exposing the mutable process tree or channel implementation.
 - Bounded Lampa array-row previews for scalar and object items.
+
+### Fixed
+
+- Keep the selected Lampa row across a committed version. The console now
+  remembers the path and restores it once the tree resolves it again, instead
+  of falling back to the root.
 
 ### Security
 

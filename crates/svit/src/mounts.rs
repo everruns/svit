@@ -808,7 +808,9 @@ impl MountProvider for FolderMount {
             .map(|elapsed| Value::Integer(elapsed.as_secs() as i64))
             .unwrap_or(Value::Null);
         let node = if metadata.is_dir() {
-            let mut node = MountNode::directory().fact("modified_unix", modified);
+            let mut node = MountNode::directory()
+                .fact("content", Value::from("object"))
+                .fact("modified_unix", modified);
             if path.is_root()
                 && let Some(git) = self.git_facts()
             {

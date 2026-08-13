@@ -1174,11 +1174,17 @@ fn committed_stat_value(path: &str, value: &Value) -> Value {
     let (kind, facts) = match value {
         Value::Map(values) => (
             "directory",
-            BTreeMap::from([("entries".into(), Value::Integer(values.len() as i64))]),
+            BTreeMap::from([
+                ("content".into(), Value::from("object")),
+                ("entries".into(), Value::Integer(values.len() as i64)),
+            ]),
         ),
         Value::Array(values) => (
             "directory",
-            BTreeMap::from([("entries".into(), Value::Integer(values.len() as i64))]),
+            BTreeMap::from([
+                ("content".into(), Value::from("array")),
+                ("entries".into(), Value::Integer(values.len() as i64)),
+            ]),
         ),
         Value::String(text) => (
             "leaf",

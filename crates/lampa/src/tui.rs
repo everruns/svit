@@ -16,13 +16,10 @@ const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
 const MAX_INLINE_VALUE_BYTES: usize = 160;
 const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
-/// Mount children shown under one directory row.
-///
-/// A mount directory has no committed size, so the browser bounds what it
-/// lists rather than trusting the source.
-const MAX_MOUNT_CHILDREN: usize = 200;
+/// Children shown under one directory row.
+const MAX_TREE_CHILDREN: usize = 200;
 
-/// Placeholder for a mount node the browser has not resolved yet.
+/// Placeholder for a node the tree has not resolved yet.
 static PENDING_VALUE: Value = Value::Null;
 
 fn lampa_theme() -> Theme {
@@ -120,29 +117,119 @@ struct TreeRow {
     expandable: bool,
 }
 
-/// Lazily resolved view of the `/mounts` subtree.
+/// The process operations the console browses a tree with.
 ///
-/// Mount data is not part of the committed root, so the console resolves one
-/// node at a time: listings when a directory is opened, content when a node is
-/// selected. Nothing below `/mounts` is fetched until it is on screen.
+/// Memory, scripts, system metadata, and mounts all answer the same three
+/// questions, so the console has one node interface and no special case for
+/// `/mounts`.
+trait ProcessView {
+    fn discover(&self, path: &str) -> Result<Vec<String>, String>;
+    fn stat(&self, path: &str) -> Result<Option<Value>, String>;
+    fn read(&self, path: &str) -> Result<Option<Value>, String>;
+    fn version(&self) -> u64;
+}
+
+impl ProcessView for Svit {
+    fn discover(&self, path: &str) -> Result<Vec<String>, String> {
+        Svit::discover(self, path).map_err(|error| error.to_string())
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Value>, String> {
+        Svit::stat(self, path).map_err(|error| error.to_string())
+    }
+
+    fn read(&self, path: &str) -> Result<Option<Value>, String> {
+        Svit::read(self, path).map_err(|error| error.to_string())
+    }
+
+    fn version(&self) -> u64 {
+        Svit::version(self).unwrap_or_default()
+    }
+}
+
+/// What the console knows about one node before reading its content.
+#[derive(Clone, Debug, PartialEq)]
+struct Node {
+    directory: bool,
+    /// `cache`, `local`, or `remote`. The console reads content eagerly only
+    /// where the process says it is already resident.
+    locality: String,
+    /// The `content` fact, such as `object`, `array`, or `text/plain`.
+    content: String,
+}
+
+impl Node {
+    fn from_facts(facts: &Value) -> Self {
+        let field = |name: &str| match facts {
+            Value::Map(fields) => match fields.get(name) {
+                Some(Value::String(value)) => Some(value.clone()),
+                _ => None,
+            },
+            _ => None,
+        };
+        Self {
+            directory: field("kind").as_deref() == Some("directory"),
+            locality: field("locality").unwrap_or_else(|| "remote".into()),
+            content: field("content").unwrap_or_default(),
+        }
+    }
+
+    fn missing() -> Self {
+        Self {
+            directory: false,
+            locality: "cache".into(),
+            content: String::new(),
+        }
+    }
+
+    fn unreachable() -> Self {
+        Self {
+            directory: false,
+            locality: "remote".into(),
+            content: String::new(),
+        }
+    }
+
+    fn resident(&self) -> bool {
+        self.locality == "cache"
+    }
+
+    fn array(&self) -> bool {
+        self.content == "array"
+    }
+}
+
+/// Lazily resolved view of one process tree.
+///
+/// Nothing is fetched until it is on screen: a directory is listed when it is
+/// expanded, and content is read for the selected node and for rows that need
+/// a value to summarize. The console holds no committed root of its own.
 #[derive(Default)]
-struct MountBrowser {
+struct ProcessTree {
+    nodes: BTreeMap<String, Node>,
     children: BTreeMap<String, Vec<String>>,
-    directories: BTreeMap<String, bool>,
     values: BTreeMap<String, Value>,
     truncated: BTreeSet<String>,
 }
 
-impl MountBrowser {
+impl ProcessTree {
     fn clear(&mut self) {
+        self.nodes.clear();
         self.children.clear();
-        self.directories.clear();
         self.values.clear();
         self.truncated.clear();
     }
 
-    fn is_directory(&self, path: &str) -> Option<bool> {
-        self.directories.get(path).copied()
+    fn resolved(&self) -> usize {
+        self.nodes.len() + self.children.len() + self.values.len()
+    }
+
+    fn node(&self, path: &str) -> Option<&Node> {
+        self.nodes.get(path)
+    }
+
+    fn is_directory(&self, path: &str) -> bool {
+        self.node(path).is_some_and(|node| node.directory)
     }
 
     fn children(&self, path: &str) -> &[String] {
@@ -153,79 +240,66 @@ impl MountBrowser {
         self.values.get(path)
     }
 
-    /// Resolves exactly what the current tree and selection need.
-    fn resolve(&mut self, svit: &Svit, expanded: &BTreeSet<String>, root: &Value, selected: &str) {
-        if expanded.contains("/mounts")
-            && let Some(Value::Map(mounts)) = value_at_path(root, "/mounts")
-        {
-            for name in mounts.keys() {
-                self.resolve_kind(svit, &format!("/mounts/{name}"));
-            }
-        }
-        // Expanded paths iterate parent-before-child, so a directory's kind is
-        // always known by the time its own listing is requested.
-        for path in expanded.iter().filter(|path| is_mount_path(path)) {
-            if self.children.contains_key(path) || self.is_directory(path) != Some(true) {
-                continue;
-            }
-            let mut names = match svit.discover(path) {
-                Ok(names) => names,
-                Err(error) => {
-                    self.children.insert(path.clone(), Vec::new());
-                    self.values
-                        .insert(path.clone(), Value::String(error.to_string()));
-                    continue;
-                }
-            };
-            if names.len() > MAX_MOUNT_CHILDREN {
-                names.truncate(MAX_MOUNT_CHILDREN);
-                self.truncated.insert(path.clone());
-            }
-            for name in &names {
-                self.resolve_kind(svit, &format!("{path}/{name}"));
-            }
-            self.children.insert(path.clone(), names);
-        }
-        if is_mount_path(selected) && !self.values.contains_key(selected) {
-            let value = match svit.read(selected) {
-                Ok(Some(value)) => value,
-                Ok(None) => Value::Null,
-                Err(error) => Value::String(error.to_string()),
-            };
-            self.values.insert(selected.to_owned(), value);
-        }
-    }
-
-    fn resolve_kind(&mut self, svit: &Svit, path: &str) {
-        if self.directories.contains_key(path) {
+    fn resolve_node(&mut self, view: &dyn ProcessView, path: &str) {
+        if self.nodes.contains_key(path) {
             return;
         }
-        let directory = matches!(
-            svit.stat(path),
-            Ok(Some(Value::Map(ref facts)))
-                if facts.get("kind") == Some(&Value::String("directory".into()))
-        );
-        self.directories.insert(path.to_owned(), directory);
-    }
-}
-
-fn is_mount_path(path: &str) -> bool {
-    path.starts_with("/mounts/")
-}
-
-fn value_at_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    if path == "/" {
-        return Some(root);
-    }
-    let mut current = root;
-    for segment in path.trim_start_matches('/').split('/') {
-        current = match current {
-            Value::Map(values) => values.get(segment)?,
-            Value::Array(values) => values.get(segment.parse::<usize>().ok()?)?,
-            _ => return None,
+        let node = match view.stat(path) {
+            Ok(Some(facts)) => Node::from_facts(&facts),
+            Ok(None) => Node::missing(),
+            Err(error) => {
+                // An unreachable node still occupies a row; its failure becomes
+                // the value the preview shows.
+                self.values.insert(path.to_owned(), Value::String(error));
+                Node::unreachable()
+            }
         };
+        self.nodes.insert(path.to_owned(), node);
     }
-    Some(current)
+
+    fn resolve_children(&mut self, view: &dyn ProcessView, path: &str) {
+        if self.children.contains_key(path) || !self.is_directory(path) {
+            return;
+        }
+        let mut names = match view.discover(path) {
+            Ok(names) => names,
+            Err(error) => {
+                self.children.insert(path.to_owned(), Vec::new());
+                self.values.insert(path.to_owned(), Value::String(error));
+                return;
+            }
+        };
+        // A directory has no committed size, so one listing is bounded here
+        // rather than trusting the source.
+        if names.len() > MAX_TREE_CHILDREN {
+            names.truncate(MAX_TREE_CHILDREN);
+            self.truncated.insert(path.to_owned());
+        }
+        for name in &names {
+            self.resolve_node(view, &child_path(path, name));
+        }
+        self.children.insert(path.to_owned(), names);
+    }
+
+    fn resolve_value(&mut self, view: &dyn ProcessView, path: &str) {
+        if self.values.contains_key(path) {
+            return;
+        }
+        let value = match view.read(path) {
+            Ok(Some(value)) => value,
+            Ok(None) => Value::Null,
+            Err(error) => Value::String(error),
+        };
+        self.values.insert(path.to_owned(), value);
+    }
+}
+
+fn child_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent}/{name}")
+    }
 }
 
 fn parent_path(path: &str) -> String {
@@ -250,9 +324,8 @@ struct PreviewCache {
 struct App {
     focus: Focus,
     tree: SelectState,
-    root: Value,
+    nodes: ProcessTree,
     expanded: BTreeSet<String>,
-    mounts: MountBrowser,
     memory_viewport_height: usize,
     memory_window_start: usize,
     panel_bounds: PanelBounds,
@@ -262,6 +335,8 @@ struct App {
     preview_content_height: usize,
     preview_cache: Option<PreviewCache>,
     rows: Vec<TreeRow>,
+    /// A row path to reselect once the tree resolves it again.
+    pending_selection: Option<String>,
     timeline: Vec<TimelineEntry>,
     working: bool,
     failure: Option<String>,
@@ -270,18 +345,17 @@ struct App {
 }
 
 impl App {
-    fn new(root: Value, version: u64, model: String) -> Self {
+    fn new(version: u64, model: String) -> Self {
         let mut preview_scroll = ScrollState::new();
         preview_scroll.jump_to_top();
         let expanded = BTreeSet::from(["/".into()]);
-        let mounts = MountBrowser::default();
-        let rows = tree_rows(&root, &expanded, &mounts);
+        let nodes = ProcessTree::default();
+        let rows = tree_rows(&expanded, &nodes);
         Self {
             focus: Focus::Composer,
             tree: SelectState::new(),
-            root,
+            nodes,
             expanded,
-            mounts,
             memory_viewport_height: 1,
             memory_window_start: 0,
             panel_bounds: PanelBounds::default(),
@@ -291,6 +365,7 @@ impl App {
             preview_content_height: 1,
             preview_cache: None,
             rows,
+            pending_selection: None,
             timeline: Vec::new(),
             working: false,
             failure: None,
@@ -305,39 +380,69 @@ impl App {
     }
 
     fn selected_value(&self) -> &Value {
-        let path = &self.selected().path;
-        if is_mount_path(path) {
-            return self.mounts.value(path).unwrap_or(&PENDING_VALUE);
-        }
-        value_at_path(&self.root, path).unwrap_or(&PENDING_VALUE)
+        self.nodes
+            .value(&self.selected().path)
+            .unwrap_or(&PENDING_VALUE)
     }
 
-    /// Fetches the mount nodes the current tree and selection need.
+    /// Resolves what the current tree and selection need, and nothing else.
     ///
-    /// Called once per frame so mount reads follow what is on screen instead
-    /// of walking the whole source.
-    fn resolve_mounts(&mut self, svit: &Svit) {
+    /// Runs once per frame. Every node goes through the same three process
+    /// operations, so a mounted folder and committed memory are browsed the
+    /// same way.
+    fn resolve(&mut self, view: &dyn ProcessView) {
+        let before = self.nodes.resolved();
+        self.nodes.resolve_node(view, "/");
+        // Expanded paths iterate parent before child, so a directory's kind is
+        // known by the time its own listing is requested.
+        for path in self.expanded.clone() {
+            self.nodes.resolve_children(view, &path);
+        }
+        self.rows = tree_rows(&self.expanded, &self.nodes);
+        // A commit discards every resolved node, so the row the operator was
+        // reading is restored once its ancestors are listed again.
+        if let Some(path) = self.pending_selection.take() {
+            self.tree
+                .select(Some(self.visible_index_or_ancestor(&path)));
+            self.keep_tree_selection_visible();
+        }
+
+        // A row needs a value only to summarize an array item; the selected
+        // row needs one for its preview. Content is read eagerly only where
+        // the process reports it is already resident.
+        let summarized = self
+            .rows
+            .iter()
+            .filter(|row| {
+                self.nodes
+                    .node(&row.path)
+                    .is_some_and(|node| node.resident())
+                    && self
+                        .nodes
+                        .node(&parent_path(&row.path))
+                        .is_some_and(Node::array)
+            })
+            .map(|row| row.path.clone())
+            .collect::<Vec<_>>();
+        for path in summarized {
+            self.nodes.resolve_value(view, &path);
+        }
         let selected = self.selected().path.clone();
-        let before = self.mounts.children.len() + self.mounts.values.len();
-        self.mounts
-            .resolve(svit, &self.expanded, &self.root, &selected);
-        if before != self.mounts.children.len() + self.mounts.values.len() {
+        self.nodes.resolve_value(view, &selected);
+
+        if before != self.nodes.resolved() {
             self.preview_cache = None;
             self.rebuild_tree(&selected);
         }
     }
 
-    fn refresh_process(&mut self, root: Value, version: u64) {
-        let selected_path = self.selected().path.clone();
-        self.root = root;
-        // Mount sources are external; a new committed version is the natural
-        // point to stop trusting what was resolved earlier.
-        self.mounts.clear();
-        self.rows = tree_rows(&self.root, &self.expanded, &self.mounts);
+    fn refresh_process(&mut self, version: u64) {
+        // A new committed version is the point to stop trusting anything
+        // resolved earlier, committed or external.
+        self.pending_selection = Some(self.selected().path.clone());
+        self.nodes.clear();
+        self.rows = tree_rows(&self.expanded, &self.nodes);
         self.preview_cache = None;
-        let selected = self.visible_index_or_ancestor(&selected_path);
-        self.tree.select(Some(selected));
-        self.keep_tree_selection_visible();
         self.version = version;
     }
 
@@ -355,7 +460,7 @@ impl App {
     }
 
     fn rebuild_tree(&mut self, selected_path: &str) {
-        self.rows = tree_rows(&self.root, &self.expanded, &self.mounts);
+        self.rows = tree_rows(&self.expanded, &self.nodes);
         self.tree
             .select(Some(self.visible_index_or_ancestor(selected_path)));
         self.keep_tree_selection_visible();
@@ -684,8 +789,7 @@ enum AppAction {
 }
 
 pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
-    let (root, version) = read_root(&svit)?;
-    let mut app = App::new(root, version, model);
+    let mut app = App::new(ProcessView::version(&svit), model);
     let inbox = svit.inbox();
     let mut events = svit.events();
     let mut outbox = svit.outbox();
@@ -718,19 +822,16 @@ fn run_terminal(
         loop {
             while let Ok(event) = events.try_recv() {
                 match event {
-                    SvitEvent::Committed => {
-                        let (root, version) = read_root(svit)?;
-                        app.refresh_process(root, version);
-                    }
+                    SvitEvent::Committed => app.refresh_process(ProcessView::version(svit)),
                     SvitEvent::Failed(error) => app.push_error(error),
                 }
             }
             while let Ok(message) = outbox.try_recv() {
                 app.push_assistant(message);
             }
-            // Mounts resolve here, once per frame, so the console fetches only
-            // the nodes the visible tree and current selection need.
-            app.resolve_mounts(svit);
+            // The tree resolves here, once per frame, so the console fetches
+            // only the nodes the visible tree and current selection need.
+            app.resolve(svit);
 
             terminal
                 .draw(|frame| {
@@ -766,205 +867,84 @@ fn run_terminal(
     result
 }
 
-fn read_root(svit: &Svit) -> Result<(Value, u64), String> {
-    let (root, version) = svit
-        .read_versioned("/")
-        .map_err(|error| error.to_string())?;
-    let root = root.ok_or_else(|| "Svit process root is unavailable".to_owned())?;
-    Ok((root, version))
-}
-
-fn has_children(value: &Value) -> bool {
-    match value {
-        Value::Map(values) => !values.is_empty(),
-        Value::Array(values) => !values.is_empty(),
-        _ => false,
-    }
-}
-
-#[cfg(test)]
-fn expandable_paths(root: &Value) -> BTreeSet<String> {
-    fn collect(value: &Value, path: &str, paths: &mut BTreeSet<String>) {
-        if !has_children(value) {
-            return;
-        }
-        paths.insert(path.to_owned());
-        match value {
-            Value::Map(values) => {
-                for (name, child) in values {
-                    let child_path = if path == "/" {
-                        format!("/{name}")
-                    } else {
-                        format!("{path}/{name}")
-                    };
-                    collect(child, &child_path, paths);
-                }
-            }
-            Value::Array(values) => {
-                for (index, child) in values.iter().enumerate() {
-                    let child_path = if path == "/" {
-                        format!("/{index}")
-                    } else {
-                        format!("{path}/{index}")
-                    };
-                    collect(child, &child_path, paths);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut paths = BTreeSet::new();
-    collect(root, "/", &mut paths);
-    paths
-}
-
-fn tree_rows(root: &Value, expanded: &BTreeSet<String>, mounts: &MountBrowser) -> Vec<TreeRow> {
-    let root_marker = if has_children(root) {
-        if expanded.contains("/") {
-            "▾ "
-        } else {
-            "▸ "
-        }
-    } else {
-        "  "
+fn tree_rows(expanded: &BTreeSet<String>, nodes: &ProcessTree) -> Vec<TreeRow> {
+    let expandable = nodes.is_directory("/");
+    let root_marker = match (expandable, expanded.contains("/")) {
+        (true, true) => "▾ ",
+        (true, false) => "▸ ",
+        (false, _) => "  ",
     };
     let mut rows = vec![TreeRow {
         label: format!("{root_marker}/"),
         path: "/".into(),
-        expandable: has_children(root),
+        expandable,
     }];
     if expanded.contains("/") {
-        flatten_memory(root, "/", "", true, expanded, mounts, &mut rows);
+        flatten_tree("/", "", true, expanded, nodes, &mut rows);
     }
     rows
 }
 
-/// One displayable child of a tree node.
-struct TreeChild {
-    label: String,
-    path: String,
-    expandable: bool,
-}
-
-/// Lists the children of one path from committed state or the mount browser.
-fn tree_children(
-    root: &Value,
-    path: &str,
-    expanded: &BTreeSet<String>,
-    mounts: &MountBrowser,
-) -> Vec<TreeChild> {
-    if is_mount_path(path) {
-        let mut children = mounts
-            .children(path)
-            .iter()
-            .map(|name| {
-                let child_path = format!("{path}/{name}");
-                TreeChild {
-                    label: name.clone(),
-                    expandable: mounts.is_directory(&child_path).unwrap_or(false),
-                    path: child_path,
-                }
-            })
-            .collect::<Vec<_>>();
-        if mounts.truncated.contains(path) {
-            children.push(TreeChild {
-                label: format!("… first {MAX_MOUNT_CHILDREN} entries"),
-                path: format!("{path}/…"),
-                expandable: false,
-            });
-        }
-        return children;
+/// Labels one child row from its own facts and, for array items, its value.
+fn tree_label(parent: &str, name: &str, path: &str, nodes: &ProcessTree) -> String {
+    if nodes.node(parent).is_some_and(Node::array) {
+        let summary = nodes
+            .value(path)
+            .map(tree_item_summary)
+            .unwrap_or_else(|| "…".into());
+        return format!("[{name}] - {summary}");
     }
-
-    let separator = if path == "/" { "" } else { path };
-    match value_at_path(root, path) {
-        Some(Value::Map(values)) => values
-            .iter()
-            .map(|(name, child)| {
-                let child_path = format!("{separator}/{name}");
-                TreeChild {
-                    label: mount_label(path, name, child),
-                    // An unresolved mount root stays openable so the first
-                    // expansion is what triggers the listing.
-                    expandable: if is_mount_path(&child_path) {
-                        mounts.is_directory(&child_path).unwrap_or(true)
-                    } else {
-                        has_children(child)
-                    },
-                    path: child_path,
-                }
-            })
-            .collect(),
-        Some(Value::Array(values)) => values
-            .iter()
-            .enumerate()
-            .map(|(index, child)| TreeChild {
-                label: format!("[{index}] - {}", tree_item_summary(child)),
-                path: format!("{separator}/{index}"),
-                expandable: has_children(child),
-            })
-            .collect(),
-        _ => {
-            let _ = expanded;
-            Vec::new()
-        }
-    }
-}
-
-/// Labels a mount root with the locality its descriptor declares.
-fn mount_label(parent: &str, name: &str, value: &Value) -> String {
-    if parent != "/mounts" {
-        return name.to_owned();
-    }
-    match value {
-        Value::Map(fields) => match fields.get("locality") {
-            Some(Value::String(locality)) => format!("{name} ({locality})"),
-            _ => name.to_owned(),
-        },
+    // A node whose content lives outside the process announces where reading
+    // it will go, so the cost of expanding a row is visible before opening it.
+    match nodes.node(path) {
+        Some(node) if !node.resident() => format!("{name} ({})", node.locality),
         _ => name.to_owned(),
     }
 }
 
-fn flatten_memory(
-    root: &Value,
+fn flatten_tree(
     path: &str,
     indent: &str,
     last_parent: bool,
     expanded: &BTreeSet<String>,
-    mounts: &MountBrowser,
+    nodes: &ProcessTree,
     rows: &mut Vec<TreeRow>,
 ) {
-    let children = tree_children(root, path, expanded, mounts);
+    let mut children = nodes
+        .children(path)
+        .iter()
+        .map(|name| {
+            let child = child_path(path, name);
+            let label = tree_label(path, name, &child, nodes);
+            let expandable = nodes.is_directory(&child);
+            (label, child, expandable)
+        })
+        .collect::<Vec<_>>();
+    if nodes.truncated.contains(path) {
+        children.push((
+            format!("… first {MAX_TREE_CHILDREN} entries"),
+            child_path(path, "…"),
+            false,
+        ));
+    }
+
     let next_indent = format!("{indent}{}", if last_parent { "  " } else { "│ " });
     let child_count = children.len();
-    for (index, child) in children.into_iter().enumerate() {
+    for (index, (label, child, expandable)) in children.into_iter().enumerate() {
         let last = index + 1 == child_count;
         let branch = if last { "└─" } else { "├─" };
-        let marker = if child.expandable {
-            if expanded.contains(&child.path) {
-                "▾ "
-            } else {
-                "▸ "
-            }
-        } else {
-            "  "
+        let marker = match (expandable, expanded.contains(&child)) {
+            (true, true) => "▾ ",
+            (true, false) => "▸ ",
+            (false, _) => "  ",
         };
         rows.push(TreeRow {
-            label: format!("{next_indent}{branch}{marker}{}", child.label),
-            path: child.path.clone(),
-            expandable: child.expandable,
+            label: format!("{next_indent}{branch}{marker}{label}"),
+            path: child.clone(),
+            expandable,
         });
-        if expanded.contains(&child.path) {
-            flatten_memory(
-                root,
-                &child.path,
-                &next_indent,
-                last,
-                expanded,
-                mounts,
-                rows,
-            );
+        if expanded.contains(&child) {
+            flatten_tree(&child, &next_indent, last, expanded, nodes, rows);
         }
     }
 }
@@ -1579,12 +1559,161 @@ mod tests {
     use svit::value;
     use tuika::testing::{grid, render};
 
-    fn layout(app: &mut App, width: u16, height: u16) -> UiProbes {
+    /// A [`ProcessView`] over one in-memory value.
+    ///
+    /// It answers `discover`, `stat`, and `read` exactly as a process does, so
+    /// the console under test browses the same node interface it does live.
+    struct ValueView {
+        root: Value,
+        version: u64,
+        /// Paths whose locality the process would report as non-resident.
+        localities: BTreeMap<String, String>,
+    }
+
+    impl ValueView {
+        fn new(root: Value) -> Self {
+            Self {
+                root,
+                version: 0,
+                localities: BTreeMap::new(),
+            }
+        }
+
+        fn locality(mut self, path: &str, locality: &str) -> Self {
+            self.localities.insert(path.to_owned(), locality.to_owned());
+            self
+        }
+
+        fn at(&self, path: &str) -> Option<&Value> {
+            if path == "/" {
+                return Some(&self.root);
+            }
+            let mut current = &self.root;
+            for segment in path.trim_start_matches('/').split('/') {
+                current = match current {
+                    Value::Map(values) => values.get(segment)?,
+                    Value::Array(values) => values.get(segment.parse::<usize>().ok()?)?,
+                    _ => return None,
+                };
+            }
+            Some(current)
+        }
+    }
+
+    impl ProcessView for ValueView {
+        fn discover(&self, path: &str) -> Result<Vec<String>, String> {
+            match self.at(path) {
+                Some(Value::Map(values)) => Ok(values.keys().cloned().collect()),
+                Some(Value::Array(values)) => {
+                    Ok((0..values.len()).map(|index| index.to_string()).collect())
+                }
+                _ => Err(format!("invalid state path: {path}")),
+            }
+        }
+
+        fn stat(&self, path: &str) -> Result<Option<Value>, String> {
+            let Some(value) = self.at(path) else {
+                return Ok(None);
+            };
+            let (kind, content) = match value {
+                Value::Map(_) => ("directory", "object"),
+                Value::Array(_) => ("directory", "array"),
+                Value::String(_) => ("leaf", "text/plain"),
+                Value::Script(_) => ("leaf", "svit-script"),
+                _ => ("leaf", "scalar"),
+            };
+            let locality = self
+                .localities
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| "cache".into());
+            Ok(Some(value!({
+                "kind": kind,
+                "content": content,
+                "locality": locality,
+                "path": path
+            })))
+        }
+
+        fn read(&self, path: &str) -> Result<Option<Value>, String> {
+            Ok(self.at(path).cloned())
+        }
+
+        fn version(&self) -> u64 {
+            self.version
+        }
+    }
+
+    /// One console plus the view it browses.
+    struct TestApp {
+        app: App,
+        view: ValueView,
+    }
+
+    impl std::ops::Deref for TestApp {
+        type Target = App;
+
+        fn deref(&self) -> &App {
+            &self.app
+        }
+    }
+
+    impl std::ops::DerefMut for TestApp {
+        fn deref_mut(&mut self) -> &mut App {
+            &mut self.app
+        }
+    }
+
+    impl TestApp {
+        fn handle(&mut self, event: &Event) -> AppAction {
+            let action = self.app.handle(event);
+            self.app.resolve(&self.view);
+            action
+        }
+
+        /// Selects one row and resolves what the new selection needs, the way
+        /// the frame loop does.
+        fn select(&mut self, path: &str) {
+            let index = self
+                .app
+                .rows
+                .iter()
+                .position(|row| row.path == path)
+                .unwrap_or_else(|| panic!("no row for {path}"));
+            self.app.tree.select(Some(index));
+            self.app.resolve(&self.view);
+        }
+
+        fn refresh_process(&mut self, root: Value, version: u64) {
+            self.view.root = root;
+            self.view.version = version;
+            self.app.refresh_process(version);
+            self.app.resolve(&self.view);
+        }
+    }
+
+    fn test_app(root: Value, version: u64) -> TestApp {
+        test_app_with(ValueView::new(root), version, "test")
+    }
+
+    fn test_app_with(view: ValueView, version: u64, model: &str) -> TestApp {
+        let mut app = App::new(version, model.into());
+        app.resolve(&view);
+        TestApp { app, view }
+    }
+
+    fn layout(app: &mut TestApp, width: u16, height: u16) -> UiProbes {
+        app.app.resolve(&app.view);
         let theme = lampa_theme();
         let probes = UiProbes::default();
-        let root = build_view(app, Rect::new(0, 0, width, height), &theme, &probes);
+        let root = build_view(
+            &mut app.app,
+            Rect::new(0, 0, width, height),
+            &theme,
+            &probes,
+        );
         let _ = render(root.as_ref(), width, height, &theme);
-        app.capture_panel_bounds(&probes);
+        app.app.capture_panel_bounds(&probes);
         probes
     }
 
@@ -1596,92 +1725,146 @@ mod tests {
         ))
     }
 
-    fn expand_paths(app: &mut App, paths: &[&str]) {
+    fn expand_paths(app: &mut TestApp, paths: &[&str]) {
         let selected_path = app.selected().path.clone();
         app.expanded
             .extend(paths.iter().map(|path| (*path).to_owned()));
-        app.rebuild_tree(&selected_path);
+        app.app.rebuild_tree(&selected_path);
+        app.app.resolve(&app.view);
     }
 
     #[test]
-    fn mount_rows_stay_empty_until_the_browser_resolves_them() {
-        let root = value!({
-            "memory": {},
-            "mounts": {"cwd": {
-                "access": "read",
-                "kind": "folder",
-                "locality": "local",
-                "source": "/work"
-            }}
-        });
-        let expanded = BTreeSet::from(["/".to_owned(), "/mounts".into(), "/mounts/cwd".into()]);
-        let mut mounts = MountBrowser::default();
+    fn the_console_holds_no_node_it_has_not_resolved() {
+        let view = ValueView::new(value!({
+            "memory": {"notes": {"a": 1}},
+            "mounts": {"cwd": {"README.md": "hello"}}
+        }));
+        let mut app = App::new(0, "test".into());
 
-        let unresolved = tree_rows(&root, &expanded, &mounts);
-
-        // The mount root is openable and labelled with its locality, but the
-        // committed tree holds no children to show.
-        assert!(unresolved.iter().any(|row| row.path == "/mounts/cwd"
-            && row.expandable
-            && row.label.contains("cwd (local)")));
-        assert!(
-            !unresolved
-                .iter()
-                .any(|row| row.path.starts_with("/mounts/cwd/"))
-        );
-
-        mounts
-            .children
-            .insert("/mounts/cwd".into(), vec!["src".into(), "README.md".into()]);
-        mounts.directories.insert("/mounts/cwd".into(), true);
-        mounts.directories.insert("/mounts/cwd/src".into(), true);
-        mounts
-            .directories
-            .insert("/mounts/cwd/README.md".into(), false);
-
-        let resolved = tree_rows(&root, &expanded, &mounts);
-
-        let mount_rows: Vec<_> = resolved
-            .iter()
-            .filter(|row| row.path.starts_with("/mounts/cwd/"))
-            .map(|row| (row.path.as_str(), row.expandable))
-            .collect();
+        // Before resolving anything the console knows only that a root exists.
         assert_eq!(
-            mount_rows,
-            [("/mounts/cwd/src", true), ("/mounts/cwd/README.md", false)]
+            app.rows
+                .iter()
+                .map(|row| row.path.as_str())
+                .collect::<Vec<_>>(),
+            ["/"]
         );
+
+        app.resolve(&view);
+
+        // Resolving the open root lists its children and nothing deeper.
+        let paths = app
+            .rows
+            .iter()
+            .map(|row| row.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, ["/", "/memory", "/mounts"]);
+
+        app.expanded.insert("/mounts".into());
+        app.expanded.insert("/mounts/cwd".into());
+        app.resolve(&view);
+
+        // A mount is opened through the same discover/stat path as memory.
+        let paths = app
+            .rows
+            .iter()
+            .map(|row| row.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            [
+                "/",
+                "/memory",
+                "/mounts",
+                "/mounts/cwd",
+                "/mounts/cwd/README.md"
+            ]
+        );
+        assert!(app.nodes.is_directory("/mounts/cwd"));
+        assert!(!app.nodes.is_directory("/mounts/cwd/README.md"));
     }
 
     #[test]
-    fn a_truncated_mount_listing_says_so_instead_of_looking_complete() {
-        let root = value!({"memory": {}, "mounts": {"cwd": {
-            "access": "read", "kind": "folder", "locality": "local", "source": "/work"
-        }}});
-        let expanded = BTreeSet::from(["/".to_owned(), "/mounts".into(), "/mounts/cwd".into()]);
-        let mut mounts = MountBrowser::default();
-        mounts.directories.insert("/mounts/cwd".into(), true);
-        mounts
-            .children
-            .insert("/mounts/cwd".into(), vec!["a".into()]);
-        mounts.truncated.insert("/mounts/cwd".into());
+    fn a_non_resident_row_announces_where_reading_it_will_go() {
+        let view = ValueView::new(value!({"mounts": {"cwd": {"README.md": "hello"}}}))
+            .locality("/mounts/cwd", "local")
+            .locality("/mounts/cwd/README.md", "local");
+        let mut app = test_app_with(view, 0, "test");
+        expand_paths(&mut app, &["/mounts", "/mounts/cwd"]);
 
-        let rows = tree_rows(&root, &expanded, &mounts);
+        let label = |path: &str| {
+            app.rows
+                .iter()
+                .find(|row| row.path == path)
+                .unwrap()
+                .label
+                .clone()
+        };
 
+        assert!(label("/mounts/cwd").contains("cwd (local)"));
+        assert!(label("/mounts/cwd/README.md").contains("README.md (local)"));
+        // Resident committed state carries no cost annotation.
+        assert!(!label("/mounts").contains('('));
+        // A non-resident leaf is not read just to render its row.
+        assert_eq!(app.nodes.value("/mounts/cwd/README.md"), None);
+    }
+
+    #[test]
+    fn a_commit_rereads_the_tree_without_losing_the_selected_row() {
+        let mut app = test_app(
+            value!({"memory": {"profile": {"name": "Ada"}}, "mounts": {"cwd": {"a.txt": "one"}}}),
+            1,
+        );
+        expand_paths(&mut app, &["/mounts", "/mounts/cwd"]);
+        app.select("/mounts/cwd/a.txt");
+
+        // A commit invalidates everything resolved from the previous version,
+        // including external nodes that may have changed underneath.
+        app.refresh_process(
+            value!({"memory": {"profile": {"name": "Ada"}}, "mounts": {"cwd": {"a.txt": "two"}}}),
+            2,
+        );
+
+        assert_eq!(app.version, 2);
+        assert_eq!(app.selected().path, "/mounts/cwd/a.txt");
+        assert_eq!(app.selected_value(), &Value::from("two"));
+    }
+
+    #[test]
+    fn a_truncated_listing_says_so_instead_of_looking_complete() {
+        let entries = (0..MAX_TREE_CHILDREN + 5)
+            .map(|index| (format!("file-{index:04}"), Value::from("x")))
+            .collect::<std::collections::BTreeMap<_, _>>();
+        let view = ValueView::new(Value::Map(std::collections::BTreeMap::from([(
+            "memory".to_owned(),
+            Value::Map(entries),
+        )])));
+        let mut app = test_app_with(view, 0, "test");
+
+        expand_paths(&mut app, &["/memory"]);
+
+        assert_eq!(
+            app.rows
+                .iter()
+                .filter(|row| row.path.starts_with("/memory/file-"))
+                .count(),
+            MAX_TREE_CHILDREN
+        );
         assert!(
-            rows.iter()
+            app.rows
+                .iter()
                 .any(|row| row.label.contains("first 200 entries"))
         );
     }
 
     #[test]
     fn initial_tree_opens_only_the_root() {
-        let app = App::new(
+        let app = test_app(
             value!({
                 "thread": {"events": []},
                 "memory": {"profile": {"name": "Ada"}}
             }),
             0,
-            "test".into(),
         );
 
         assert_eq!(app.expanded, BTreeSet::from(["/".into()]));
@@ -1705,9 +1888,20 @@ mod tests {
                 long_text
             ]
         });
-        let rows = tree_rows(&root, &expandable_paths(&root), &MountBrowser::default());
+        let mut app = test_app(root, 0);
+        let all = app
+            .rows
+            .iter()
+            .map(|row| row.path.clone())
+            .collect::<Vec<_>>();
+        expand_paths(
+            &mut app,
+            &all.iter().map(String::as_str).collect::<Vec<_>>(),
+        );
+        expand_paths(&mut app, &["/items"]);
         let label = |path: &str| {
-            rows.iter()
+            app.rows
+                .iter()
                 .find(|row| row.path == path)
                 .unwrap()
                 .label
@@ -1727,13 +1921,13 @@ mod tests {
 
     #[test]
     fn tree_flattens_complete_process_memory_and_preview_tracks_selection() {
-        let mut app = App::new(
-            value!({
+        let mut app = test_app_with(
+            ValueView::new(value!({
                 "thread": {"messages": [], "events": []},
                 "memory": {"profile": {"name": "Ada"}, "scores": [3, 5]}
-            }),
+            })),
             7,
-            "test-model".into(),
+            "test-model",
         );
 
         assert_eq!(app.rows[0].label, "▾ /");
@@ -1745,12 +1939,7 @@ mod tests {
         );
         assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
         assert!(app.rows.iter().any(|row| row.label.ends_with("name")));
-        let name_index = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/profile/name")
-            .unwrap();
-        app.tree.select(Some(name_index));
+        app.select("/memory/profile/name");
 
         assert_eq!(app.selected().path, "/memory/profile/name");
         assert!(matches!(
@@ -1920,10 +2109,9 @@ mod tests {
 
     #[test]
     fn refresh_preserves_selected_memory_path() {
-        let mut app = App::new(
+        let mut app = test_app(
             value!({"thread": {}, "memory": {"profile": {"name": "Ada"}}}),
             1,
-            "test".into(),
         );
         expand_paths(&mut app, &["/memory"]);
         let selected = app
@@ -1947,7 +2135,7 @@ mod tests {
 
     #[test]
     fn composer_submission_is_trimmed_and_cleared() {
-        let mut app = App::new(value!({}), 0, "test".into());
+        let mut app = test_app(value!({}), 0);
         app.focus = Focus::Composer;
         app.composer.set_text("  remember blue  ");
 
@@ -1959,7 +2147,7 @@ mod tests {
 
     #[test]
     fn shift_enter_inserts_a_composer_newline_without_submitting() {
-        let mut app = App::new(value!({}), 0, "test".into());
+        let mut app = test_app(value!({}), 0);
         app.composer.set_text("first");
         let mut shift_enter = Key::new(KeyCode::Enter);
         shift_enter.shift = true;
@@ -1972,7 +2160,7 @@ mod tests {
 
     #[test]
     fn raw_terminal_newline_encoding_inserts_a_composer_newline() {
-        let mut app = App::new(value!({}), 0, "test".into());
+        let mut app = test_app(value!({}), 0);
         app.composer.set_text("first");
 
         let action = app.handle(&Event::Key(Key::new(KeyCode::Char('\n'))));
@@ -1983,7 +2171,7 @@ mod tests {
 
     #[test]
     fn shift_tab_moves_backward_through_panels() {
-        let mut app = App::new(value!({}), 0, "test".into());
+        let mut app = test_app(value!({}), 0);
         let shift_tab = Key::new(KeyCode::BackTab);
 
         let _ = app.handle(&Event::Key(shift_tab));
@@ -1996,7 +2184,7 @@ mod tests {
 
     #[test]
     fn selecting_another_memory_item_starts_its_preview_at_the_top() {
-        let mut app = App::new(value!({"thread": {}, "memory": {}}), 0, "test".into());
+        let mut app = test_app(value!({"thread": {}, "memory": {}}), 0);
         app.focus = Focus::Memory;
         app.preview_scroll.set_offset(10);
         let memory = app
@@ -2014,11 +2202,7 @@ mod tests {
 
     #[test]
     fn memory_nodes_collapse_expand_and_stay_collapsed_after_refresh() {
-        let mut app = App::new(
-            value!({"thread": {"messages": ["hello"]}, "memory": {}}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"thread": {"messages": ["hello"]}, "memory": {}}), 0);
         app.focus = Focus::Memory;
         let thread = app
             .rows
@@ -2052,11 +2236,7 @@ mod tests {
 
     #[test]
     fn left_on_a_closed_node_moves_to_its_parent() {
-        let mut app = App::new(
-            value!({"memory": {"profile": {"name": "Ada"}}}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": {"profile": {"name": "Ada"}}}), 0);
         app.focus = Focus::Memory;
         expand_paths(&mut app, &["/memory", "/memory/profile"]);
         let profile = app
@@ -2076,11 +2256,7 @@ mod tests {
 
     #[test]
     fn memory_tree_pages_and_scrolls_with_the_mouse_wheel() {
-        let mut app = App::new(
-            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         app.focus = Focus::Memory;
         app.memory_viewport_height = 4;
         expand_paths(&mut app, &["/memory"]);
@@ -2097,11 +2273,7 @@ mod tests {
 
     #[test]
     fn mouse_wheel_over_memory_routes_to_memory_without_keyboard_focus() {
-        let mut app = App::new(
-            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         app.memory_viewport_height = 4;
         expand_paths(&mut app, &["/memory"]);
         let probes = layout(&mut app, 90, 24);
@@ -2114,7 +2286,7 @@ mod tests {
 
     #[test]
     fn clicking_a_panel_activates_it() {
-        let mut app = App::new(value!({"memory": {}}), 0, "test".into());
+        let mut app = test_app(value!({"memory": {}}), 0);
         let probes = layout(&mut app, 90, 24);
 
         let _ = app.handle(&panel_mouse(
@@ -2132,11 +2304,7 @@ mod tests {
 
     #[test]
     fn clicking_a_memory_row_selects_it() {
-        let mut app = App::new(
-            value!({"memory": {"alpha": 1, "beta": 2}}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": {"alpha": 1, "beta": 2}}), 0);
         expand_paths(&mut app, &["/memory"]);
         let probes = layout(&mut app, 90, 24);
         let bounds = probes.memory.rect();
@@ -2153,11 +2321,7 @@ mod tests {
 
     #[test]
     fn clicking_a_scrolled_memory_row_uses_the_visible_offset() {
-        let mut app = App::new(
-            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
         let selected = app
             .rows
@@ -2181,11 +2345,7 @@ mod tests {
 
     #[test]
     fn clicking_the_bottom_row_keeps_the_memory_window_stable() {
-        let mut app = App::new(
-            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
         let selected = app
             .rows
@@ -2208,11 +2368,7 @@ mod tests {
 
     #[test]
     fn memory_tree_viewport_follows_an_offscreen_selection() {
-        let mut app = App::new(
-            value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}),
-            0,
-            "test".into(),
-        );
+        let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
         app.memory_viewport_height = 4;
         let selected = app
@@ -2232,13 +2388,13 @@ mod tests {
 
     #[test]
     fn headless_frame_contains_tree_chat_and_status() {
-        let mut app = App::new(
-            value!({
+        let mut app = test_app_with(
+            ValueView::new(value!({
                 "thread": {"messages": []},
                 "memory": {"release": {"color": "blue"}}
-            }),
+            })),
             3,
-            "sim".into(),
+            "sim",
         );
         app.push_user("Remember the release color.".into());
         app.push_assistant(Message::assistant("Stored in memory."));
@@ -2258,7 +2414,7 @@ mod tests {
 
     #[test]
     fn reasoning_failure_is_visible_as_an_event_and_status() {
-        let mut app = App::new(value!({}), 3, "sim".into());
+        let mut app = test_app_with(ValueView::new(value!({})), 3, "sim");
         app.working = true;
 
         app.push_error("model request failed".into());

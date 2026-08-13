@@ -116,11 +116,16 @@ objects prefer an identifying field such as `name`, `operation`, `type`, or
 `id`, and other containers show their kind and item count.
 
 The middle panel includes `/thread`, `/memory`, scripts, inbox, mounts, and
-system state. Lampa mounts the current directory read-only as `cwd` and accepts
-`--mount name=path` and `--mount-rw name=path` for additional roots. Mount rows
-are labelled with their locality and browsed lazily: a directory is listed when
-you expand it and a node is read when you select it, so opening the console
-never walks the mounted source. Initially only `/` is expanded, leaving its top-level children
+system state. It holds no copy of the process root: every node is resolved
+through `discover`, `stat`, and `read`, so a mounted folder is browsed exactly
+like committed memory. A directory is listed when you expand it and a node is
+read when you select it, so opening the console never walks the whole tree, and
+each committed version re-reads what is on screen. Rows whose content lives
+outside the process are labelled with their locality, listings are bounded at
+200 children per directory, and a truncated listing says so.
+
+Lampa mounts the current directory read-only as `cwd` and accepts
+`--mount name=path` and `--mount-rw name=path` for additional roots. Initially only `/` is expanded, leaving its top-level children
 closed. `Tab` moves focus forward between chat input, memory navigation, and
 preview scrolling; `Shift+Tab` moves backward. In the memory panel, use arrows
 or `j`/`k` to move, `Right` to expand, `Left` to collapse or move to the parent,
