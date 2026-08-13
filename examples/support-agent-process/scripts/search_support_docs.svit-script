@@ -38,19 +38,19 @@
         (expected-id (read "/memory/request/id"))
         (query (read "/memory/request/question"))
         (result (read "/memory/request/result"))
-        (account (read "/mounts/account_context/data/0"))
+        (account (read "/mounts/account_context/0"))
         (account-recovery
           (value-map
             "id" "account-recovery"
-            "content" (read "/mounts/support_docs/data/account-recovery.md")))
+            "content" (read "/mounts/support_docs/account-recovery.md")))
         (password-reset
           (value-map
             "id" "password-reset"
-            "content" (read "/mounts/support_docs/data/password-reset.md")))
+            "content" (read "/mounts/support_docs/password-reset.md")))
         (refunds
           (value-map
             "id" "refunds"
-            "content" (read "/mounts/support_docs/data/refunds.md"))))
+            "content" (read "/mounts/support_docs/refunds.md"))))
     (if (not (= request-id expected-id))
         (panic "request id mismatch")
         (if (not (value-null? result))

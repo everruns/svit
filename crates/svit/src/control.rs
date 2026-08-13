@@ -462,6 +462,8 @@ fn failure(error: Error) -> ControlFailure {
         Error::InvalidPath(_) => "invalid_path",
         Error::InvalidValue(_) => "invalid_value",
         Error::InvalidMount(_) => "invalid_mount",
+        Error::MountUnavailable(_) => "mount_unavailable",
+        Error::MountDenied(_) => "mount_denied",
         Error::InvalidLimits(_) => "invalid_limits",
         Error::ExecutionLimitExceeded => "execution_limit_exceeded",
         Error::ResourceLimitExceeded(_) => "resource_limit_exceeded",

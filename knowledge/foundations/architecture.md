@@ -56,7 +56,7 @@ the boundary.
 | Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/thread` |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
-| Snapshot mounts | Bounded read-only folder trees and host-selected Turso query rows |
+| Mounts | Virtual external namespaces resolved lazily through host-attached providers, with committed descriptors, node facts, and granted access |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
@@ -129,8 +129,10 @@ Module names may evolve; the ownership boundary is the decision.
    as newly created state.
 7. Every mutating control request carries an expected process version and is
    checked at the same serialization point as commit.
-8. External data enters only through a host-created bounded snapshot mount;
-   activations receive persistent values, never filesystem or database handles.
+8. External data enters only through a host-created mount; the committed root
+   stores mount identity, resolution runs through a host-attached provider
+   under the descriptor's granted access, and activations receive persistent
+   values, never filesystem or database handles.
 9. Durable loop and replay state is host-managed under `/thread`; untrusted
    scripts and model tools can inspect the configured prompt, derived message
    history, and canonical events but cannot rewrite them.

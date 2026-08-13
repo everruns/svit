@@ -1,5 +1,63 @@
 # Svit Knowledge Update Log
 
+## 2026-08-12
+
+* **Virtual mounts**: Replaced construction-time snapshot imports with virtual
+  mounts. `/mounts/<name>` commits only a descriptor — kind, host-disclosed
+  source, locality, and granted access — while nodes below it resolve through a
+  host-attached `MountProvider` when they are read, discovered, stated, or
+  written. Mount size is now independent of process and snapshot size.
+* **Node facts and locality**: Added `stat(path)`, which answers with one facts
+  vocabulary for the whole tree: kind, access, locality, mount, path, source,
+  attachment, and provider facts such as byte size, modification time, and a
+  folder mount's git branch and commit. `locality` states the cost class —
+  `cache`, `local`, or `remote` — so a caller can weigh a read before making
+  it. Committed state reports `cache`; a materialized Turso query says `cache`
+  rather than claiming a live remote view.
+* **Granted mount writes**: A descriptor grants `read`, `write`, or
+  `read-write`. Activation writes and removals below a granted mount are
+  buffered and applied at the commit point after every in-process validation,
+  so a failed activation applies none of them. This orders the effect with the
+  commit; it is not distributed atomicity (`L-042`, `TM-EFF-006`).
+* **Authority is not serialized**: Providers are runtime state. A restored
+  process reads its mount descriptors with `attached: false` and fails closed
+  below them until the host calls `attach_mount` (`TM-CAP-008`).
+* **Path containment**: Mount paths parse into validated segments that reject
+  traversal, separators, empty, oversized, and NUL content, and the folder
+  provider re-checks links and special files at every segment on every
+  resolution (`TM-CAP-007`, `TM-CAP-003`).
+* **Built-ins inside mounts**: `BuiltinContext` gained `stat`, and `search`
+  walks a mount subtree node by node under an independent node budget instead
+  of materializing it, reporting when a bound truncated the walk
+  (`TM-DOS-010`).
+* **Lampa mounts the working directory**: The console mounts the current
+  directory read-only as `cwd` and accepts `--mount name=path` and
+  `--mount-rw name=path`.
+* **One console namespace**: Lampa holds no copy of the process root and no
+  separate mount browser. It resolves every node — memory, scripts, system
+  metadata, or mounted folder — through `discover`, `stat`, and `read`, so
+  mounts are represented through the same interface as the rest of the tree.
+  Listings are fetched on expand, content on selection and for array-item
+  summaries, bounded per directory, and re-resolved on each commit. A `content`
+  fact on directory nodes completes the vocabulary the console needs to
+  distinguish an array from a map without reading it. Restoring the selected
+  row across a commit is now explicit state rather than a side effect of
+  holding the whole root.
+* **One change stream**: Every transition now returns a `Change` with the new
+  version, canonical changed paths, and replayable mutations, folded from one
+  source so a live observer and a stored durable event describe the same
+  transition. `SvitEvent::Committed(Change)` replaces the payload-free ping,
+  and the Turso adapter stopped hand-building a parallel mutation per host
+  call. A granted mount write reports its path but carries no mutation: it
+  changed an external source, not committed state. Notifications carry paths
+  without values, so observers read state back through the API.
+* **Precise invalidation**: `Change::touches` is the shared staleness
+  predicate — at, below, or above a changed path — so every client invalidates
+  identically. Lampa keeps unrelated nodes resolved across a commit, and `r`
+  reloads the tree for external mount edits no event can report (`L-045`).
+* **Compatibility**: Bumped snapshots to format 7 for the descriptor-only
+  `/mounts` schema and the `max_mount_entries` and `max_mount_writes` limits.
+
 ## 2026-08-11
 
 * **Single-Svit event persistence design**: Adopted one uniform address-keyed

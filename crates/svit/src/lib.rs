@@ -57,12 +57,17 @@ pub use everruns_test_support::{
 };
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
-pub use mounts::SnapshotMount;
+pub use mounts::{
+    Locality, Mount, MountAccess, MountDescriptor, MountNode, MountNodeKind, MountPath,
+    MountProvider,
+};
 pub use persistence::{
     DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
     ProcessStore,
 };
-pub use process::{Activation, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId};
+pub use process::{
+    Activation, Change, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId,
+};
 pub use reasoner::Reasoner;
 pub use reasoning::{
     Events, Inbox, ObserveError, Outbox, Svit, SvitBuilder, SvitError, SvitEvent, SvitResult,

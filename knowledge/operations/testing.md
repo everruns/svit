@@ -26,7 +26,7 @@ Applies to the initial vertical slice as it is implemented.
 6. Documentation tests for public Rust APIs.
 7. Headless Tuika rendering and input-state tests for terminal interfaces.
 8. Cargo feature-matrix checks for the adapter-neutral core, Turso persistence,
-   and Turso snapshot mounts independently.
+   and Turso query mounts independently.
 
 ## Examples as acceptance tests
 
@@ -39,7 +39,9 @@ The following scenarios execute with assertions and deterministic output under
 - parent and two forks diverging without shared mutation;
 - denied modules and bounded infinite-loop termination;
 - two control clients contending on one version, then resolving the conflict.
-- a real folder and Turso query imported together as read-only snapshot mounts.
+- a real folder, a materialized Turso query, and a writable folder mounted
+  together, read lazily with node facts, and written back under an explicit
+  grant while a read-only mount refuses the same write.
 - a process-owned agent thread restored and continued in an isolated child process.
 - a started Svit drains its durable inbox, emits completed turns, and leaves a
   failed turn's input queued.
@@ -73,6 +75,9 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa array rows show bounded scalar previews, prefer conventional object
   identity fields, fall back to the first scalar field, and summarize other
   containers by kind and item count.
+- Lampa resolves every node through the same `discover`/`stat`/`read`
+  interface, keeps unrelated nodes resolved across a commit that did not name
+  them, and re-reads an externally changed mount only on an explicit reload.
 - Lampa opens only the memory-tree root and preserves the visible window when
   a mouse click selects its bottom row; keyboard navigation scrolls only when
   the selection leaves that window.

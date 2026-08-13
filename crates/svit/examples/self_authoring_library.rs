@@ -19,7 +19,7 @@ fn main() -> svit::Result<()> {
     assert_eq!(taught.output, Value::String("greeter saved".into()));
     assert_eq!(process.discover("/lib")?, ["greeter", "teacher"]);
     assert_eq!(
-        process.read("/lib/greeter")?.map(Value::to_json),
+        process.read("/lib/greeter")?.map(|value| value.to_json()),
         Some(value!({
             "source": "(define (main input) (value-map \"greeting\" (concat \"Hello, \" (value-get input \"/name\") \"!\") \"library\" (discover \"/lib\")))",
             "documentation": "Greets a person and reports its discoverable script library"

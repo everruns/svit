@@ -50,7 +50,7 @@ fn main() -> svit::Result<()> {
 
     let observation = controller.observe()?;
     let restored = Process::restore(&controller.snapshot()?)?;
-    assert_eq!(restored.read("/memory/count")?, Some(&Value::Integer(3)));
+    assert_eq!(restored.read("/memory/count")?, Some(Value::Integer(3)));
     assert_eq!(observation.version, 3);
 
     println!(

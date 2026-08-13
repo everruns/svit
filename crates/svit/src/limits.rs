@@ -36,6 +36,10 @@ pub struct Limits {
     pub max_messages: usize,
     /// Maximum scripts staged by one activation.
     pub max_staged_scripts: usize,
+    /// Maximum child names returned by one lazy mount listing.
+    pub max_mount_entries: usize,
+    /// Maximum mount writes buffered by one activation.
+    pub max_mount_writes: usize,
 }
 
 impl Default for Limits {
@@ -56,6 +60,8 @@ impl Default for Limits {
             max_logs: 128,
             max_messages: 128,
             max_staged_scripts: 32,
+            max_mount_entries: 4096,
+            max_mount_writes: 32,
         }
     }
 }
@@ -78,7 +84,9 @@ impl Limits {
             && self.max_script_bytes <= 1024 * 1024
             && self.max_logs <= 10_000
             && self.max_messages <= 10_000
-            && self.max_staged_scripts <= 10_000;
+            && self.max_staged_scripts <= 10_000
+            && self.max_mount_entries <= 1_000_000
+            && self.max_mount_writes <= 10_000;
         if !valid {
             return Err(Error::InvalidLimits(
                 "one or more limits exceed hard maxima",

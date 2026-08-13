@@ -24,10 +24,11 @@ use crate::error::sanitize_diagnostic;
 use crate::hooks::{
     ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction, SharedHook,
 };
+use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView};
 use crate::persistence::Mutation;
-use crate::{Error, Limits, Result, Script, SnapshotMount, Value};
+use crate::{Error, Limits, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 6;
+const SNAPSHOT_FORMAT: u32 = 7;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
@@ -90,6 +91,77 @@ pub struct MessageIntent {
     pub body: Value,
 }
 
+/// What one committed transition changed.
+///
+/// `mutations` are the replayable operations on committed state, and are what
+/// the durable event store records. `paths` is the observer-facing set: the
+/// same committed paths plus any mount path the transition wrote, because a
+/// client caching that node must read it again even though nothing was
+/// persisted for it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Change {
+    version: u64,
+    paths: Vec<String>,
+    mutations: Vec<Mutation>,
+}
+
+impl Change {
+    /// Records a change reported to an observer.
+    ///
+    /// A notification carries the version and paths but no values: observers
+    /// read what they need back through the process API rather than receiving
+    /// committed state on a broadcast channel.
+    pub fn notification(version: u64, paths: Vec<String>) -> Self {
+        Self {
+            version,
+            paths,
+            mutations: Vec::new(),
+        }
+    }
+
+    /// Returns this change with its values dropped, ready to publish.
+    pub fn to_notification(&self) -> Self {
+        Self::notification(self.version, self.paths.clone())
+    }
+
+    /// Returns the process version after this transition.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Returns the canonical changed paths in deterministic order.
+    pub fn paths(&self) -> &[String] {
+        &self.paths
+    }
+
+    /// Returns the replayable committed operations.
+    ///
+    /// Empty on a change received as a notification, and on a transition that
+    /// touched no committed state, such as a granted mount write.
+    pub fn mutations(&self) -> &[Mutation] {
+        &self.mutations
+    }
+
+    /// Reports whether a cached `path` could be stale after this transition.
+    ///
+    /// A path is affected when it is at, below, or above a changed path: a
+    /// write below a node changes that node's value and can change its child
+    /// listing. Clients share this predicate so they invalidate identically.
+    pub fn touches(&self, path: &str) -> bool {
+        self.paths.iter().any(|changed| overlapping(changed, path))
+    }
+}
+
+fn overlapping(left: &str, right: &str) -> bool {
+    fn covers(parent: &str, child: &str) -> bool {
+        parent == "/"
+            || child
+                .strip_prefix(parent)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
+    left == right || covers(left, right) || covers(right, left)
+}
+
 /// Result of a successfully committed activation.
 ///
 /// This is also a control-protocol wire value. Unknown fields are deliberately
@@ -106,6 +178,10 @@ pub struct Activation {
     pub version: u64,
     /// SHA-256 of the canonical committed root encoding.
     pub root_hash: String,
+    /// Canonical paths this activation changed, including mount paths it
+    /// wrote. Clients use these to invalidate exactly what went stale.
+    #[serde(default)]
+    pub changed: Vec<String>,
 }
 
 /// Builder for a conventional process namespace with initial memory, scripts,
@@ -114,7 +190,7 @@ pub struct ProcessBuilder {
     id: ProcessId,
     memory: BTreeMap<String, Value>,
     scripts: BTreeMap<String, Script>,
-    mounts: BTreeMap<String, SnapshotMount>,
+    mounts: MountRegistry,
     limits: Limits,
     hooks: Vec<SharedHook>,
 }
@@ -132,11 +208,14 @@ impl ProcessBuilder {
         self
     }
 
-    /// Adds or replaces a named read-only snapshot below `/mounts`.
-    pub fn mount(mut self, name: impl Into<String>, mount: SnapshotMount) -> Self {
-        // THREAT[TM-CAP-001]: Accept only the host-created snapshot domain
-        // type; guest-visible names and values cannot construct live authority.
-        self.mounts.insert(name.into(), mount);
+    /// Attaches a named virtual mount below `/mounts`.
+    ///
+    /// The mount contributes a committed descriptor and a host-owned provider.
+    /// No source data is copied into the process root.
+    pub fn mount(mut self, name: impl Into<String>, mount: Mount) -> Self {
+        // THREAT[TM-CAP-001]: Accept only the host-created mount domain type;
+        // guest-visible names and values cannot construct live authority.
+        self.mounts.attach(name.into(), mount);
         self
     }
 
@@ -155,13 +234,16 @@ impl ProcessBuilder {
     /// Validates the initial state and constructs the process.
     pub fn build(self) -> Result<Process> {
         self.limits.validate()?;
+        for name in self.mounts.names() {
+            crate::mounts::validate_mount_name(name)?;
+        }
         // Builder scripts are version-zero state; only post-build saves commit a version.
         let root = initial_root(
             &self.id,
             &self.limits,
             self.memory,
             self.scripts,
-            self.mounts,
+            self.mounts.descriptors(),
         );
         validate_root(&root, &self.id, &self.limits)?;
         Ok(Process {
@@ -170,6 +252,7 @@ impl ProcessBuilder {
             root: Arc::new(root),
             limits: self.limits,
             hooks: self.hooks.into(),
+            mounts: Arc::new(self.mounts),
         })
     }
 }
@@ -182,6 +265,8 @@ pub struct Process {
     root: Arc<Value>,
     limits: Limits,
     hooks: Arc<[SharedHook]>,
+    // Host authority, deliberately outside the serialized boundary.
+    mounts: Arc<MountRegistry>,
 }
 
 impl Process {
@@ -191,7 +276,7 @@ impl Process {
             id: ProcessId::new(id)?,
             memory: BTreeMap::new(),
             scripts: BTreeMap::new(),
-            mounts: BTreeMap::new(),
+            mounts: MountRegistry::default(),
             limits: Limits::default(),
             hooks: Vec::new(),
         })
@@ -225,43 +310,107 @@ impl Process {
         root_hash(self.root.as_ref()).expect("validated process roots serialize")
     }
 
-    /// Reads a committed value by absolute slash-separated process path.
-    pub fn read(&self, path: &str) -> Result<Option<&Value>> {
-        if path.is_empty() || path == "/" {
-            return Ok(Some(self.root.as_ref()));
-        }
-        let path = path
-            .strip_prefix('/')
-            .ok_or_else(|| Error::InvalidPath(path.into()))?;
-        let mut current = self.root.as_ref();
-        for segment in path.split('/') {
-            if segment.is_empty() || segment == "." || segment == ".." {
-                return Err(Error::InvalidPath(path.into()));
+    /// Validates a replacement root and publishes it as one version.
+    ///
+    /// THREAT[TM-EFF-001]: Every host transition funnels through this single
+    /// validation and assignment, so a rejected root leaves the committed
+    /// state and version untouched.
+    fn commit(
+        &mut self,
+        root: Value,
+        mutations: Vec<Mutation>,
+        extra_paths: Vec<String>,
+    ) -> Result<Change> {
+        validate_root(&root, &self.id, &self.limits)?;
+        let mut paths = crate::persistence::touched_paths(&mutations)?;
+        for path in extra_paths {
+            if !paths.contains(&path) {
+                paths.push(path);
             }
-            current = match current {
-                Value::Map(values) => match values.get(segment) {
-                    Some(value) => value,
-                    None => return Ok(None),
-                },
-                Value::Array(values) => {
-                    let index = segment
-                        .parse::<usize>()
-                        .map_err(|_| Error::InvalidPath(path.into()))?;
-                    match values.get(index) {
-                        Some(value) => value,
-                        None => return Ok(None),
-                    }
-                }
-                _ => return Err(Error::InvalidPath(path.into())),
-            };
         }
-        Ok(Some(current))
+        paths.sort();
+        let version = next_process_version(self.version)?;
+        self.root = Arc::new(root);
+        self.version = version;
+        Ok(Change {
+            version,
+            paths,
+            mutations,
+        })
     }
 
-    /// Discovers the deterministic child names below a map or array path.
+    /// Attaches or replaces one mount provider on a live process.
+    ///
+    /// Restoring a snapshot restores mount descriptors but no provider. A host
+    /// that wants the mount to resolve again reattaches it explicitly here.
+    /// The committed descriptor is refreshed, so a mount whose identity
+    /// changed commits one new version.
+    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> Result<Change> {
+        let name = name.into();
+        crate::mounts::validate_mount_name(&name)?;
+        let descriptor = mount.provider().descriptor().to_value();
+        let mut mounts = self.mounts.as_ref().clone();
+        mounts.attach(name.clone(), mount);
+        self.mounts = Arc::new(mounts);
+
+        let committed = root_map(self.root.as_ref())?;
+        let recorded = root_map(committed.get("mounts").expect("validated process root"))?;
+        if recorded.get(&name) == Some(&descriptor) {
+            return Ok(Change {
+                version: self.version,
+                paths: Vec::new(),
+                mutations: Vec::new(),
+            });
+        }
+        let mut root = committed.clone();
+        let mount_path = format!("/mounts/{name}");
+        root_map_mut(root.get_mut("mounts").expect("validated process root"))?
+            .insert(name, descriptor.clone());
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Set {
+                path: mount_path,
+                value: descriptor,
+            }],
+            Vec::new(),
+        )
+    }
+
+    /// Reads a value by absolute slash-separated process path.
+    ///
+    /// Paths below `/mounts/<name>` resolve through the attached provider at
+    /// call time. A mount directory reads as its facts record; a mount leaf
+    /// reads as its content.
+    pub fn read(&self, path: &str) -> Result<Option<Value>> {
+        if let Some((name, mount_path)) = mount_target(path)? {
+            return self.mount_view().read(&name, &mount_path);
+        }
+        Ok(self.read_committed(path)?.cloned())
+    }
+
+    /// Returns the facts record describing one process path.
+    ///
+    /// Every node reports its kind, granted access, and locality, so a caller
+    /// can weigh the cost of a read before making it. Committed process state
+    /// is `cache`; mount nodes report the locality their provider declared.
+    pub fn stat(&self, path: &str) -> Result<Option<Value>> {
+        if let Some((name, mount_path)) = mount_target(path)? {
+            return self.mount_view().stat(&name, &mount_path);
+        }
+        let Some(value) = self.read_committed(path)? else {
+            return Ok(None);
+        };
+        Ok(Some(committed_stat_value(path, value)))
+    }
+
+    /// Discovers the deterministic child names below a map, array, or mount
+    /// directory path.
     pub fn discover(&self, path: &str) -> Result<Vec<String>> {
+        if let Some((name, mount_path)) = mount_target(path)? {
+            return self.mount_view().discover(&name, &mount_path);
+        }
         let value = self
-            .read(path)?
+            .read_committed(path)?
             .ok_or_else(|| Error::InvalidPath(path.into()))?;
         match value {
             Value::Map(values) => Ok(values.keys().cloned().collect()),
@@ -270,34 +419,76 @@ impl Process {
         }
     }
 
-    /// Writes a committed value through the schema selected by its absolute path.
-    pub fn write(&mut self, path: &str, value: Value) -> Result<()> {
+    fn mount_view(&self) -> MountView<'_> {
+        MountView::new(
+            self.mounts.as_ref(),
+            root_map(self.root.as_ref())
+                .ok()
+                .and_then(|root| root.get("mounts"))
+                .unwrap_or(&Value::Null),
+            &self.limits,
+        )
+    }
+
+    fn read_committed(&self, path: &str) -> Result<Option<&Value>> {
+        read_value_path(self.root.as_ref(), path)
+    }
+
+    /// Writes through the schema selected by an absolute path.
+    ///
+    /// Writes below `/mounts/<name>` reach the external source directly and
+    /// do not change the committed process version.
+    pub fn write(&mut self, path: &str, value: Value) -> Result<Change> {
+        if let Some((name, mount_path)) = mount_target(path)? {
+            // THREAT[TM-EFF-006]: A host mount write is an external effect. It
+            // is deliberately not part of a process version transition, but it
+            // is still reported so observers re-read the node.
+            self.mount_view().write(&name, &mount_path, value)?;
+            return Ok(Change {
+                version: self.version,
+                paths: vec![path.to_owned()],
+                mutations: Vec::new(),
+            });
+        }
         let mut root = root_map(self.root.as_ref())?.clone();
-        if let Some(memory_path) = memory_path(path)? {
+        let committed = if let Some(memory_path) = memory_path(path)? {
             let memory = root
                 .get_mut("memory")
                 .expect("validated process root has memory");
-            set_value_path(memory, memory_path, value)?;
+            set_value_path(memory, memory_path, value.clone())?;
+            value
         } else if let Some(name) = library_path(path)? {
             let script = script_from_write_value(value)?;
             let library = root_map_mut(root.get_mut("lib").expect("validated process root"))?;
-            library.insert(name.into(), Value::Script(script));
+            library.insert(name.into(), Value::Script(script.clone()));
+            Value::Script(script)
         } else {
             return Err(Error::InvalidPath(path.into()));
-        }
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
-
-        // THREAT[TM-EFF-001]: Validate the complete replacement root before
-        // the single committed-root assignment.
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        };
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Set {
+                path: path.into(),
+                value: committed,
+            }],
+            Vec::new(),
+        )
     }
 
-    /// Removes a committed value through the schema selected by its absolute path.
-    pub fn remove(&mut self, path: &str) -> Result<()> {
+    /// Removes through the schema selected by an absolute path.
+    ///
+    /// Removals below `/mounts/<name>` reach the external source directly and
+    /// do not change the committed process version.
+    pub fn remove(&mut self, path: &str) -> Result<Change> {
+        if let Some((name, mount_path)) = mount_target(path)? {
+            // THREAT[TM-EFF-006]: External removal, outside the version chain.
+            self.mount_view().remove(&name, &mount_path)?;
+            return Ok(Change {
+                version: self.version,
+                paths: vec![path.to_owned()],
+                mutations: Vec::new(),
+            });
+        }
         let mut root = root_map(self.root.as_ref())?.clone();
         if let Some(memory_path) = memory_path(path)? {
             let memory = root
@@ -312,16 +503,15 @@ impl Process {
         } else {
             return Err(Error::InvalidPath(path.into()));
         }
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Remove { path: path.into() }],
+            Vec::new(),
+        )
     }
 
     /// Appends one host-supplied value to the durable process inbox.
-    pub fn enqueue_inbox(&mut self, value: Value) -> Result<()> {
+    pub fn enqueue_inbox(&mut self, value: Value) -> Result<Change> {
         let mut root = root_map(self.root.as_ref())?.clone();
         let Value::Array(inbox) = root
             .get_mut("inbox")
@@ -329,22 +519,24 @@ impl Process {
         else {
             return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
         };
-        inbox.push(value);
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
+        inbox.push(value.clone());
 
         // THREAT[TM-MSG-002]: Inbox delivery becomes visible only after the
         // complete replacement root validates.
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Append {
+                path: "/inbox".into(),
+                values: vec![value],
+            }],
+            Vec::new(),
+        )
     }
 
     /// Returns the oldest committed inbox value without removing it.
     pub fn inbox_front(&self) -> Result<Option<&Value>> {
         let Value::Array(inbox) = self
-            .read("/inbox")?
+            .read_committed("/inbox")?
             .expect("validated process root has inbox")
         else {
             return Err(Error::InvalidSnapshot("/inbox is not an array".into()));
@@ -353,7 +545,7 @@ impl Process {
     }
 
     /// Removes the oldest inbox value if it still matches the completed turn.
-    pub fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()> {
+    pub fn acknowledge_inbox(&mut self, expected: &Value) -> Result<Change> {
         let mut root = root_map(self.root.as_ref())?.clone();
         let Value::Array(inbox) = root
             .get_mut("inbox")
@@ -365,15 +557,17 @@ impl Process {
             return Err(Error::InboxConflict);
         }
         inbox.remove(0);
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
 
         // THREAT[TM-MSG-002]: A completed turn acknowledges only the exact
         // inbox head it observed, preventing silent drop or reordering.
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::RemoveFront {
+                path: "/inbox".into(),
+                expected_value_hash: root_hash(expected)?,
+            }],
+            Vec::new(),
+        )
     }
 
     /// Replaces host-managed durable reasoning state under `/thread`.
@@ -382,36 +576,40 @@ impl Process {
     /// `read` and `discover`, but cannot write or remove it. The Everruns
     /// adapter uses this boundary for replay and audit state that untrusted
     /// model output must not rewrite.
-    pub fn replace_thread_state(&mut self, value: Value) -> Result<()> {
+    pub fn replace_thread_state(&mut self, value: Value) -> Result<Change> {
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
-        root.insert("thread".into(), value);
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
+        root.insert("thread".into(), value.clone());
 
         // THREAT[TM-AUD-001]: Only the trusted host receives this mutation
         // boundary; guest write/remove paths deliberately exclude `/thread`.
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Set {
+                path: "/thread".into(),
+                value,
+            }],
+            Vec::new(),
+        )
     }
 
     /// Replaces the host-managed built-in catalog under `/bin`.
-    pub(crate) fn replace_builtins(&mut self, value: Value) -> Result<()> {
+    pub(crate) fn replace_builtins(&mut self, value: Value) -> Result<Change> {
         let builtins = root_map(&value)?;
         for name in builtins.keys() {
             validate_script_name(name)?;
         }
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
-        root.insert("bin".into(), value);
-        let new_root = Value::Map(root);
-        validate_root(&new_root, &self.id, &self.limits)?;
-        let version = next_process_version(self.version)?;
-        self.root = Arc::new(new_root);
-        self.version = version;
-        Ok(())
+        root.insert("bin".into(), value.clone());
+        self.commit(
+            Value::Map(root),
+            vec![Mutation::Set {
+                path: "/bin".into(),
+                value,
+            }],
+            Vec::new(),
+        )
     }
 
     /// Returns every committed but not externally acknowledged message intent.
@@ -547,8 +745,10 @@ impl Process {
 
     /// Restores a process from a committed snapshot.
     ///
-    /// Host hooks are intentionally not serialized and must be attached by the
-    /// host when constructing a new policy boundary.
+    /// Host hooks and mount providers are intentionally not serialized and
+    /// must be attached by the host when constructing a new policy boundary.
+    /// Until then, restored mounts report `attached: false` and every read,
+    /// listing, and write below their root fails closed.
     pub fn restore(bytes: &[u8]) -> Result<Self> {
         // THREAT[TM-SNAP-001]: Bound untrusted bytes before the JSON decoder
         // can allocate from attacker-controlled lengths.
@@ -578,13 +778,18 @@ impl Process {
             root: Arc::new(snapshot.root),
             limits: snapshot.limits,
             hooks: Arc::from([]),
+            // THREAT[TM-CAP-008]: Restoring state never restores authority.
+            mounts: Arc::new(MountRegistry::default()),
         })
     }
 
     /// Creates an independent child at the current committed boundary.
     ///
     /// The committed namespace is copied, discoverable identity and lineage
-    /// are updated, and parent message intents are not duplicated into the child.
+    /// are updated, and parent message intents are not duplicated into the
+    /// child. Mount providers are shared with the child because the host chose
+    /// to attach them; a fork that must not share an external source has to be
+    /// given its own mounts through [`Self::attach_mount`].
     pub fn fork(&self, child_id: impl Into<String>) -> Result<Self> {
         // THREAT[TM-FORK-001]: Clone the committed root before clearing
         // process-local delivery state; subsequent child commits replace only
@@ -603,6 +808,7 @@ impl Process {
             root: Arc::new(root),
             limits: self.limits.clone(),
             hooks: Arc::clone(&self.hooks),
+            mounts: Arc::clone(&self.mounts),
         })
     }
 
@@ -631,13 +837,15 @@ impl Process {
     fn exec_inner(&mut self, request: ActivationRequest) -> Result<(Activation, Vec<Mutation>)> {
         request.input.validate(&self.limits, false)?;
         let memory = self
-            .read("/memory")?
+            .read_committed("/memory")?
             .expect("validated process root")
             .clone();
 
         let state = RuntimeState::new(
             self.root.as_ref().clone(),
             memory,
+            Arc::clone(&self.mounts),
+            self.limits.clone(),
             Duration::from_millis(self.limits.max_execution_millis),
         );
         let output = catch_unwind(AssertUnwindSafe(|| {
@@ -702,6 +910,9 @@ impl Process {
 
         let new_root = Value::Map(root);
         validate_root(&new_root, &self.id, &self.limits)?;
+        // Buffered mount effects run after every in-process validation and
+        // before the commit, so a denied external write still rolls back.
+        state.apply_mount_writes()?;
         // THREAT[TM-EFF-001]: This is the only activation commit point. Every
         // fallible guest conversion and staged-script validation is complete.
         self.root = Arc::new(new_root);
@@ -714,6 +925,18 @@ impl Process {
                 values: committed_messages.iter().map(message_to_value).collect(),
             });
         }
+        // Mount effects are not replayable operations on committed state, so
+        // they never enter the mutation list, but an observer caching those
+        // nodes still has to read them again.
+        let mut changed = crate::persistence::touched_paths(&mutations)?;
+        for write in lock(&state.mount_writes)?.iter() {
+            let path = format!("/mounts/{}{}", write.mount, write.path.display());
+            let path = path.trim_end_matches('/').to_owned();
+            if !changed.contains(&path) {
+                changed.push(path);
+            }
+        }
+        changed.sort();
 
         Ok((
             Activation {
@@ -722,6 +945,7 @@ impl Process {
                 messages: committed_messages,
                 version,
                 root_hash: self.root_hash(),
+                changed,
             },
             mutations,
         ))
@@ -770,7 +994,7 @@ fn initial_root(
     limits: &Limits,
     memory: BTreeMap<String, Value>,
     scripts: BTreeMap<String, Script>,
-    mounts: BTreeMap<String, SnapshotMount>,
+    mounts: BTreeMap<String, MountDescriptor>,
 ) -> Value {
     Value::Map(BTreeMap::from([
         ("thread".into(), Value::Null),
@@ -791,8 +1015,8 @@ fn initial_root(
             "mounts".into(),
             Value::Map(
                 mounts
-                    .into_iter()
-                    .map(|(name, mount)| (name, mount.into_value()))
+                    .iter()
+                    .map(|(name, descriptor)| (name.clone(), descriptor.to_value()))
                     .collect(),
             ),
         ),
@@ -1019,6 +1243,14 @@ fn limits_value(limits: &Limits) -> Value {
         ("max_logs".into(), integer_value(limits.max_logs)),
         ("max_messages".into(), integer_value(limits.max_messages)),
         (
+            "max_mount_entries".into(),
+            integer_value(limits.max_mount_entries),
+        ),
+        (
+            "max_mount_writes".into(),
+            integer_value(limits.max_mount_writes),
+        ),
+        (
             "max_namespace_entries".into(),
             integer_value(limits.max_namespace_entries),
         ),
@@ -1065,6 +1297,72 @@ fn memory_path(path: &str) -> Result<Option<&str>> {
         return Err(Error::InvalidPath(path.into()));
     }
     Ok(Some(memory_path))
+}
+
+/// Splits an absolute process path into a mount name and a mount-relative path.
+///
+/// `/mounts` itself stays committed state: it lists mount identity. Only
+/// `/mounts/<name>` and deeper cross into a provider.
+fn mount_target(path: &str) -> Result<Option<(String, MountPath)>> {
+    let Some(rest) = path.strip_prefix("/mounts/") else {
+        return Ok(None);
+    };
+    let (name, remainder) = rest.split_once('/').unwrap_or((rest, ""));
+    crate::mounts::validate_mount_name(name)?;
+    Ok(Some((name.to_owned(), MountPath::parse(remainder)?)))
+}
+
+/// Describes one committed node with the same facts vocabulary mounts use.
+fn committed_stat_value(path: &str, value: &Value) -> Value {
+    let (kind, facts) = match value {
+        Value::Map(values) => (
+            "directory",
+            BTreeMap::from([
+                ("content".into(), Value::from("object")),
+                ("entries".into(), Value::Integer(values.len() as i64)),
+            ]),
+        ),
+        Value::Array(values) => (
+            "directory",
+            BTreeMap::from([
+                ("content".into(), Value::from("array")),
+                ("entries".into(), Value::Integer(values.len() as i64)),
+            ]),
+        ),
+        Value::String(text) => (
+            "leaf",
+            BTreeMap::from([
+                ("bytes".into(), Value::Integer(text.len() as i64)),
+                ("content".into(), Value::from("text/plain")),
+            ]),
+        ),
+        Value::Script(script) => (
+            "leaf",
+            BTreeMap::from([
+                ("bytes".into(), Value::Integer(script.source().len() as i64)),
+                ("content".into(), Value::from("svit-script")),
+            ]),
+        ),
+        _ => (
+            "leaf",
+            BTreeMap::from([("content".into(), Value::from("scalar"))]),
+        ),
+    };
+    let writable = path == "/memory" || path.starts_with("/memory/") || path.starts_with("/lib/");
+    Value::Map(BTreeMap::from([
+        (
+            "access".into(),
+            Value::from(if writable { "read-write" } else { "read" }),
+        ),
+        ("attached".into(), Value::Bool(true)),
+        ("facts".into(), Value::Map(facts)),
+        ("kind".into(), Value::from(kind)),
+        // Committed state is already resident in the process root.
+        ("locality".into(), Value::from("cache")),
+        ("mount".into(), Value::Null),
+        ("path".into(), Value::from(path)),
+        ("source".into(), Value::from("process")),
+    ]))
 }
 
 fn library_path(path: &str) -> Result<Option<&str>> {
@@ -1149,6 +1447,8 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
     let state = RuntimeState::new(
         root,
         Value::empty_map(),
+        Arc::new(MountRegistry::default()),
+        limits.clone(),
         Duration::from_millis(limits.max_execution_millis),
     );
     let interpreter = secure_lisp(&state, &Value::Null, limits, limits.max_exec_depth)?;
@@ -1172,11 +1472,28 @@ struct RuntimeState {
     logs: Arc<Mutex<Vec<LogRecord>>>,
     messages: Arc<Mutex<Vec<StagedMessage>>>,
     library_changes: Arc<Mutex<LibraryChanges>>,
+    mount_writes: Arc<Mutex<Vec<MountWrite>>>,
+    mounts: Arc<MountRegistry>,
+    limits: Limits,
     deadline: Instant,
 }
 
+/// One mount effect an activation intends, buffered until the commit point.
+#[derive(Clone)]
+struct MountWrite {
+    mount: String,
+    path: MountPath,
+    value: Option<Value>,
+}
+
 impl RuntimeState {
-    fn new(committed_root: Value, memory: Value, execution_time: Duration) -> Self {
+    fn new(
+        committed_root: Value,
+        memory: Value,
+        mounts: Arc<MountRegistry>,
+        limits: Limits,
+        execution_time: Duration,
+    ) -> Self {
         Self {
             committed_root: Arc::new(committed_root),
             memory: Arc::new(Mutex::new(memory)),
@@ -1184,8 +1501,40 @@ impl RuntimeState {
             logs: Arc::new(Mutex::new(Vec::new())),
             messages: Arc::new(Mutex::new(Vec::new())),
             library_changes: Arc::new(Mutex::new(Vec::new())),
+            mount_writes: Arc::new(Mutex::new(Vec::new())),
+            mounts,
+            limits,
             deadline: Instant::now() + execution_time,
         }
+    }
+
+    fn mount_view(&self) -> MountView<'_> {
+        MountView::new(
+            self.mounts.as_ref(),
+            root_map(self.committed_root.as_ref())
+                .ok()
+                .and_then(|root| root.get("mounts"))
+                .unwrap_or(&Value::Null),
+            &self.limits,
+        )
+    }
+
+    /// Applies every buffered mount effect in guest order.
+    ///
+    /// THREAT[TM-EFF-006]: Nothing external happens while the guest runs. A
+    /// failure here fails the activation, so a rejected write never coexists
+    /// with a committed memory change. Mount sources are external systems, so
+    /// this is ordering, not distributed atomicity.
+    fn apply_mount_writes(&self) -> Result<()> {
+        for write in lock(&self.mount_writes)?.iter() {
+            match &write.value {
+                Some(value) => self
+                    .mount_view()
+                    .write(&write.mount, &write.path, value.clone())?,
+                None => self.mount_view().remove(&write.mount, &write.path)?,
+            }
+        }
+        Ok(())
     }
 
     fn remaining_time(&self) -> Result<Duration> {
@@ -1239,6 +1588,7 @@ impl RuntimeState {
             logs: lock(&self.logs)?.clone(),
             messages: lock(&self.messages)?.clone(),
             library_changes: lock(&self.library_changes)?.clone(),
+            mount_writes: lock(&self.mount_writes)?.clone(),
         })
     }
 
@@ -1248,10 +1598,36 @@ impl RuntimeState {
         *lock(&self.logs)? = checkpoint.logs;
         *lock(&self.messages)? = checkpoint.messages;
         *lock(&self.library_changes)? = checkpoint.library_changes;
+        *lock(&self.mount_writes)? = checkpoint.mount_writes;
+        Ok(())
+    }
+
+    fn buffer_mount_write(
+        &self,
+        mount: String,
+        path: MountPath,
+        value: Option<Value>,
+        limits: &Limits,
+    ) -> Result<()> {
+        // Reject denied or unknown mounts while the guest can still see the
+        // failure, instead of discovering it at the commit point.
+        let view = self.mount_view();
+        if !view.grants_write(&mount)? {
+            return Err(Error::MountDenied(format!("/mounts/{mount} is read-only")));
+        }
+        let mut writes = lock(&self.mount_writes)?;
+        if writes.len() >= limits.max_mount_writes {
+            return Err(Error::ResourceLimitExceeded("mount writes"));
+        }
+        writes.push(MountWrite { mount, path, value });
         Ok(())
     }
 
     fn write(&self, path: &str, value: Value, limits: &Limits) -> Result<()> {
+        if let Some((mount, mount_path)) = mount_target(path)? {
+            value.validate(limits, false)?;
+            return self.buffer_mount_write(mount, mount_path, Some(value), limits);
+        }
         if let Some(memory_path) = memory_path(path)? {
             value.validate(limits, false)?;
             let mut candidate = lock(&self.memory)?.clone();
@@ -1282,6 +1658,9 @@ impl RuntimeState {
     }
 
     fn remove(&self, path: &str, limits: &Limits) -> Result<()> {
+        if let Some((mount, mount_path)) = mount_target(path)? {
+            return self.buffer_mount_write(mount, mount_path, None, limits);
+        }
         if let Some(memory_path) = memory_path(path)? {
             let mut candidate = lock(&self.memory)?.clone();
             remove_value_path(&mut candidate, memory_path)?;
@@ -1312,6 +1691,7 @@ struct RuntimeCheckpoint {
     logs: Vec<LogRecord>,
     messages: Vec<StagedMessage>,
     library_changes: LibraryChanges,
+    mount_writes: Vec<MountWrite>,
 }
 
 type LibraryChanges = Vec<(String, Option<Script>)>;
@@ -1491,6 +1871,14 @@ fn install_guest_api(
     install_guest_function(interpreter, "discover", move |_, args| {
         expect_arity(args, 1, "discover")?;
         let path = guest_string(&args[0], "discover path")?;
+        if let Some((mount, mount_path)) = mount_target(&path).map_err(guest_from_svit)? {
+            let children = state_for_discover
+                .mount_view()
+                .discover(&mount, &mount_path)
+                .map_err(guest_from_svit)?;
+            let children = children.into_iter().map(Value::String).collect();
+            return persistent_to_ketos(&Value::Array(children)).map_err(guest_from_svit);
+        }
         let view = state_for_discover.view().map_err(guest_from_svit)?;
         let value = read_value_path(&view, &path)
             .map_err(guest_from_svit)?
@@ -1509,12 +1897,41 @@ fn install_guest_api(
     install_guest_function(interpreter, "read", move |_, args| {
         expect_arity(args, 1, "read")?;
         let path = guest_string(&args[0], "read path")?;
+        // THREAT[TM-DOS-010]: A mount read resolves exactly one node under the
+        // activation's limits; it never materializes a subtree.
+        if let Some((mount, mount_path)) = mount_target(&path).map_err(guest_from_svit)? {
+            let found = state_for_read
+                .mount_view()
+                .read(&mount, &mount_path)
+                .map_err(guest_from_svit)?
+                .unwrap_or(Value::Null);
+            return persistent_to_ketos(&found).map_err(guest_from_svit);
+        }
         let view = state_for_read.view().map_err(guest_from_svit)?;
         let found = read_value_path(&view, &path)
             .map_err(guest_from_svit)?
             .cloned()
             .unwrap_or(Value::Null);
         persistent_to_ketos(&found).map_err(guest_from_svit)
+    });
+
+    let state_for_stat = state.clone();
+    install_guest_function(interpreter, "stat", move |_, args| {
+        expect_arity(args, 1, "stat")?;
+        let path = guest_string(&args[0], "stat path")?;
+        let found =
+            if let Some((mount, mount_path)) = mount_target(&path).map_err(guest_from_svit)? {
+                state_for_stat
+                    .mount_view()
+                    .stat(&mount, &mount_path)
+                    .map_err(guest_from_svit)?
+            } else {
+                let view = state_for_stat.view().map_err(guest_from_svit)?;
+                read_value_path(&view, &path)
+                    .map_err(guest_from_svit)?
+                    .map(|value| committed_stat_value(&path, value))
+            };
+        persistent_to_ketos(&found.unwrap_or(Value::Null)).map_err(guest_from_svit)
     });
 
     let state_for_write = state.clone();
@@ -2069,7 +2486,8 @@ mod tests {
                 "source".into(),
                 Value::String(source.into()),
             )])),
-        )
+        )?;
+        Ok(())
     }
 
     #[test]
@@ -2087,7 +2505,7 @@ mod tests {
         assert_eq!(activation.logs[0].message, "counted");
         assert_eq!(
             process.read("/memory/count").unwrap(),
-            Some(&Value::Integer(2))
+            Some(Value::Integer(2))
         );
         assert_eq!(activation.version, 2);
     }
@@ -2106,7 +2524,7 @@ mod tests {
         assert_eq!(process.version(), 1);
         assert_eq!(
             process.read("/memory/count").unwrap(),
-            Some(&Value::Integer(2))
+            Some(Value::Integer(2))
         );
     }
 
@@ -2208,7 +2626,7 @@ mod tests {
         assert_eq!(process.version(), version);
         assert_eq!(
             process.read("/memory/balance").unwrap(),
-            Some(&Value::Integer(10))
+            Some(Value::Integer(10))
         );
         assert!(process.outbox().unwrap().is_empty());
     }
@@ -2233,11 +2651,11 @@ mod tests {
         child.exec("/lib/counter", value!({"by": 5})).unwrap();
         assert_eq!(
             parent.read("/memory/count").unwrap(),
-            Some(&Value::Integer(0))
+            Some(Value::Integer(0))
         );
         assert_eq!(
             child.read("/memory/count").unwrap(),
-            Some(&Value::Integer(5))
+            Some(Value::Integer(5))
         );
     }
 
@@ -2271,7 +2689,7 @@ mod tests {
         assert_eq!(process.version(), version);
         assert_eq!(
             process.read("/memory/started").unwrap(),
-            Some(&Value::Bool(false))
+            Some(Value::Bool(false))
         );
     }
 

@@ -19,9 +19,20 @@ pub enum Error {
     #[error("invalid persistent value: {0}")]
     InvalidValue(String),
 
-    /// A host-provided snapshot mount could not be imported or validated.
-    #[error("invalid snapshot mount: {0}")]
+    /// A mount source could not be resolved or its record failed validation.
+    #[error("invalid mount: {0}")]
     InvalidMount(String),
+
+    /// The addressed mount has no attached provider in this runtime.
+    ///
+    /// Restored snapshots keep mount identity but never mount authority. The
+    /// host must reattach a provider before the mount resolves again.
+    #[error("mount provider is not attached: {0}")]
+    MountUnavailable(String),
+
+    /// The mount exists but the host did not grant the attempted operation.
+    #[error("mount access denied: {0}")]
+    MountDenied(String),
 
     /// The committed inbox head changed before the runtime acknowledged it.
     #[error("inbox head changed before acknowledgement")]

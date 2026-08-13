@@ -25,7 +25,7 @@ async fn main() -> svit::Result<()> {
         .query(EventQuery::new().path_prefix("/memory"))
         .await?;
 
-    assert_eq!(resumed.read("/memory/count")?, Some(&value!(3)));
+    assert_eq!(resumed.read("/memory/count")?, Some(value!(3)));
     assert_eq!(resumed.version(), 1);
     assert_eq!(events.len(), 1);
     println!("event_persistence count=3 version=1 events=1");

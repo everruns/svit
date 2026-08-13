@@ -23,8 +23,8 @@ pub enum Mutation {
 }
 
 impl Mutation {
-    #[cfg(feature = "persistence-turso")]
-    pub(crate) fn path(&self) -> &str {
+    /// Returns the absolute process path this operation changes.
+    pub fn path(&self) -> &str {
         match self {
             Self::Set { path, .. }
             | Self::Remove { path }
@@ -32,6 +32,34 @@ impl Mutation {
             | Self::RemoveFront { path, .. } => path,
         }
     }
+}
+
+/// Folds ordered mutations into the canonical set of changed paths.
+///
+/// Live observers and the durable event index derive their paths here, so a
+/// subscriber and a stored event always agree on what a transition touched.
+pub(crate) fn touched_paths(mutations: &[Mutation]) -> Result<Vec<String>> {
+    let mut paths = std::collections::BTreeSet::new();
+    for mutation in mutations {
+        let path = mutation.path();
+        validate_change_path(path)?;
+        paths.insert(path.to_owned());
+    }
+    Ok(paths.into_iter().collect())
+}
+
+pub(crate) fn validate_change_path(path: &str) -> Result<()> {
+    let Some(remainder) = path.strip_prefix('/') else {
+        return Err(crate::Error::InvalidPath(path.into()));
+    };
+    if remainder.is_empty()
+        || remainder
+            .split('/')
+            .any(|segment| segment.is_empty() || matches!(segment, "." | ".."))
+    {
+        return Err(crate::Error::InvalidPath(path.into()));
+    }
+    Ok(())
 }
 
 /// Bounded filters for retained transaction events.
@@ -208,8 +236,8 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     fn id(&self) -> &ProcessId;
     /// Returns the committed process version.
     fn version(&self) -> u64;
-    /// Reads one committed process value.
-    fn read(&self, path: &str) -> Result<Option<&Value>>;
+    /// Reads one process value, resolving mount nodes lazily.
+    fn read(&self, path: &str) -> Result<Option<Value>>;
     /// Returns the current committed root hash.
     fn root_hash(&self) -> String;
     /// Durably commits one host write.

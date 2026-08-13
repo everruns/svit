@@ -215,9 +215,14 @@ another Svit process in the same transaction.
 
 - A read-only projection result must become a bounded, recorded activation
   input so replay does not silently reread different external state.
-- A writable projection creates an effect intent. The intent commits with
-  process state and is dispatched afterward with an idempotency key.
-- A failure before commit produces no effect intent.
+- A writable mount buffers its writes for the activation and applies them at
+  the commit point, after every in-process validation. This orders the effect
+  with the commit; it does not make the external system part of the
+  transaction.
+- A failure before commit applies no mount write and produces no effect intent.
+- A committed activation reports its changed paths, so a client invalidates
+  what the transition touched rather than its whole cached view. A mount path
+  appears there only when this process wrote it.
 - A failure after external dispatch requires retry, reconciliation, or a
   compensating action; Svit cannot roll the external system back.
 

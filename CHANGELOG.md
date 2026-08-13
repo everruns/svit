@@ -6,6 +6,27 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Replace construction-time snapshot mounts with virtual mounts. `/mounts/<name>`
+  commits only a descriptor — kind, host-disclosed source, locality, and granted
+  access — while nodes below it resolve through a host-attached `MountProvider`
+  when they are read, discovered, stated, or written. Mount data no longer
+  enters the committed root, so mount size is independent of process and
+  snapshot size.
+- Replace `SnapshotMount` with `Mount`, `MountProvider`, `MountDescriptor`,
+  `MountNode`, `MountPath`, `MountAccess`, and `Locality`. `Mount::folder`,
+  `Mount::writable_folder`, `Mount::value`, `Mount::writable_value`, and
+  `Mount::turso_query` cover the built-in providers.
+- `Process::read` and `DurableProcessHandle::read` return owned values because
+  mount nodes are resolved rather than borrowed from committed state.
+- Bump snapshots to format 7 for the descriptor-only `/mounts` schema and the
+  new `max_mount_entries` and `max_mount_writes` limits.
+- Browse one namespace in Lampa. The console no longer holds a copy of the
+  process root or a separate mount browser: every node is resolved through
+  `discover`, `stat`, and `read`, so a mounted folder is browsed exactly like
+  committed memory. Listings are fetched on expand, content on selection and
+  for array-item summaries, bounded at 200 children per directory, and
+  re-resolved on each committed version.
+
 - Track Everruns `main` and compose the process-owned loop through the
   `everruns-host` backend, canonical event-log, and provider/model contracts.
 - Configure each reasoning loop atomically through one `Reasoner` containing
@@ -29,6 +50,26 @@ All notable changes to Svit will be documented here.
   OSC 8 terminal hyperlinks.
 
 ### Added
+
+- `stat(path)` in Rust, Svit Lisp, the reasoning-loop tool set, and
+  `BuiltinContext`. Every node — committed or mounted — answers with one facts
+  record: kind, granted access, locality (`cache`, `local`, or `remote`),
+  mount, path, source, attachment, and provider facts such as byte size,
+  modification time, and a folder mount's git branch and commit.
+- Writable mounts. A descriptor grants `read`, `write`, or `read-write`.
+  Activation writes and removals below a granted mount are buffered and applied
+  at the commit point after every in-process validation, so a failed activation
+  applies none of them. External sources still cannot join the transaction.
+- `Process::attach_mount` and `Svit::attach_mount` so a host can restore mount
+  authority after a snapshot restore, which never carries providers.
+- Mount-aware `search`: the built-in walks a mount subtree node by node under
+  an independent node budget and reports when a bound truncated the walk.
+- Lampa mounts the current directory read-only as `cwd` and accepts
+  `--mount name=path` and `--mount-rw name=path`.
+- A `content` fact on directory nodes (`object` or `array`) completes the
+  `stat` vocabulary, so a client can tell an array from a map without reading
+  it.
+
 
 - Initial Rust workspace with the `svit` library and Lampa process console.
 - Transactional Svit Lisp activations, backed by Ketos, over one process state root.
@@ -70,7 +111,39 @@ All notable changes to Svit will be documented here.
   exposing the mutable process tree or channel implementation.
 - Bounded Lampa array-row previews for scalar and object items.
 
+- Report what every transition changed. `Process::write`, `remove`,
+  `enqueue_inbox`, `acknowledge_inbox`, `replace_thread_state`, and
+  `attach_mount` now return a `Change` carrying the new version, the canonical
+  changed paths, and the replayable mutations; `Activation` carries the same
+  paths. Paths and mutations come from one fold, so a live observer and a
+  stored durable event describe the same transition, and the Turso adapter no
+  longer hand-builds a parallel mutation for each host call.
+- `SvitEvent::Committed(Change)` replaces the payload-free notification, so a
+  subscriber learns which paths went stale instead of invalidating everything.
+  A notification carries version and paths but no values.
+- Lampa invalidates only what a commit named. An unrelated commit no longer
+  costs a re-walk of every open directory, and `r` in the memory panel reloads
+  the tree for external changes no event can report.
+
+### Fixed
+
+- Keep the selected Lampa row across a committed version. The console now
+  remembers the path and restores it once the tree resolves it again, instead
+  of falling back to the root.
+
 ### Security
+
+- `TM-CAP-007`: mount paths parse into validated segments that reject
+  traversal, separators, empty, oversized, and NUL content before a provider
+  observes the request.
+- `TM-CAP-008`: mount providers are runtime state and are never serialized; a
+  restored mount reads its descriptor with `attached: false` and fails closed
+  until the host reattaches it.
+- `TM-EFF-006`: mount writes are ordered with the process commit; a failed
+  activation applies none of them.
+- `TM-DOS-010`: mount listings, leaf reads, subtree searches, and console
+  listings are bounded independently of committed-value limits.
+
 
 - Guest environments use a fresh restricted Ketos interpreter with null I/O
   and a module loader that rejects every module.

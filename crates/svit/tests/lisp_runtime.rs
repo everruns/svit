@@ -32,7 +32,7 @@ fn lisp_activation_commits_memory_and_returns_a_map() {
     assert_eq!(activation.logs[0].fields, value!({"count": 2}));
     assert_eq!(
         process.read("/memory/count").unwrap(),
-        Some(&Value::Integer(2))
+        Some(Value::Integer(2))
     );
 }
 
@@ -84,7 +84,7 @@ fn generic_operations_share_absolute_process_paths_inside_lisp() {
     );
     assert_eq!(
         process.read("/memory/count").unwrap(),
-        Some(&Value::Integer(2))
+        Some(Value::Integer(2))
     );
     assert_eq!(process.read("/memory/draft").unwrap(), None);
     assert_eq!(process.read("/lib/increment").unwrap(), None);

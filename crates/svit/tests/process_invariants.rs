@@ -1,4 +1,4 @@
-use svit::{Error, Limits, Process, Value, value};
+use svit::{Error, Limits, Process, Script, Value, value};
 
 fn unchanged(process: &Process) -> Vec<u8> {
     process.snapshot().expect("snapshot")
@@ -8,7 +8,8 @@ fn write_script(process: &mut Process, name: &str, source: impl Into<String>) ->
     process.write(
         &format!("/lib/{name}"),
         Value::from_json(serde_json::json!({"source": source.into()}))?,
-    )
+    )?;
+    Ok(())
 }
 
 #[test]
@@ -40,23 +41,23 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     );
     assert_eq!(
         process.read("/system/api/operations").unwrap(),
-        Some(&value!(["discover", "exec", "read", "remove", "write"]))
+        Some(value!(["discover", "exec", "read", "remove", "write"]))
     );
     assert_eq!(
         process.read("/system/runtime/language").unwrap(),
-        Some(&Value::String("svit-lisp@2".into()))
+        Some(Value::String("svit-lisp@2".into()))
     );
     assert_eq!(
         process.read("/system/identity/address").unwrap(),
-        Some(&Value::String("svit://local/tests/namespace".into()))
+        Some(Value::String("svit://local/tests/namespace".into()))
     );
     assert_eq!(
         process.read("/system/identity/authenticated").unwrap(),
-        Some(&Value::Bool(false))
+        Some(Value::Bool(false))
     );
     assert_eq!(
         process.read("/system/capabilities").unwrap(),
-        Some(&Value::Array(Vec::new()))
+        Some(Value::Array(Vec::new()))
     );
     assert!(matches!(
         process.write("/system/identity/authenticated", Value::Bool(true)),
@@ -92,7 +93,7 @@ fn thread_state_is_host_managed_and_guest_read_only() {
     assert_eq!(process.version(), version);
     assert_eq!(
         process.read("/thread/format").unwrap(),
-        Some(&value!("test@1"))
+        Some(value!("test@1"))
     );
 
     let oversized = Value::String("x".repeat(process.limits().max_text_bytes + 1));
@@ -139,15 +140,15 @@ fn fork_updates_discoverable_identity_and_lineage_without_changing_parent() {
 
     assert_eq!(
         parent.read("/system/lineage/parent").unwrap(),
-        Some(&Value::Null)
+        Some(Value::Null)
     );
     assert_eq!(
         child.read("/system/lineage/parent").unwrap(),
-        Some(&Value::String("svit://local/tests/lineage-parent".into()))
+        Some(Value::String("svit://local/tests/lineage-parent".into()))
     );
     assert_eq!(
         child.read("/system/identity/address").unwrap(),
-        Some(&Value::String("svit://local/tests/lineage-child".into()))
+        Some(Value::String("svit://local/tests/lineage-child".into()))
     );
 }
 
@@ -425,11 +426,11 @@ fn fork_does_not_duplicate_parent_outbox_or_share_future_mutations() {
     child.exec("/lib/emit", value!({"value": 2})).unwrap();
     assert_eq!(
         parent.read("/memory/value").unwrap(),
-        Some(&Value::Integer(1))
+        Some(Value::Integer(1))
     );
     assert_eq!(
         child.read("/memory/value").unwrap(),
-        Some(&Value::Integer(2))
+        Some(Value::Integer(2))
     );
     assert_eq!(parent.outbox().unwrap().len(), 1);
     assert_eq!(child.outbox().unwrap().len(), 1);
@@ -737,4 +738,77 @@ fn activation_input_has_no_mutation_primitive() {
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
+}
+
+#[test]
+fn every_transition_reports_the_paths_it_changed() {
+    let mut process = Process::builder("svit://local/tests/changes")
+        .unwrap()
+        .memory("count", value!(0))
+        .build()
+        .unwrap();
+
+    let write = process.write("/memory/count", value!(1)).unwrap();
+    assert_eq!(write.version(), 1);
+    assert_eq!(write.paths(), ["/memory/count".to_owned()]);
+    assert_eq!(write.mutations().len(), 1);
+
+    let enqueued = process.enqueue_inbox(value!({"body": "hello"})).unwrap();
+    assert_eq!(enqueued.paths(), ["/inbox".to_owned()]);
+
+    let removed = process.remove("/memory/count").unwrap();
+    assert_eq!(removed.paths(), ["/memory/count".to_owned()]);
+    assert_eq!(removed.version(), 3);
+}
+
+#[test]
+fn an_activation_reports_memory_library_and_outbox_paths() {
+    const SEND: &str = r#"
+        (define (main input)
+          (do
+            (write "/memory/count" 1)
+            (write "/lib/helper" (value-map "source" "(define (main input) 1)"))
+            (send! "svit://local/tests/peer" (value-map "hello" true))
+            "done"))
+    "#;
+    let mut process = Process::builder("svit://local/tests/activation-changes")
+        .unwrap()
+        .memory("count", value!(0))
+        .library("send", Script::new(SEND))
+        .build()
+        .unwrap();
+
+    let activation = process.exec("/lib/send", value!({})).unwrap();
+
+    assert_eq!(
+        activation.changed,
+        [
+            "/lib/helper".to_owned(),
+            "/memory/count".to_owned(),
+            "/system/outbox".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_change_covers_paths_at_below_and_above_what_it_touched() {
+    let mut process = Process::builder("svit://local/tests/touches")
+        .unwrap()
+        .memory("profile", value!({"name": "Ada"}))
+        .build()
+        .unwrap();
+
+    let change = process
+        .write("/memory/profile/name", value!("Grace"))
+        .unwrap();
+
+    // The written node, its subtree, and every ancestor listing are affected.
+    assert!(change.touches("/memory/profile/name"));
+    assert!(change.touches("/memory/profile"));
+    assert!(change.touches("/memory"));
+    assert!(change.touches("/"));
+    // Siblings and unrelated subtrees are not.
+    assert!(!change.touches("/memory/profile/age"));
+    assert!(!change.touches("/mounts"));
+    assert!(!change.touches("/lib"));
 }
