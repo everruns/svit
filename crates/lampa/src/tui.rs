@@ -1588,7 +1588,7 @@ fn status_view(app: &App, theme: &Theme) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svit::value;
+    use svit::{LLMSIM_MODEL_ID, LlmSimConfig, Mount, Reasoner, llm_sim_provider, value};
     use tuika::testing::{grid, render};
 
     /// A [`MemoryView`] over one in-memory value.
@@ -1765,6 +1765,130 @@ mod tests {
             .extend(paths.iter().map(|path| (*path).to_owned()));
         app.app.rebuild_tree(&selected_path);
         app.app.resolve(&app.view);
+    }
+
+    /// Drives the console against a real process, not the in-memory double.
+    ///
+    /// Everything else here exercises `MemoryView` through `ValueView`; this
+    /// covers the implementation Lampa actually runs against, including a real
+    /// folder mount resolved from disk.
+    #[tokio::test]
+    async fn the_console_browses_a_real_process_and_its_mounts() {
+        let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../svit/examples/mount-data");
+        let svit = Svit::builder("svit://local/lampa/smoke")
+            .unwrap()
+            .reasoner(Reasoner::new(
+                LLMSIM_MODEL_ID,
+                llm_sim_provider(LlmSimConfig::scripted(Vec::new())),
+            ))
+            .memory("profile", value!({"name": "Ada"}))
+            .mount("files", Mount::folder(&folder).unwrap())
+            .build()
+            .await
+            .unwrap();
+
+        let mut app = App::new(MemoryView::version(&svit), "test".into());
+        app.resolve(&svit);
+
+        // The committed namespace resolves through the same interface.
+        let paths = app
+            .rows
+            .iter()
+            .map(|row| row.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"/memory"));
+        assert!(paths.contains(&"/mounts"));
+        assert!(paths.contains(&"/system"));
+
+        app.expanded.insert("/mounts".into());
+        app.expanded.insert("/mounts/files".into());
+        app.expanded.insert("/mounts/files/notes".into());
+        app.resolve(&svit);
+
+        // A real directory listed from disk, one node at a time.
+        assert_eq!(
+            app.nodes.children("/mounts/files"),
+            ["greeting.txt".to_owned(), "notes".to_owned()]
+        );
+        assert!(app.nodes.is_directory("/mounts/files/notes"));
+        assert!(!app.nodes.is_directory("/mounts/files/greeting.txt"));
+
+        // A local mount is labelled with its cost and not read to render.
+        let label = app
+            .rows
+            .iter()
+            .find(|row| row.path == "/mounts/files/greeting.txt")
+            .unwrap()
+            .label
+            .clone();
+        assert!(label.contains("greeting.txt (local)"), "{label}");
+        assert_eq!(app.nodes.value("/mounts/files/greeting.txt"), None);
+
+        // Selecting it reads the real file.
+        let index = app
+            .rows
+            .iter()
+            .position(|row| row.path == "/mounts/files/greeting.txt")
+            .unwrap();
+        app.tree.select(Some(index));
+        app.resolve(&svit);
+        assert_eq!(
+            app.selected_value(),
+            &Value::from("hello from a real folder\n")
+        );
+
+        // The frame renders without panicking and shows the mounted file.
+        let theme = lampa_theme();
+        let probes = UiProbes::default();
+        let root = build_view(&mut app, Rect::new(0, 0, 160, 40), &theme, &probes);
+        let frame = grid(&render(root.as_ref(), 160, 40, &theme));
+        assert!(frame.contains("files"), "{frame}");
+        assert!(frame.contains("greeting.txt"), "{frame}");
+        assert!(frame.contains("hello from a real"), "{frame}");
+    }
+
+    #[tokio::test]
+    async fn a_real_commit_invalidates_only_what_it_changed() {
+        let folder = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../svit/examples/mount-data");
+        let mut svit = Svit::builder("svit://local/lampa/smoke-commit")
+            .unwrap()
+            .reasoner(Reasoner::new(
+                LLMSIM_MODEL_ID,
+                llm_sim_provider(LlmSimConfig::scripted(Vec::new())),
+            ))
+            .memory("count", value!(0))
+            .mount("files", Mount::folder(&folder).unwrap())
+            .build()
+            .await
+            .unwrap();
+        let mut events = svit.events();
+
+        let mut app = App::new(MemoryView::version(&svit), "test".into());
+        app.expanded.insert("/mounts".into());
+        app.expanded.insert("/mounts/files".into());
+        app.resolve(&svit);
+        assert_eq!(app.nodes.children("/mounts/files").len(), 2);
+
+        // Building a Svit commits its thread and built-in catalog, so the
+        // write continues an existing version chain rather than starting one.
+        let committed_before = MemoryView::version(&svit);
+        let change = svit.write("/memory/count", value!(1)).unwrap();
+        assert_eq!(change.paths(), ["/memory/count".to_owned()]);
+        assert_eq!(change.version(), committed_before + 1);
+
+        let SvitEvent::Committed(published) = events.try_recv().unwrap() else {
+            panic!("a committed write publishes a change");
+        };
+        app.refresh_process(&published);
+
+        // The mounted directory the operator has open survives the commit.
+        assert_eq!(app.nodes.children("/mounts/files").len(), 2);
+        assert!(!app.nodes.children.contains_key("/memory"));
+
+        app.resolve(&svit);
+        assert_eq!(app.version, change.version());
     }
 
     #[test]
