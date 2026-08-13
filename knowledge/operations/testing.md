@@ -75,6 +75,9 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa array rows show bounded scalar previews, prefer conventional object
   identity fields, fall back to the first scalar field, and summarize other
   containers by kind and item count.
+- Lampa resolves every node through the same `discover`/`stat`/`read`
+  interface, keeps unrelated nodes resolved across a commit that did not name
+  them, and re-reads an externally changed mount only on an explicit reload.
 - Lampa opens only the memory-tree root and preserves the visible window when
   a mouse click selects its bottom row; keyboard navigation scrolls only when
   the selection leaves that window.

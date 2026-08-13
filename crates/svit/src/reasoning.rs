@@ -23,8 +23,8 @@ use tokio::task::JoinHandle;
 
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
-    Activation, ActivationHook, Builtins, Limits, MessageIntent, Mount, Process, ProcessBuilder,
-    ProcessId, Reasoner, Script, Value,
+    Activation, ActivationHook, Builtins, Change, Limits, MessageIntent, Mount, Process,
+    ProcessBuilder, ProcessId, Reasoner, Script, Value,
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
@@ -112,10 +112,15 @@ pub type SvitResult<T> = std::result::Result<T, SvitError>;
 pub enum SvitEvent {
     /// Process state changed through a committed host or reasoning transition.
     ///
-    /// This is a notification, not a state-bearing event. Hosts observe owned
-    /// committed values through [`Svit::read_versioned`] instead of retaining
-    /// access to the mutable process tree.
-    Committed,
+    /// `changed` lists the canonical paths the transition touched, so an
+    /// observer re-reads exactly what went stale instead of everything. It is
+    /// still not a state-bearing event: hosts read owned values back through
+    /// [`Svit::read`] rather than retaining the mutable process tree.
+    ///
+    /// Mount nodes are covered only when this process wrote them. Nothing
+    /// reports an external change to a mounted source, so a client caching
+    /// mount content can still be stale (`L-045`).
+    Committed(Change),
     /// The independently running process loop stopped with a sanitized failure.
     Failed(String),
 }
@@ -330,12 +335,14 @@ impl Svit {
     }
 
     /// Attaches or replaces one mount provider on the running process.
-    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> SvitResult<()> {
-        Ok(self
+    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> SvitResult<Change> {
+        let change = self
             .process
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
-            .attach_mount(name, mount)?)
+            .attach_mount(name, mount)?;
+        publish_committed(&self.event_sender, &change);
+        Ok(change)
     }
 
     /// Reads one owned value and its committed process version atomically.
@@ -348,29 +355,29 @@ impl Svit {
     }
 
     /// Commits a host write through the process path contract.
-    pub fn write(&mut self, path: &str, value: Value) -> SvitResult<()> {
-        {
+    pub fn write(&mut self, path: &str, value: Value) -> SvitResult<Change> {
+        let change = {
             let mut process = self
                 .process
                 .lock()
                 .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.write(path, value)?;
-        }
-        publish_committed(&self.event_sender);
-        Ok(())
+            process.write(path, value)?
+        };
+        publish_committed(&self.event_sender, &change);
+        Ok(change)
     }
 
     /// Commits a host removal through the process path contract.
-    pub fn remove(&mut self, path: &str) -> SvitResult<()> {
-        {
+    pub fn remove(&mut self, path: &str) -> SvitResult<Change> {
+        let change = {
             let mut process = self
                 .process
                 .lock()
                 .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.remove(path)?;
-        }
-        publish_committed(&self.event_sender);
-        Ok(())
+            process.remove(path)?
+        };
+        publish_committed(&self.event_sender, &change);
+        Ok(change)
     }
 
     /// Executes one transactional process script by its absolute `/lib` path.
@@ -382,7 +389,7 @@ impl Svit {
                 .map_err(|_| SvitError::ProcessUnavailable)?;
             process.exec(path, input)?
         };
-        publish_committed(&self.event_sender);
+        publish_committed(&self.event_sender, &activation_change(&activation));
         Ok(activation)
     }
 
@@ -497,14 +504,14 @@ impl Inbox {
         let json = serde_json::to_value(message)
             .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
         let value = Value::from_json(json)?;
-        {
+        let change = {
             let mut process = self
                 .process
                 .lock()
                 .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.enqueue_inbox(value)?;
-        }
-        publish_committed(&self.event_sender);
+            process.enqueue_inbox(value)?
+        };
+        publish_committed(&self.event_sender, &change);
         self.command_sender
             .send(RuntimeCommand::Wake)
             .map_err(|_| SvitError::TaskFailed)?;
@@ -538,12 +545,12 @@ async fn run_process_loop(
                 .filter(|message| message.role == MessageRole::Agent)
                 .cloned()
                 .ok_or(SvitError::MissingOutboxMessage)?;
-            {
+            let change = {
                 let process = reasoning.process();
                 let mut process = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
-                process.acknowledge_inbox(&value)?;
-            }
-            publish_committed(&events);
+                process.acknowledge_inbox(&value)?
+            };
+            publish_committed(&events, &change);
             let _ = outbox.send(response);
             continue;
         }
@@ -555,8 +562,13 @@ async fn run_process_loop(
     }
 }
 
-fn publish_committed(events: &broadcast::Sender<SvitEvent>) {
-    let _ = events.send(SvitEvent::Committed);
+/// Projects one activation as the change its commit published.
+fn activation_change(activation: &Activation) -> Change {
+    Change::notification(activation.version, activation.changed.clone())
+}
+
+fn publish_committed(events: &broadcast::Sender<SvitEvent>, change: &Change) {
+    let _ = events.send(SvitEvent::Committed(change.to_notification()));
 }
 
 /// Loop configuration for a restored or forked process.
@@ -1115,7 +1127,11 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                     return tool_error("Svit process lock is unavailable");
                 };
                 match process.write(path, value) {
-                    Ok(()) => tool_json(json!({"path": path, "version": process.version()})),
+                    Ok(change) => tool_json(json!({
+                        "path": path,
+                        "version": change.version(),
+                        "changed": change.paths(),
+                    })),
                     Err(error) => tool_error(error.to_string()),
                 }
             }
@@ -1141,7 +1157,11 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                     return tool_error("Svit process lock is unavailable");
                 };
                 match process.remove(path) {
-                    Ok(()) => tool_json(json!({"path": path, "version": process.version()})),
+                    Ok(change) => tool_json(json!({
+                        "path": path,
+                        "version": change.version(),
+                        "changed": change.paths(),
+                    })),
                     Err(error) => tool_error(error.to_string()),
                 }
             }
@@ -1471,7 +1491,10 @@ fn persist_thread_state(
         "events": events,
     }))
     .map_err(event_error)?;
-    process.replace_thread_state(value).map_err(event_error)
+    process
+        .replace_thread_state(value)
+        .map(|_| ())
+        .map_err(event_error)
 }
 
 fn messages_from_events(events: &[Event]) -> Vec<Message> {

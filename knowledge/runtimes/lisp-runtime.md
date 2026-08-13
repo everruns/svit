@@ -97,6 +97,9 @@ nodes are read-only. A library write is a map with required text `source` and
 optional text `documentation`. Mount writes are buffered for the activation and
 applied at the commit point, so a failed activation applies none of them.
 
+A committed activation reports the canonical paths it changed, including any
+mount path it wrote, so a client invalidates exactly what went stale.
+
 Nested `exec` uses the same working memory, staged library changes, logs,
 message intents, and activation deadline. It has an independent maximum depth
 because each call creates a fresh interpreter. A nested failure restores its

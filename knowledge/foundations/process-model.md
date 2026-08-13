@@ -76,6 +76,29 @@ alike, a client browses one namespace. The Lampa console relies on exactly
 that: it holds no committed root of its own and resolves every node — memory,
 scripts, or mounted folder — through the same three operations.
 
+### Change reporting
+
+Every transition returns a `Change`: the process version it produced, the
+canonical paths it touched, and the replayable `Mutation` list. Paths and
+mutations come from the same fold, so a live observer and a stored durable
+event always describe the same transition. `Change::touches(path)` is the
+shared staleness predicate — a path is affected when it is at, below, or above
+a changed path, because a write below a node changes that node's value and can
+change its child listing.
+
+Two deliberate asymmetries:
+
+- A granted mount write reports its path but carries no mutation. It changed an
+  external source, not committed state, so there is nothing to persist or
+  replay — but a client caching that node must still read it again.
+- A notification carries version and paths without values. Observers read what
+  they need back through the process API rather than receiving committed state
+  on a broadcast channel.
+
+Mount nodes appear in a change only when this process wrote them. Nothing
+reports an external edit to a mounted source, so a client caching mount content
+stays stale until it reloads (`L-045`).
+
 `locality` is the cost class, not a guarantee: `cache` is already in host
 memory, `local` is host-machine I/O, and `remote` is network-bound and
 fallible. A materialized Turso query reports `cache` rather than claiming a

@@ -242,14 +242,20 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
     svit.start().unwrap();
     inbox.send(Message::user("run")).unwrap();
     let queued = events.recv().await.unwrap();
-    assert_eq!(queued, SvitEvent::Committed);
-    assert_eq!(second_events.recv().await.unwrap(), SvitEvent::Committed);
+    assert!(matches!(queued, SvitEvent::Committed { .. }));
+    assert!(matches!(
+        second_events.recv().await.unwrap(),
+        SvitEvent::Committed { .. }
+    ));
     outbox.recv().await.unwrap();
     let completed = events.recv().await.unwrap();
-    assert_eq!(second_events.recv().await.unwrap(), SvitEvent::Committed);
+    assert!(matches!(
+        second_events.recv().await.unwrap(),
+        SvitEvent::Committed { .. }
+    ));
     svit.block().await.unwrap();
 
-    assert_eq!(completed, SvitEvent::Committed);
+    assert!(matches!(completed, SvitEvent::Committed { .. }));
     let (root, version) = svit.read_versioned("/").unwrap();
     assert_eq!(root, svit.read("/").unwrap());
     assert_eq!(version, svit.version().unwrap());

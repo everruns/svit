@@ -65,7 +65,9 @@ pub use persistence::{
     DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
     ProcessStore,
 };
-pub use process::{Activation, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId};
+pub use process::{
+    Activation, Change, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId,
+};
 pub use reasoner::Reasoner;
 pub use reasoning::{
     Events, Inbox, ObserveError, Outbox, Svit, SvitBuilder, SvitError, SvitEvent, SvitResult,

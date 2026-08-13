@@ -120,7 +120,9 @@ system state. It holds no copy of the process root: every node is resolved
 through `discover`, `stat`, and `read`, so a mounted folder is browsed exactly
 like committed memory. A directory is listed when you expand it and a node is
 read when you select it, so opening the console never walks the whole tree, and
-each committed version re-reads what is on screen. Rows whose content lives
+each committed version re-reads only the paths that transition changed. Press
+`r` in the memory panel to reload the tree for external changes no event can
+report. Rows whose content lives
 outside the process are labelled with their locality, listings are bounded at
 200 children per directory, and a truncated listing says so.
 

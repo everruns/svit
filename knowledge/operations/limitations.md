@@ -61,6 +61,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-042` | Mount writes are ordered with the process commit, not atomic with it | A buffered mount write applies immediately before the root swap, so a crash between the two can leave the external source ahead of committed process state; external sources cannot join a process transaction |
 | `L-043` | Mount providers resolve synchronously | A source needing async I/O must be materialized by the host before mounting, so a Turso query mount reports `cache` locality instead of a live remote view |
 | `L-044` | Mount authority is not serialized | A restored process reads mount descriptors but resolves nothing below them until the host calls `attach_mount` again; forks share the parent's attached providers by default |
+| `L-045` | Change reporting covers committed transitions only | A mounted source edited outside the process emits no event, so a client caching mount content stays stale until it reloads; mount change notification would need an opt-in provider watcher |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

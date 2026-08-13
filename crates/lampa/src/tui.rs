@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use crossterm::event;
 use ratatui::{Terminal, TerminalOptions, Viewport};
-use svit::{ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value};
+use svit::{
+    Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value,
+};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
 use tuika::term::hyperlink::HyperlinkBackend;
@@ -117,19 +119,19 @@ struct TreeRow {
     expandable: bool,
 }
 
-/// The process operations the console browses a tree with.
+/// The process operations the console browses one memory tree with.
 ///
 /// Memory, scripts, system metadata, and mounts all answer the same three
 /// questions, so the console has one node interface and no special case for
 /// `/mounts`.
-trait ProcessView {
+trait MemoryView {
     fn discover(&self, path: &str) -> Result<Vec<String>, String>;
     fn stat(&self, path: &str) -> Result<Option<Value>, String>;
     fn read(&self, path: &str) -> Result<Option<Value>, String>;
     fn version(&self) -> u64;
 }
 
-impl ProcessView for Svit {
+impl MemoryView for Svit {
     fn discover(&self, path: &str) -> Result<Vec<String>, String> {
         Svit::discover(self, path).map_err(|error| error.to_string())
     }
@@ -199,25 +201,33 @@ impl Node {
     }
 }
 
-/// Lazily resolved view of one process tree.
+/// Lazily resolved view of one memory tree.
 ///
 /// Nothing is fetched until it is on screen: a directory is listed when it is
 /// expanded, and content is read for the selected node and for rows that need
 /// a value to summarize. The console holds no committed root of its own.
 #[derive(Default)]
-struct ProcessTree {
+struct MemoryTree {
     nodes: BTreeMap<String, Node>,
     children: BTreeMap<String, Vec<String>>,
     values: BTreeMap<String, Value>,
     truncated: BTreeSet<String>,
 }
 
-impl ProcessTree {
+impl MemoryTree {
     fn clear(&mut self) {
         self.nodes.clear();
         self.children.clear();
         self.values.clear();
         self.truncated.clear();
+    }
+
+    /// Forgets every entry the change could have made stale.
+    fn invalidate(&mut self, change: &Change) {
+        self.nodes.retain(|path, _| !change.touches(path));
+        self.children.retain(|path, _| !change.touches(path));
+        self.values.retain(|path, _| !change.touches(path));
+        self.truncated.retain(|path| !change.touches(path));
     }
 
     fn resolved(&self) -> usize {
@@ -240,7 +250,7 @@ impl ProcessTree {
         self.values.get(path)
     }
 
-    fn resolve_node(&mut self, view: &dyn ProcessView, path: &str) {
+    fn resolve_node(&mut self, view: &dyn MemoryView, path: &str) {
         if self.nodes.contains_key(path) {
             return;
         }
@@ -257,7 +267,7 @@ impl ProcessTree {
         self.nodes.insert(path.to_owned(), node);
     }
 
-    fn resolve_children(&mut self, view: &dyn ProcessView, path: &str) {
+    fn resolve_children(&mut self, view: &dyn MemoryView, path: &str) {
         if self.children.contains_key(path) || !self.is_directory(path) {
             return;
         }
@@ -281,7 +291,7 @@ impl ProcessTree {
         self.children.insert(path.to_owned(), names);
     }
 
-    fn resolve_value(&mut self, view: &dyn ProcessView, path: &str) {
+    fn resolve_value(&mut self, view: &dyn MemoryView, path: &str) {
         if self.values.contains_key(path) {
             return;
         }
@@ -324,7 +334,7 @@ struct PreviewCache {
 struct App {
     focus: Focus,
     tree: SelectState,
-    nodes: ProcessTree,
+    nodes: MemoryTree,
     expanded: BTreeSet<String>,
     memory_viewport_height: usize,
     memory_window_start: usize,
@@ -349,7 +359,7 @@ impl App {
         let mut preview_scroll = ScrollState::new();
         preview_scroll.jump_to_top();
         let expanded = BTreeSet::from(["/".into()]);
-        let nodes = ProcessTree::default();
+        let nodes = MemoryTree::default();
         let rows = tree_rows(&expanded, &nodes);
         Self {
             focus: Focus::Composer,
@@ -390,7 +400,7 @@ impl App {
     /// Runs once per frame. Every node goes through the same three process
     /// operations, so a mounted folder and committed memory are browsed the
     /// same way.
-    fn resolve(&mut self, view: &dyn ProcessView) {
+    fn resolve(&mut self, view: &dyn MemoryView) {
         let before = self.nodes.resolved();
         self.nodes.resolve_node(view, "/");
         // Expanded paths iterate parent before child, so a directory's kind is
@@ -436,14 +446,30 @@ impl App {
         }
     }
 
-    fn refresh_process(&mut self, version: u64) {
-        // A new committed version is the point to stop trusting anything
-        // resolved earlier, committed or external.
+    /// Applies one committed change, dropping only what it invalidated.
+    ///
+    /// The process reports the paths a transition touched, so an unrelated
+    /// commit no longer costs a re-walk of every open directory. Nodes the
+    /// change did not name stay resolved — including mount nodes, which no
+    /// event can report an external change for.
+    fn refresh_process(&mut self, change: &Change) {
+        self.pending_selection = Some(self.selected().path.clone());
+        if change.paths().is_empty() {
+            self.nodes.clear();
+        } else {
+            self.nodes.invalidate(change);
+        }
+        self.rows = tree_rows(&self.expanded, &self.nodes);
+        self.preview_cache = None;
+        self.version = change.version();
+    }
+
+    /// Drops every resolved node so the next frame reads the tree again.
+    fn reload(&mut self) {
         self.pending_selection = Some(self.selected().path.clone());
         self.nodes.clear();
         self.rows = tree_rows(&self.expanded, &self.nodes);
         self.preview_cache = None;
-        self.version = version;
     }
 
     fn visible_index_or_ancestor(&self, path: &str) -> usize {
@@ -694,6 +720,12 @@ impl App {
                         code: KeyCode::Enter,
                         ..
                     }) => self.toggle_selected(),
+                    // Nothing reports an external change to a mounted source,
+                    // so re-reading the tree stays a deliberate action.
+                    Event::Key(Key {
+                        code: KeyCode::Char('r'),
+                        ..
+                    }) => self.reload(),
                     Event::Key(Key {
                         code: KeyCode::Left,
                         ..
@@ -789,7 +821,7 @@ enum AppAction {
 }
 
 pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
-    let mut app = App::new(ProcessView::version(&svit), model);
+    let mut app = App::new(MemoryView::version(&svit), model);
     let inbox = svit.inbox();
     let mut events = svit.events();
     let mut outbox = svit.outbox();
@@ -822,7 +854,7 @@ fn run_terminal(
         loop {
             while let Ok(event) = events.try_recv() {
                 match event {
-                    SvitEvent::Committed => app.refresh_process(ProcessView::version(svit)),
+                    SvitEvent::Committed(change) => app.refresh_process(&change),
                     SvitEvent::Failed(error) => app.push_error(error),
                 }
             }
@@ -867,7 +899,7 @@ fn run_terminal(
     result
 }
 
-fn tree_rows(expanded: &BTreeSet<String>, nodes: &ProcessTree) -> Vec<TreeRow> {
+fn tree_rows(expanded: &BTreeSet<String>, nodes: &MemoryTree) -> Vec<TreeRow> {
     let expandable = nodes.is_directory("/");
     let root_marker = match (expandable, expanded.contains("/")) {
         (true, true) => "▾ ",
@@ -886,7 +918,7 @@ fn tree_rows(expanded: &BTreeSet<String>, nodes: &ProcessTree) -> Vec<TreeRow> {
 }
 
 /// Labels one child row from its own facts and, for array items, its value.
-fn tree_label(parent: &str, name: &str, path: &str, nodes: &ProcessTree) -> String {
+fn tree_label(parent: &str, name: &str, path: &str, nodes: &MemoryTree) -> String {
     if nodes.node(parent).is_some_and(Node::array) {
         let summary = nodes
             .value(path)
@@ -907,7 +939,7 @@ fn flatten_tree(
     indent: &str,
     last_parent: bool,
     expanded: &BTreeSet<String>,
-    nodes: &ProcessTree,
+    nodes: &MemoryTree,
     rows: &mut Vec<TreeRow>,
 ) {
     let mut children = nodes
@@ -1559,7 +1591,7 @@ mod tests {
     use svit::value;
     use tuika::testing::{grid, render};
 
-    /// A [`ProcessView`] over one in-memory value.
+    /// A [`MemoryView`] over one in-memory value.
     ///
     /// It answers `discover`, `stat`, and `read` exactly as a process does, so
     /// the console under test browses the same node interface it does live.
@@ -1600,7 +1632,7 @@ mod tests {
         }
     }
 
-    impl ProcessView for ValueView {
+    impl MemoryView for ValueView {
         fn discover(&self, path: &str) -> Result<Vec<String>, String> {
             match self.at(path) {
                 Some(Value::Map(values)) => Ok(values.keys().cloned().collect()),
@@ -1685,9 +1717,11 @@ mod tests {
         }
 
         fn refresh_process(&mut self, root: Value, version: u64) {
+            let changed = vec!["/".to_owned()];
             self.view.root = root;
             self.view.version = version;
-            self.app.refresh_process(version);
+            self.app
+                .refresh_process(&Change::notification(version, changed));
             self.app.resolve(&self.view);
         }
     }
@@ -1828,6 +1862,81 @@ mod tests {
         assert_eq!(app.version, 2);
         assert_eq!(app.selected().path, "/mounts/cwd/a.txt");
         assert_eq!(app.selected_value(), &Value::from("two"));
+    }
+
+    #[test]
+    fn an_unrelated_commit_keeps_the_rest_of_the_tree_resolved() {
+        let mut app = test_app(
+            value!({
+                "memory": {"count": 1},
+                "mounts": {"cwd": {"a.txt": "one", "b.txt": "two"}}
+            }),
+            1,
+        );
+        expand_paths(&mut app, &["/memory", "/mounts", "/mounts/cwd"]);
+        app.select("/mounts/cwd/a.txt");
+        let resolved_before = app.nodes.resolved();
+
+        // A commit that names only /memory/count must not cost a re-walk of
+        // the mounted directory the operator has open.
+        app.view.root = value!({
+            "memory": {"count": 2},
+            "mounts": {"cwd": {"a.txt": "one", "b.txt": "two"}}
+        });
+        app.app
+            .refresh_process(&Change::notification(2, vec!["/memory/count".to_owned()]));
+
+        assert_eq!(app.nodes.children("/mounts/cwd").len(), 2);
+        assert_eq!(
+            app.nodes.value("/mounts/cwd/a.txt"),
+            Some(&Value::from("one"))
+        );
+        // The changed path and its parent listing are the only casualties.
+        assert!(app.nodes.node("/memory/count").is_none());
+        assert!(!app.nodes.children.contains_key("/memory"));
+        assert!(app.nodes.resolved() < resolved_before);
+
+        app.app.resolve(&app.view);
+        app.select("/memory/count");
+
+        assert_eq!(app.version, 2);
+        assert_eq!(app.selected_value(), &Value::from(2));
+    }
+
+    #[test]
+    fn a_commit_that_writes_a_mount_invalidates_that_node() {
+        let mut app = test_app(value!({"mounts": {"cwd": {"a.txt": "one"}}}), 1);
+        expand_paths(&mut app, &["/mounts", "/mounts/cwd"]);
+        app.select("/mounts/cwd/a.txt");
+
+        // A granted mount write is reported like any other changed path.
+        app.view.root = value!({"mounts": {"cwd": {"a.txt": "rewritten"}}});
+        app.app.refresh_process(&Change::notification(
+            2,
+            vec!["/mounts/cwd/a.txt".to_owned()],
+        ));
+        app.app.resolve(&app.view);
+
+        assert_eq!(app.selected_value(), &Value::from("rewritten"));
+    }
+
+    #[test]
+    fn reloading_rereads_a_tree_no_event_could_report() {
+        let mut app = test_app(value!({"mounts": {"cwd": {"a.txt": "one"}}}), 1);
+        expand_paths(&mut app, &["/mounts", "/mounts/cwd"]);
+        app.select("/mounts/cwd/a.txt");
+
+        // An external edit produces no event, so the console keeps showing the
+        // value it last read until the operator asks for a reload.
+        app.view.root = value!({"mounts": {"cwd": {"a.txt": "changed on disk"}}});
+        app.app.resolve(&app.view);
+        assert_eq!(app.selected_value(), &Value::from("one"));
+
+        app.focus = Focus::Memory;
+        let _ = app.handle(&Event::Key(Key::new(KeyCode::Char('r'))));
+
+        assert_eq!(app.selected_value(), &Value::from("changed on disk"));
+        assert_eq!(app.selected().path, "/mounts/cwd/a.txt");
     }
 
     #[test]

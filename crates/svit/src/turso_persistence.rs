@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
@@ -11,7 +10,7 @@ use turso::{Connection, Database, Row, Value as SqlValue, params};
 
 use crate::persistence::{
     DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
-    ProcessStore,
+    ProcessStore, touched_paths,
 };
 use crate::{Activation, Error, Mount, Process, ProcessId, Result, Value};
 
@@ -1177,7 +1176,7 @@ impl DurableProcess {
                 "mount identity for {name} differs from the persisted descriptor"
             )));
         }
-        self.process.attach_mount(name, mount)
+        self.process.attach_mount(name, mount).map(|_| ())
     }
 
     /// Returns the current committed root hash.
@@ -1186,63 +1185,53 @@ impl DurableProcess {
     }
 
     /// Durably commits one host write as a uniform transaction event.
+    ///
+    /// The transition itself reports the mutations it applied, so the stored
+    /// event and a live observer always describe the same change.
     pub async fn write(&mut self, path: &str, value: Value) -> Result<()> {
         let mut candidate = self.process.clone();
-        candidate.write(path, value)?;
-        let value = candidate
-            .read(path)?
-            .ok_or_else(|| Error::InvalidPersistence("committed write is missing".into()))?;
-        self.commit_candidate(
-            candidate,
-            vec![Mutation::Set {
-                path: path.into(),
-                value,
-            }],
-            "host.write",
-        )
-        .await
+        let change = candidate.write(path, value)?;
+        self.commit_change(candidate, change, "host.write").await
     }
 
     /// Durably commits one host removal as a uniform transaction event.
     pub async fn remove(&mut self, path: &str) -> Result<()> {
         let mut candidate = self.process.clone();
-        candidate.remove(path)?;
-        self.commit_candidate(
-            candidate,
-            vec![Mutation::Remove { path: path.into() }],
-            "host.remove",
-        )
-        .await
+        let change = candidate.remove(path)?;
+        self.commit_change(candidate, change, "host.remove").await
     }
 
     /// Durably appends one host-supplied value to the process inbox.
     pub async fn enqueue_inbox(&mut self, value: Value) -> Result<()> {
         let mut candidate = self.process.clone();
-        candidate.enqueue_inbox(value.clone())?;
-        self.commit_candidate(
-            candidate,
-            vec![Mutation::Append {
-                path: "/inbox".into(),
-                values: vec![value],
-            }],
-            "inbox.enqueue",
-        )
-        .await
+        let change = candidate.enqueue_inbox(value)?;
+        self.commit_change(candidate, change, "inbox.enqueue").await
     }
 
     /// Durably removes the exact inbox head observed by a completed turn.
     pub async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()> {
         let mut candidate = self.process.clone();
-        candidate.acknowledge_inbox(expected)?;
-        self.commit_candidate(
-            candidate,
-            vec![Mutation::RemoveFront {
-                path: "/inbox".into(),
-                expected_value_hash: canonical_hash(expected)?,
-            }],
-            "inbox.acknowledge",
-        )
-        .await
+        let change = candidate.acknowledge_inbox(expected)?;
+        self.commit_change(candidate, change, "inbox.acknowledge")
+            .await
+    }
+
+    /// Publishes a transition that already reported its own mutations.
+    ///
+    /// A change with no mutations touched no committed state — a granted mount
+    /// write is the only such transition — so there is no event to append.
+    async fn commit_change(
+        &mut self,
+        candidate: Process,
+        change: crate::Change,
+        source: &str,
+    ) -> Result<()> {
+        if change.mutations().is_empty() {
+            self.process = candidate;
+            return Ok(());
+        }
+        self.commit_candidate(candidate, change.mutations().to_vec(), source)
+            .await
     }
 
     /// Executes guest Lisp and durably publishes its exact committed write set.
@@ -1512,19 +1501,6 @@ async fn update_base_head(
         )
         .await
         .map_err(store_error)
-}
-
-fn touched_paths(mutations: &[Mutation]) -> Result<Vec<String>> {
-    let mut paths = BTreeSet::new();
-    for mutation in mutations {
-        let path = mutation.path();
-        validate_query_path(path)?;
-        if path == "/" {
-            return Err(Error::InvalidPath(path.into()));
-        }
-        paths.insert(path.to_owned());
-    }
-    Ok(paths.into_iter().collect())
 }
 
 fn validate_query_path(path: &str) -> Result<()> {

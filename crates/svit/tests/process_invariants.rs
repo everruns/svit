@@ -1,4 +1,4 @@
-use svit::{Error, Limits, Process, Value, value};
+use svit::{Error, Limits, Process, Script, Value, value};
 
 fn unchanged(process: &Process) -> Vec<u8> {
     process.snapshot().expect("snapshot")
@@ -8,7 +8,8 @@ fn write_script(process: &mut Process, name: &str, source: impl Into<String>) ->
     process.write(
         &format!("/lib/{name}"),
         Value::from_json(serde_json::json!({"source": source.into()}))?,
-    )
+    )?;
+    Ok(())
 }
 
 #[test]
@@ -737,4 +738,77 @@ fn activation_input_has_no_mutation_primitive() {
         Err(Error::Script(_))
     ));
     assert_eq!(process.snapshot().unwrap(), before);
+}
+
+#[test]
+fn every_transition_reports_the_paths_it_changed() {
+    let mut process = Process::builder("svit://local/tests/changes")
+        .unwrap()
+        .memory("count", value!(0))
+        .build()
+        .unwrap();
+
+    let write = process.write("/memory/count", value!(1)).unwrap();
+    assert_eq!(write.version(), 1);
+    assert_eq!(write.paths(), ["/memory/count".to_owned()]);
+    assert_eq!(write.mutations().len(), 1);
+
+    let enqueued = process.enqueue_inbox(value!({"body": "hello"})).unwrap();
+    assert_eq!(enqueued.paths(), ["/inbox".to_owned()]);
+
+    let removed = process.remove("/memory/count").unwrap();
+    assert_eq!(removed.paths(), ["/memory/count".to_owned()]);
+    assert_eq!(removed.version(), 3);
+}
+
+#[test]
+fn an_activation_reports_memory_library_and_outbox_paths() {
+    const SEND: &str = r#"
+        (define (main input)
+          (do
+            (write "/memory/count" 1)
+            (write "/lib/helper" (value-map "source" "(define (main input) 1)"))
+            (send! "svit://local/tests/peer" (value-map "hello" true))
+            "done"))
+    "#;
+    let mut process = Process::builder("svit://local/tests/activation-changes")
+        .unwrap()
+        .memory("count", value!(0))
+        .library("send", Script::new(SEND))
+        .build()
+        .unwrap();
+
+    let activation = process.exec("/lib/send", value!({})).unwrap();
+
+    assert_eq!(
+        activation.changed,
+        [
+            "/lib/helper".to_owned(),
+            "/memory/count".to_owned(),
+            "/system/outbox".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn a_change_covers_paths_at_below_and_above_what_it_touched() {
+    let mut process = Process::builder("svit://local/tests/touches")
+        .unwrap()
+        .memory("profile", value!({"name": "Ada"}))
+        .build()
+        .unwrap();
+
+    let change = process
+        .write("/memory/profile/name", value!("Grace"))
+        .unwrap();
+
+    // The written node, its subtree, and every ancestor listing are affected.
+    assert!(change.touches("/memory/profile/name"));
+    assert!(change.touches("/memory/profile"));
+    assert!(change.touches("/memory"));
+    assert!(change.touches("/"));
+    // Siblings and unrelated subtrees are not.
+    assert!(!change.touches("/memory/profile/age"));
+    assert!(!change.touches("/mounts"));
+    assert!(!change.touches("/lib"));
 }

@@ -220,6 +220,9 @@ another Svit process in the same transaction.
   with the commit; it does not make the external system part of the
   transaction.
 - A failure before commit applies no mount write and produces no effect intent.
+- A committed activation reports its changed paths, so a client invalidates
+  what the transition touched rather than its whole cached view. A mount path
+  appears there only when this process wrote it.
 - A failure after external dispatch requires retry, reconciliation, or a
   compensating action; Svit cannot roll the external system back.
 

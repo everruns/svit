@@ -111,6 +111,20 @@ All notable changes to Svit will be documented here.
   exposing the mutable process tree or channel implementation.
 - Bounded Lampa array-row previews for scalar and object items.
 
+- Report what every transition changed. `Process::write`, `remove`,
+  `enqueue_inbox`, `acknowledge_inbox`, `replace_thread_state`, and
+  `attach_mount` now return a `Change` carrying the new version, the canonical
+  changed paths, and the replayable mutations; `Activation` carries the same
+  paths. Paths and mutations come from one fold, so a live observer and a
+  stored durable event describe the same transition, and the Turso adapter no
+  longer hand-builds a parallel mutation for each host call.
+- `SvitEvent::Committed(Change)` replaces the payload-free notification, so a
+  subscriber learns which paths went stale instead of invalidating everything.
+  A notification carries version and paths but no values.
+- Lampa invalidates only what a commit named. An unrelated commit no longer
+  costs a re-walk of every open directory, and `r` in the memory panel reloads
+  the tree for external changes no event can report.
+
 ### Fixed
 
 - Keep the selected Lampa row across a committed version. The console now

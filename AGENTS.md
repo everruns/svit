@@ -5,6 +5,10 @@
 Be concise. Prefer explicit domain terms over metaphors: runtime, process,
 activation, memory tree, script library, outbox, snapshot, and fork.
 
+`memory tree` is the whole guest-visible namespace under one process root,
+including `/mounts` and `/system`. `/memory` is one node inside it. Say
+`/memory` when you mean that node.
+
 ### Principles
 
 - Fix root causes. Read more code before guessing.

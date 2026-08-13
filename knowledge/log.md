@@ -43,6 +43,18 @@
   distinguish an array from a map without reading it. Restoring the selected
   row across a commit is now explicit state rather than a side effect of
   holding the whole root.
+* **One change stream**: Every transition now returns a `Change` with the new
+  version, canonical changed paths, and replayable mutations, folded from one
+  source so a live observer and a stored durable event describe the same
+  transition. `SvitEvent::Committed(Change)` replaces the payload-free ping,
+  and the Turso adapter stopped hand-building a parallel mutation per host
+  call. A granted mount write reports its path but carries no mutation: it
+  changed an external source, not committed state. Notifications carry paths
+  without values, so observers read state back through the API.
+* **Precise invalidation**: `Change::touches` is the shared staleness
+  predicate — at, below, or above a changed path — so every client invalidates
+  identically. Lampa keeps unrelated nodes resolved across a commit, and `r`
+  reloads the tree for external mount edits no event can report (`L-045`).
 * **Compatibility**: Bumped snapshots to format 7 for the descriptor-only
   `/mounts` schema and the `max_mount_entries` and `max_mount_writes` limits.
 
