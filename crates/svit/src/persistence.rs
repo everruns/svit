@@ -194,6 +194,9 @@ pub trait ProcessStore: Send + Sync {
     /// Creates a new address-bound process and fails if that address exists.
     async fn create(&self, process: Process) -> Result<Self::Handle>;
 
+    /// Imports one current process boundary and starts a new retained-history tail.
+    async fn import(&self, process: Process) -> Result<Self::Handle>;
+
     /// Resumes one existing process by its exact logical address.
     async fn resume(&self, address: &ProcessId) -> Result<Self::Handle>;
 }

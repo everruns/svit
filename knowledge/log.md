@@ -12,6 +12,13 @@
 * **Build-time compiler boundary**: Compile checking uses a fresh restricted
   Ketos interpreter with null I/O, a null module loader, and bounded resources;
   added `TM-ESC-004` and `TM-DOS-011` with focused evidence.
+* **Per-instance Lampa stores**: Each lowercase filesystem-safe instance ID now
+  maps to `instances/{instance-id}/svit.db` below `LAMPA_DATA_DIR`; existing
+  databases fail closed when their root address does not match.
+* **Explicit process import**: `ProcessStore::import` records an `imported` base
+  at the current version and root hash, then starts a new event tail. Lampa's
+  `--import-legacy` uses it once for a selected address without pretending to
+  preserve the source event or fork topology (`L-046`).
 
 ## 2026-08-12
 

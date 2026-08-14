@@ -64,13 +64,14 @@ the boundary.
 
 The current workspace implements the process and process-owned reasoning loop in
 the `svit` crate and provides an interactive three-panel tree host in Lampa.
-Lampa's entry point opens one local Turso store below the platform-native user
-data directory, explicitly creates or resumes
-`svit://local/lampa/{instance-id}`, and builds one persisted `Svit`; the
-TUI thereafter sends only through its durable inbox and consumes commit
-notifications, completed-turn outbox messages, and terminal failure events.
-Multiple Lampa instances share the store but remain partitioned by exact
-process address.
+Lampa maps one lowercase filesystem-safe instance ID to both
+`svit://local/lampa/{instance-id}` and
+`instances/{instance-id}/svit.db` below its user-data root. Each instance owns
+one local Turso store; an existing file must contain the matching root address.
+The entry point creates, resumes, or explicitly imports that process and builds
+one persisted `Svit`; the TUI thereafter sends only through its durable inbox
+and consumes commit notifications, completed-turn outbox messages, and terminal
+failure events.
 After a commit notification it reads an owned root/version pair through the
 `Svit` contract. It never retains a direct reference to `Process`.
 The contract exposes a cloneable `Inbox` sink and creates independent `Outbox`

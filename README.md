@@ -163,20 +163,34 @@ For an interactive process, start Lampa with an OpenAI API key:
 OPENAI_API_KEY=... cargo run -p lampa
 ```
 
-Lampa creates or resumes `svit://local/lampa/default` in one shared database
-below the platform-native user data directory: `~/Library/Application
-Support/lampa/lampa.db` on macOS, `$XDG_DATA_HOME/lampa/lampa.db` on Linux, or
-`%APPDATA%\lampa\lampa.db` on Windows. Select another instance with
-`--instance <instance-id>` (or `LAMPA_INSTANCE_ID`):
+Lampa creates or resumes `svit://local/lampa/default` in its own database below
+the platform-native user data directory:
+`~/Library/Application Support/lampa/instances/default/svit.db` on macOS,
+`$XDG_DATA_HOME/lampa/instances/default/svit.db` on Linux, or
+`%APPDATA%\lampa\instances\default\svit.db` on Windows. Select another instance
+with `--instance <instance-id>` (or `LAMPA_INSTANCE_ID`):
 
 ```console
 OPENAI_API_KEY=... cargo run -p lampa -- --instance research-one
 ```
 
-That resumes `svit://local/lampa/research-one`. Instances share the database
-but are isolated by address. Set `LAMPA_DB=/path/to/lampa.db` only when an
-explicit database location is needed. Restarting with the same database and
-instance ID resumes its committed memory, conversation, and pending inbox.
+That resumes `svit://local/lampa/research-one` from
+`instances/research-one/svit.db`. Instance IDs start with a lowercase letter or
+digit and contain at most 64 lowercase letters, digits, `-`, or `_`. Set
+`LAMPA_DATA_DIR=/path/to/lampa` to replace the data-directory root while
+preserving the per-instance layout. Restarting with the same instance ID and
+data directory resumes its committed memory, conversation, and pending inbox.
+
+Import one instance from the former shared database explicitly:
+
+```console
+OPENAI_API_KEY=... cargo run -p lampa -- --instance research-one \
+  --import-legacy "$HOME/Library/Application Support/lampa/lampa.db"
+```
+
+Import is accepted only before the target instance database exists. It
+preserves the current process state, version, and root hash, then starts a new
+retained-history tail; subsequent starts omit `--import-legacy`.
 
 ![Lampa terminal process viewer](docs/lampa.gif)
 
@@ -221,8 +235,8 @@ allowlist:
 OPENAI_API_KEY=... cargo run -p lampa
 ```
 
-Lampa's entry point opens the process store and configures one persisted `Svit`
-instance. The TUI
+Lampa's entry point opens the selected instance's process store and configures
+one persisted `Svit` instance. The TUI
 then sends through `Inbox`, renders completed messages from `outbox`, and
 refreshes memory through `Svit::read_versioned` after
 `SvitEvent::Committed`; it does not retain a `Process`, assemble runtimes, or

@@ -79,6 +79,45 @@ async fn local_database_reopens_by_address() {
 }
 
 #[tokio::test]
+async fn importing_a_current_boundary_preserves_state_and_starts_a_new_tail() {
+    let source = TursoProcessStore::memory().await.unwrap();
+    let process = Process::builder("svit://local/persistence/import")
+        .unwrap()
+        .memory("state", value!("new"))
+        .build()
+        .unwrap();
+    let mut source_process = source.create(process).await.unwrap();
+    source_process
+        .write("/memory/state", value!("current"))
+        .await
+        .unwrap();
+    let expected_version = source_process.version();
+    let expected_hash = source_process.root_hash();
+
+    let target = TursoProcessStore::memory().await.unwrap();
+    let mut imported = ProcessStore::import(&target, source_process.process_projection())
+        .await
+        .unwrap();
+
+    assert_eq!(imported.version(), expected_version);
+    assert_eq!(imported.root_hash(), expected_hash);
+    assert_eq!(
+        imported.read("/memory/state").unwrap(),
+        Some(value!("current"))
+    );
+    assert!(imported.query(EventQuery::new()).await.unwrap().is_empty());
+
+    imported
+        .write("/memory/after-import", value!(true))
+        .await
+        .unwrap();
+    let tail = imported.query(EventQuery::new()).await.unwrap();
+    assert_eq!(tail.len(), 1);
+    assert_eq!(tail[0].position(), 0);
+    assert_eq!(tail[0].process_version(), expected_version + 1);
+}
+
+#[tokio::test]
 // THREAT[TM-FORK-003]
 async fn fork_references_history_until_the_child_is_cut() {
     let store = TursoProcessStore::memory().await.unwrap();

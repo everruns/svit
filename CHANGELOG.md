@@ -26,6 +26,13 @@ All notable changes to Svit will be documented here.
   committed memory. Listings are fetched on expand, content on selection and
   for array-item summaries, bounded at 200 children per directory, and
   re-resolved on each committed version.
+- Store each Lampa instance in
+  `instances/<instance-id>/svit.db`, selected below `LAMPA_DATA_DIR`. Instance
+  IDs are lowercase filesystem-safe address segments, and an existing database
+  must contain its matching root address.
+- Add explicit legacy shared-database import. `ProcessStore::import` preserves
+  the current process version and root while beginning a new retained-history
+  tail at the imported boundary.
 
 - Track Everruns `main` and compose the process-owned loop through the
   `everruns-host` backend, canonical event-log, and provider/model contracts.
@@ -50,9 +57,6 @@ All notable changes to Svit will be documented here.
   OSC 8 terminal hyperlinks.
 - Route runnable Svit inbox, reasoning, process-tool, and built-in catalog
   transitions through an adapter-owned durable process handle.
-- Make Lampa create or resume `svit://local/lampa/{instance-id}` in one shared
-  platform-native user-data database, with `--instance` selecting an isolated
-  process and `LAMPA_DB` overriding the database path.
 
 ### Added
 

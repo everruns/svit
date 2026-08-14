@@ -85,9 +85,13 @@ The following scenarios execute with assertions and deterministic output under
   reconstructs the same memory and conversation without rerunning the model or
   appending a transaction when the host grants and prompt are unchanged.
 - Lampa maps one validated instance ID to
-  `svit://local/lampa/{instance-id}`; its store boundary resumes that address
-  instead of silently replacing it, while a second address in the same shared
-  user-data database cannot observe its state.
+  `svit://local/lampa/{instance-id}` and a distinct
+  `instances/{instance-id}/svit.db`; reopening resumes that address, a database
+  containing a different root fails closed, and explicit legacy import
+  preserves current state/version/hash while rejecting an existing target.
+- adapter-neutral process import starts an empty retained-history tail at the
+  imported version; its first subsequent transaction begins at position zero
+  and advances from that version.
 - Lampa array rows show bounded scalar previews, prefer conventional object
   identity fields, fall back to the first scalar field, and summarize other
   containers by kind and item count.

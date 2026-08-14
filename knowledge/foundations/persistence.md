@@ -97,14 +97,16 @@ uniform transaction envelopes, ordered reads, address-scoped CAS, snapshots,
 fork references, and cuts. A future S3 adapter implements that contract without
 placing a live database file in object storage.
 
-The public Rust boundary is adapter-neutral: `ProcessStore` creates and resumes
-an associated `DurableProcessHandle`; event and snapshot results implement
-`PersistedEventRecord` and `PersistenceSnapshotRecord`. The concrete local
-types are exported only with the enabled-by-default `persistence-turso` Cargo
-feature. `DefaultProcessStore` is then an alias for `TursoProcessStore`.
-Disabling default features leaves the traits, event query, mutations, and core
-process runtime available without the Turso dependency. The independent
-`turso-mount` feature controls Turso query snapshot imports.
+The public Rust boundary is adapter-neutral: `ProcessStore` creates a
+version-zero process, imports an existing current-state boundary, or resumes an
+associated `DurableProcessHandle`; event and snapshot results implement
+`PersistedEventRecord` and `PersistenceSnapshotRecord`. Import preserves the
+process version and root hash but starts a new retained-history tail. The
+concrete local types are exported only with the enabled-by-default
+`persistence-turso` Cargo feature. `DefaultProcessStore` is then an alias for
+`TursoProcessStore`. Disabling default features leaves the traits, event query,
+mutations, and core process runtime available without the Turso dependency.
+The independent `turso-mount` feature controls Turso query snapshot imports.
 
 ## Base
 
@@ -117,7 +119,7 @@ covered_through_position    null for a new/forked stream, otherwise last cut eve
 anchor_event_hash           null or hash at covered_through_position
 process_version             version of the reconstructed base root
 root_hash                   hash of the reconstructed base root
-origin                      created | fork | snapshot
+origin                      created | imported | fork | snapshot
 base_hash                   SHA-256 of the canonical base without this field
 ```
 
@@ -126,6 +128,9 @@ Origins have exact meanings:
 - `created` contains the initial limits, named memory values, scripts, and
   mount descriptors needed to construct the conventional version-zero root;
   mount providers are host runtime state and are never persisted;
+- `imported` contains one validated current process snapshot at its existing
+  version. It establishes a new history boundary and makes no claim about the
+  source store's discarded event tail or fork references (`L-046`);
 - `fork` references an exact parent address, position, event hash, and root
   hash, then applies child identity, lineage, and empty Lisp-outbox rules;
 - `snapshot` references a validated store snapshot produced for replay

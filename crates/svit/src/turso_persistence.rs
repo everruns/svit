@@ -319,6 +319,7 @@ impl StoredEvent {
 #[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
 enum BaseOrigin {
     Created { process_snapshot: Vec<u8> },
+    Imported { process_snapshot: Vec<u8> },
     Fork { parent: ForkBoundary },
     Snapshot { snapshot_hash: String },
 }
@@ -498,6 +499,19 @@ impl TursoProcessStore {
         if process.version() != 0 {
             return invalid("created process must begin at version zero");
         }
+        let process_snapshot = process.snapshot()?;
+        self.insert_process(process, BaseOrigin::Created { process_snapshot })
+            .await
+    }
+
+    /// Imports a current process boundary without claiming its prior history.
+    pub async fn import(&self, process: Process) -> Result<DurableProcess> {
+        let process_snapshot = process.snapshot()?;
+        self.insert_process(process, BaseOrigin::Imported { process_snapshot })
+            .await
+    }
+
+    async fn insert_process(&self, process: Process, origin: BaseOrigin) -> Result<DurableProcess> {
         let address = process.id().clone();
         let base = StoredBase::new(
             address.clone(),
@@ -505,9 +519,7 @@ impl TursoProcessStore {
             None,
             process.version(),
             process.root_hash(),
-            BaseOrigin::Created {
-                process_snapshot: process.snapshot()?,
-            },
+            origin,
         )?;
         let head = Head {
             position: None,
@@ -972,7 +984,8 @@ impl TursoProcessStore {
                 return invalid("requested event position was cut");
             }
             let mut process = match &base.origin {
-                BaseOrigin::Created { process_snapshot } => Process::restore(process_snapshot)?,
+                BaseOrigin::Created { process_snapshot }
+                | BaseOrigin::Imported { process_snapshot } => Process::restore(process_snapshot)?,
                 BaseOrigin::Snapshot { snapshot_hash } => {
                     let snapshot = self.load_snapshot(snapshot_hash).await?;
                     snapshot.validate()?;
@@ -1352,6 +1365,10 @@ impl ProcessStore for TursoProcessStore {
         TursoProcessStore::create(self, process).await
     }
 
+    async fn import(&self, process: Process) -> Result<Self::Handle> {
+        TursoProcessStore::import(self, process).await
+    }
+
     async fn resume(&self, address: &ProcessId) -> Result<Self::Handle> {
         TursoProcessStore::resume(self, address.to_string()).await
     }
@@ -1591,6 +1608,7 @@ fn validate_query_path(path: &str) -> Result<()> {
 fn base_kind(origin: &BaseOrigin) -> &'static str {
     match origin {
         BaseOrigin::Created { .. } => "created",
+        BaseOrigin::Imported { .. } => "imported",
         BaseOrigin::Fork { .. } => "fork",
         BaseOrigin::Snapshot { .. } => "snapshot",
     }
