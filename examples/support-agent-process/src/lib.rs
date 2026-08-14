@@ -2,7 +2,7 @@
 
 use serde_json::json;
 use std::path::PathBuf;
-use svit::{Limits, Message, MessageIntent, Mount, Process, Script, Svit, Value};
+use svit::{Limits, Message, MessageIntent, Mount, Process, Svit, Value, svit_script};
 use thiserror::Error;
 
 const TICKET_DESTINATION: &str = "svit://local/support-tickets";
@@ -82,19 +82,17 @@ pub async fn support_process(request_id: &str, question: &str) -> Result<Process
         )
         .library(
             "search_support_docs",
-            Script::new(include_str!("../scripts/search_support_docs.svit-script"))
-                .with_documentation(
-                    "Search mounted support docs and account context for the active host request. \
+            svit_script!(file "scripts/search_support_docs.svit-script").with_documentation(
+                "Search mounted support docs and account context for the active host request. \
                      Input: {request_id}.",
-                ),
+            ),
         )
         .library(
             "commit_support_result",
-            Script::new(include_str!("../scripts/commit_support_result.svit-script"))
-                .with_documentation(
-                    "Commit the active request exactly once. Input: {request_id, answer}. \
+            svit_script!(file "scripts/commit_support_result.svit-script").with_documentation(
+                "Commit the active request exactly once. Input: {request_id, answer}. \
                      Ticket policy, content, and source IDs are derived from process state.",
-                ),
+            ),
         )
         .build()?)
 }

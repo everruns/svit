@@ -32,6 +32,24 @@ interpreter, installs null I/O and a module loader that rejects every module,
 exposes explicit Svit functions, executes against a transactional memory copy,
 and converts all results to bounded Svit values before commit.
 
+Rust hosts may write Lisp forms directly inside `svit_script!`, supply a source
+string literal, or embed a package-relative file. The macro invokes the Ketos
+compiler during the Rust build and then constructs the ordinary `Script`
+record. It does not execute top-level forms or replace process-boundary
+validation: configured source and syntax limits are enforced when the script
+enters `/lib`, while `main(input)` and runtime behavior are checked by
+activation. Ketos compilation may evaluate Lisp macros and constants; the
+build-time compiler therefore uses null I/O, a null module loader, and the
+standard Svit limit profile.
+
+Bindings are immutable. Function parameters and `let` introduce lexical local
+bindings; `define` adds activation-local functions or values to the fresh
+interpreter. Durable variables live under `/memory`, not in Lisp globals.
+`if`, `cond`, `case`, `and`, and `or` provide conditional control, and `do`
+sequences expressions. Svit Lisp has no mutable `while` or `for` loop; bounded
+iteration uses tail-recursive functions and remains subject to every activation
+resource limit.
+
 ```lisp
 (define (main input)
   (let ((count (+ (read "/memory/count") (value-get input "/by"))))

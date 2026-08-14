@@ -15,3 +15,9 @@ Prefer repository examples in this order:
 Run the example before presenting it. Use the command documented beside the
 example or `just examples` for the complete deterministic suite. If an example
 has not landed yet, say it is planned rather than inventing an API or output.
+
+When embedding a package-relative `.svit-script` in Rust, prefer
+`svit_script!(file "scripts/name.svit-script")` so `cargo check` compiles the
+source. Use `svit_script_test!` to exercise it through a real activation and
+assert output and committed state; compile-time validation does not run an
+activation.

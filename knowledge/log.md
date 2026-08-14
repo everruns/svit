@@ -1,5 +1,18 @@
 # Svit Knowledge Update Log
 
+## 2026-08-13
+
+* **Compile-checked script embedding**: Added `svit_script!` for direct Lisp
+  forms, source string literals, and package-relative files. It catches Lisp
+  parser/compiler failures during the Rust build while leaving configured
+  limits and execution semantics at the process boundary.
+* **Script test harness**: Added `svit_script_test!`, which installs one subject
+  in a fresh real process and requires the test body to exercise and assert the
+  activation behavior.
+* **Build-time compiler boundary**: Compile checking uses a fresh restricted
+  Ketos interpreter with null I/O, a null module loader, and bounded resources;
+  added `TM-ESC-004` and `TM-DOS-011` with focused evidence.
+
 ## 2026-08-12
 
 * **Virtual mounts**: Replaced construction-time snapshot imports with virtual

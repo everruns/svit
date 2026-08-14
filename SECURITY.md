@@ -74,6 +74,11 @@ records exact audit exceptions for those unused dependencies. Run hostile
 tenants behind a Wasm or OS process boundary and enforce outer CPU, memory, and
 time limits.
 
+`svit_script!` compiles source during the Rust build. Ketos compilation may
+evaluate guest macros and constants, so the build-time compiler uses null I/O,
+a null module loader, and the standard Svit resource limits. Builds processing
+untrusted script source still require an outer CI or OS resource boundary.
+
 Message delivery, guest-script external capabilities, authenticated identity,
 authorization, secrets, snapshot signatures, and distributed execution are not
 implemented. Message intents are inert committed data. Process addresses are
