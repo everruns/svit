@@ -122,7 +122,7 @@ impl Builtin for SpawnBuiltin {
         };
         let inbox = child.inbox();
         let mut outbox = child.outbox();
-        if child.start().is_err() || inbox.send(Message::user(task.to_owned())).is_err() {
+        if child.start().is_err() || inbox.send(Message::user(task.to_owned())).await.is_err() {
             return self.fail(&child_id, "child start failed");
         }
         drop(inbox);

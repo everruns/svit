@@ -48,6 +48,11 @@ All notable changes to Svit will be documented here.
   traversal on plain `Tab`.
 - Render Lampa conversation messages as Markdown and emit bare HTTP(S) URLs as
   OSC 8 terminal hyperlinks.
+- Route runnable Svit inbox, reasoning, process-tool, and built-in catalog
+  transitions through an adapter-owned durable process handle.
+- Make Lampa create or resume `svit://local/lampa/{instance-id}` in one shared
+  platform-native user-data database, with `--instance` selecting an isolated
+  process and `LAMPA_DB` overriding the database path.
 
 ### Added
 

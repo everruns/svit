@@ -47,7 +47,9 @@ async fn main() -> SvitResult<()> {
     let mut outbox = svit.outbox();
 
     svit.start()?;
-    inbox.send(Message::user("Remember that the release color is blue."))?;
+    inbox
+        .send(Message::user("Remember that the release color is blue."))
+        .await?;
     let result = outbox
         .recv()
         .await

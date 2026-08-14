@@ -79,6 +79,15 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa's render loop depends only on the Svit contract, events, inbox, and
   outbox after construction; it reads after commit notifications rather than
   polling or assembling built-in state.
+- a persisted Svit commits model-driven memory, append-only canonical reasoning
+  events, derived messages, built-in catalog refresh, inbox enqueue, and
+  exact-head acknowledgement through one Turso owner; reopening by address
+  reconstructs the same memory and conversation without rerunning the model or
+  appending a transaction when the host grants and prompt are unchanged.
+- Lampa maps one validated instance ID to
+  `svit://local/lampa/{instance-id}`; its store boundary resumes that address
+  instead of silently replacing it, while a second address in the same shared
+  user-data database cannot observe its state.
 - Lampa array rows show bounded scalar previews, prefer conventional object
   identity fields, fall back to the first scalar field, and summarize other
   containers by kind and item count.

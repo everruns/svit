@@ -34,7 +34,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut outbox = svit.outbox();
 
     svit.start()?;
-    inbox.send(Message::user(QUESTION))?;
+    inbox.send(Message::user(QUESTION)).await?;
 
     let turn = outbox.recv().await?;
     let answer = turn.text().unwrap_or_default();

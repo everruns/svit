@@ -64,9 +64,13 @@ the boundary.
 
 The current workspace implements the process and process-owned reasoning loop in
 the `svit` crate and provides an interactive three-panel tree host in Lampa.
-Lampa's entry point configures and builds one `Svit`; the
+Lampa's entry point opens one local Turso store below the platform-native user
+data directory, explicitly creates or resumes
+`svit://local/lampa/{instance-id}`, and builds one persisted `Svit`; the
 TUI thereafter sends only through its durable inbox and consumes commit
 notifications, completed-turn outbox messages, and terminal failure events.
+Multiple Lampa instances share the store but remain partitioned by exact
+process address.
 After a commit notification it reads an owned root/version pair through the
 `Svit` contract. It never retains a direct reference to `Process`.
 The contract exposes a cloneable `Inbox` sink and creates independent `Outbox`
@@ -79,7 +83,9 @@ events already rendered as chat. Svit binds the provider-visible model ID and
 host-owned provider into a credential-free `ModelSpec`. Svit is an
 advanced Everruns host: it composes the compact single-session host builder and
 `HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
-history from that canonical log. Svit's standard built-in setup derives local
+history from that canonical log. A persisted Svit serializes every mutation
+through its adapter-owned `DurableProcessHandle` and updates a cloned committed
+read projection only after storage accepts the event. Svit's standard built-in setup derives local
 `search` and `jq` plus model-backed `llm` and `spawn` from the instance
 configuration. Lampa selects that standard registry without additional HTTP
 policy; selecting the complete research registry explicitly grants unrestricted
@@ -87,7 +93,8 @@ HTTP destinations. Svit supplies the reusable redirect-denying,
 response-bounded transport, and other hosts may attenuate destinations with an
 allowlist.
 Each append commits the canonical event and its derived guest-readable message
-projection together in the Svit process root. One `Reasoner` owns the
+projection together in the Svit process root and, when persisted, in the same
+Turso event transaction. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a
 partially configured reasoning loop. Built-ins remain separate because their
 external authority is not part of reasoning identity.

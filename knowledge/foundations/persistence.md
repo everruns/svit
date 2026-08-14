@@ -16,10 +16,11 @@ tags:
 
 Design adopted. The local Turso `DurableProcess` slice is implemented for
 create, host write/remove, activation, inbox enqueue/acknowledgement, resume,
-fork, query, on-demand snapshot, and cut. Wiring the runnable reasoning `Svit`,
-the control protocol's receipts, and built-in catalog refresh through the same
-durable owner remains under implementation. Full-Svit completeness is not yet
-claimed.
+fork, query, on-demand snapshot, and cut. Runnable `Svit` instances can now own
+that handle: reasoning events, derived messages, process tools, inbox handling,
+and built-in catalog refresh commit through it. Persisting control-protocol
+receipts remains under implementation, so full control-plane completeness is
+not yet claimed.
 
 ## Required properties
 
@@ -30,7 +31,7 @@ One persistence model must provide all of these properties:
 | Resumable | Load one base, replay its ordered transaction tail, validate every version and root hash, then continue at the next position |
 | Forkable | Create a child base from an exact committed parent position without copying the full parent state |
 | Snapshot-capable | Materialize an on-demand state image for replay acceleration, migration, fork detachment, or a history cut |
-| Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the `DurableProcess` slice and not yet reasoning or receipts |
+| Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the process root and runnable reasoning, but not receipts |
 | Uniform | Persist one Svit transaction event type; reasoning is not a second event system or special agent event kind |
 | Queryable | Stream retained events by position, process version, touched path, source metadata, receipt key, or hash without replaying guest code |
 | Cuttable | Replace a retained prefix with a validated base snapshot, keep positions stable, and delete old data only when no fork references it |
@@ -160,10 +161,10 @@ position while preserving process version and root hash, and a retained exact
 retry appends nothing.
 
 `source` identifies the trusted transition boundary, such as `activation`,
-`host.write`, `host.remove`, or an inbox operation. Future reasoning and control
-integration will add their own descriptive sources. It does not
-select reducer behavior, grant authority, or create an agent-specific storage
-domain.
+`host.write`, `host.remove`, `reasoning`, `builtins.refresh`, or an inbox
+operation. Future control integration will add its own descriptive sources. It
+does not select reducer behavior, grant authority, or create an agent-specific
+storage domain.
 
 The previous hash binds the tail to its exact immutable base and then detects
 deletion, reordering, and splicing within the retained tail. The resulting root
@@ -220,15 +221,17 @@ criterion: a state change that cannot produce such an event cannot commit.
 
 ## Reasoning events are ordinary mutations
 
-Status: **Under implementation.** The event shape is adopted, but the current
-`ProcessEventLog` still commits to an in-memory `Process` and does not yet use
-`DurableProcess`.
+Status: **Implemented for persisted Svit instances.** `Svit::persisted` wraps
+an adapter-owned `DurableProcessHandle`. Its private serialized owner commits
+before refreshing Svit's cloned read projection, so tools and presentation
+hosts cannot observe a candidate that the store rejected.
 
 Everruns must not own a second durable event log. A successful
 process-backed `EventLog::append` must emit an ordinary Svit transaction whose
 mutations append the one canonical Everruns value to `/thread/events` and its
 new derived messages to `/thread/messages`. Initialization sets the thread
-metadata once.
+metadata once. Reattaching unchanged host grants is a no-op rather than a fake
+catalog-refresh transaction.
 
 Prior conversation state is never rewritten into later records. Query metadata
 may say `source: reasoning`, but the reducer sees the same `append` operations
@@ -284,8 +287,9 @@ Resume is deterministic and streaming:
 4. Validate address, position, content hash, hash chain, bounds, version
    transition, touched paths, typed mutations, and resulting root hash for
    every event.
-5. Attach current host hooks and other runtime authority only after replay;
-   durable reasoning and catalog refresh remain under implementation.
+5. Attach current reasoning and built-in authority only after replay; rebuilding
+   a persisted Svit durably refreshes descriptive `/bin` state from those
+   current grants before Everruns can run a turn.
 6. Continue at the next stable position and process version.
 
 Guest code and external effects are never executed during these steps. Replay
@@ -496,8 +500,8 @@ Focused executable evidence currently proves:
   empty; and
 - corrupt content-addressed event bytes fail closed on resume.
 
-Required evidence still missing includes durable reasoning and receipt
-integration, every mutator and rollback class, fork-cycle fault injection,
+Required evidence still missing includes durable receipt integration, every
+mutator and rollback class, fork-cycle fault injection,
 projection rebuilding, snapshot corruption, transaction cancellation, database
 lock contention, crash recovery, schema migration, oversized base/snapshot
 rows, database-file replacement, and systematic unknown-operation/hash-chain

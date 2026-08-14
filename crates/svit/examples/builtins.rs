@@ -100,7 +100,7 @@ async fn main() -> SvitResult<()> {
 
     let inbox = svit.inbox();
     svit.start()?;
-    inbox.send(Message::user("Find the ready release."))?;
+    inbox.send(Message::user("Find the ready release.")).await?;
     drop(inbox);
     svit.block().await?;
 

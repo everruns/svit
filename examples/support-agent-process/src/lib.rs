@@ -111,7 +111,7 @@ pub async fn run_support_turn(
     };
     let inbox = agent.inbox();
     agent.start()?;
-    inbox.send(Message::user(question))?;
+    inbox.send(Message::user(question)).await?;
     drop(inbox);
     agent.block().await?;
     let result = agent
