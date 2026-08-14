@@ -16,6 +16,7 @@ const MEMORY_WIDTH: u16 = 30;
 const FRAME_TIME: Duration = Duration::from_millis(50);
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
+const MAX_PREVIEW_DEPTH: usize = 2;
 const MAX_INLINE_VALUE_BYTES: usize = 160;
 const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
 /// Children shown under one directory row.
@@ -162,17 +163,21 @@ struct Node {
 
 impl Node {
     fn from_facts(facts: &Value) -> Self {
-        let field = |name: &str| match facts {
-            Value::Map(fields) => match fields.get(name) {
-                Some(Value::String(value)) => Some(value.clone()),
-                _ => None,
-            },
+        let Value::Map(fields) = facts else {
+            return Self::unreachable();
+        };
+        let text = |fields: &BTreeMap<String, Value>, name: &str| match fields.get(name) {
+            Some(Value::String(value)) => Some(value.clone()),
             _ => None,
         };
+        let content = match fields.get("facts") {
+            Some(Value::Map(facts)) => text(facts, "content").unwrap_or_default(),
+            _ => String::new(),
+        };
         Self {
-            directory: field("kind").as_deref() == Some("directory"),
-            locality: field("locality").unwrap_or_else(|| "remote".into()),
-            content: field("content").unwrap_or_default(),
+            directory: text(fields, "kind").as_deref() == Some("directory"),
+            locality: text(fields, "locality").unwrap_or_else(|| "remote".into()),
+            content,
         }
     }
 
@@ -1250,26 +1255,13 @@ fn preview_document(path: &str, value: &Value) -> PreviewDocument {
                 source,
             }
         }
-        Value::Map(values) => PreviewDocument {
+        Value::Map(_) => PreviewDocument {
             format: PreviewFormat::Summary,
-            source: container_summary(
-                "object",
-                values.len(),
-                values
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), value_summary(value))),
-            ),
+            source: container_summary(value),
         },
-        Value::Array(values) => PreviewDocument {
+        Value::Array(_) => PreviewDocument {
             format: PreviewFormat::Summary,
-            source: container_summary(
-                "array",
-                values.len(),
-                values
-                    .iter()
-                    .enumerate()
-                    .map(|(index, value)| (index.to_string(), value_summary(value))),
-            ),
+            source: container_summary(value),
         },
         value => PreviewDocument {
             format: PreviewFormat::Json,
@@ -1297,22 +1289,80 @@ fn bounded_preview_source(source: &str) -> (String, bool) {
     )
 }
 
-fn container_summary<K: AsRef<str>>(
-    kind: &str,
-    count: usize,
-    children: impl Iterator<Item = (K, String)>,
-) -> String {
-    let mut summary = format!("{kind} · {count} items");
-    for (name, child_summary) in children.take(MAX_PREVIEW_ITEMS) {
-        summary.push_str(&format!("\n{}  {child_summary}", name.as_ref()));
+fn container_summary(value: &Value) -> String {
+    let mut summary = value_summary(value);
+    let mut remaining = MAX_PREVIEW_ITEMS;
+    append_container_children(&mut summary, value, "", MAX_PREVIEW_DEPTH, &mut remaining);
+    summary
+}
+
+fn append_container_children(
+    summary: &mut String,
+    value: &Value,
+    indent: &str,
+    depth: usize,
+    remaining: &mut usize,
+) {
+    if depth == 0 {
+        return;
     }
-    if count > MAX_PREVIEW_ITEMS {
+    let count = match value {
+        Value::Map(values) => values.len(),
+        Value::Array(values) => values.len(),
+        _ => return,
+    };
+    let mut shown = 0;
+    match value {
+        Value::Map(values) => {
+            for (name, child) in values {
+                if !append_container_child(summary, name, child, indent, depth, remaining) {
+                    break;
+                }
+                shown += 1;
+            }
+        }
+        Value::Array(values) => {
+            for (index, child) in values.iter().enumerate() {
+                if !append_container_child(
+                    summary,
+                    &index.to_string(),
+                    child,
+                    indent,
+                    depth,
+                    remaining,
+                ) {
+                    break;
+                }
+                shown += 1;
+            }
+        }
+        _ => unreachable!("container kind checked above"),
+    }
+    if shown < count {
         summary.push_str(&format!(
-            "\n… {} more items; expand the memory tree to inspect them …",
-            count - MAX_PREVIEW_ITEMS
+            "\n{indent}… {} more items; expand the memory tree to inspect them …",
+            count - shown
         ));
     }
-    summary
+}
+
+fn append_container_child(
+    summary: &mut String,
+    name: &str,
+    value: &Value,
+    indent: &str,
+    depth: usize,
+    remaining: &mut usize,
+) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    *remaining -= 1;
+    summary.push_str(&format!("\n{indent}{name}  {}", value_summary(value)));
+    if depth > 1 && matches!(value, Value::Map(_) | Value::Array(_)) {
+        append_container_children(summary, value, &format!("{indent}  "), depth - 1, remaining);
+    }
+    true
 }
 
 fn value_summary(value: &Value) -> String {
@@ -1668,7 +1718,7 @@ mod tests {
                 .unwrap_or_else(|| "cache".into());
             Ok(Some(value!({
                 "kind": kind,
-                "content": content,
+                "facts": {"content": content},
                 "locality": locality,
                 "path": path
             })))
@@ -1807,6 +1857,17 @@ mod tests {
         assert!(paths.contains(&"/memory"));
         assert!(paths.contains(&"/mounts"));
         assert!(paths.contains(&"/system"));
+
+        app.expanded.insert("/thread".into());
+        app.expanded.insert("/thread/events".into());
+        app.resolve(&svit);
+        let event_label = &app
+            .rows
+            .iter()
+            .find(|row| row.path == "/thread/events/0")
+            .expect("Svit initialization projects a session event")
+            .label;
+        assert!(event_label.contains("session.started"), "{event_label}");
 
         app.expanded.insert("/mounts".into());
         app.expanded.insert("/mounts/files".into());
@@ -2272,10 +2333,13 @@ mod tests {
     }
 
     #[test]
-    fn container_preview_is_a_shallow_summary_not_a_subtree_dump() {
+    fn container_preview_shows_two_descendant_levels() {
         let theme = lampa_theme();
         let value = value!({
-            "profile": {"biography": "a large descendant that must not be rendered"},
+            "profile": {
+                "biography": "Ada",
+                "details": {"private": "one level too deep"}
+            },
             "scores": [3, 5]
         });
         let rendered = preview_lines("/memory", &value, 60, &theme)
@@ -2285,9 +2349,13 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("object · 2 items"));
-        assert!(rendered.contains("profile"));
-        assert!(rendered.contains("scores"));
-        assert!(!rendered.contains("large descendant"));
+        assert!(rendered.contains("profile  object · 2 items"));
+        assert!(rendered.contains("biography  \"Ada\""));
+        assert!(rendered.contains("details  object · 1 items"));
+        assert!(rendered.contains("scores  array · 2 items"));
+        assert!(rendered.contains("0  3"));
+        assert!(rendered.contains("1  5"));
+        assert!(!rendered.contains("one level too deep"));
     }
 
     #[test]
@@ -2310,11 +2378,11 @@ mod tests {
 
         assert!(rendered.contains("context  object"));
         assert!(rendered.contains("data  object"));
+        assert!(rendered.contains("private  \"nested value\""));
         assert!(rendered.contains("id  \"event-123\""));
         assert!(rendered.contains("sequence  7"));
         assert!(rendered.contains("session_id  \"session-456\""));
         assert!(rendered.contains("type  \"response.completed\""));
-        assert!(!rendered.contains("nested value"));
     }
 
     #[test]
