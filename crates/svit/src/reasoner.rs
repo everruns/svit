@@ -5,14 +5,15 @@ use everruns::{ModelSpec, Provider};
 /// Keeping these values together prevents a Svit builder from representing a
 /// model without the provider that serves it.
 ///
-/// ```
-/// use svit::{LLMSIM_MODEL_ID, LlmSimConfig, Reasoner, llm_sim_provider};
+/// ```no_run
+/// use svit::{OpenAI, Reasoner};
 ///
 /// let reasoner = Reasoner::new(
-///     LLMSIM_MODEL_ID,
-///     llm_sim_provider(LlmSimConfig::fixed("done")),
+///     "gpt-5.6-terra",
+///     OpenAI::from_env()?,
 /// );
-/// assert_eq!(reasoner.model_id(), LLMSIM_MODEL_ID);
+/// assert_eq!(reasoner.model_id(), "gpt-5.6-terra");
+/// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]
 pub struct Reasoner {

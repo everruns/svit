@@ -15,14 +15,29 @@ const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
     /// Creates or replaces one value at an absolute process path.
-    Set { path: String, value: Value },
+    Set {
+        /// Absolute path to create or replace.
+        path: String,
+        /// Persistent replacement value.
+        value: Value,
+    },
     /// Removes one value at an absolute process path.
-    Remove { path: String },
+    Remove {
+        /// Absolute path to remove.
+        path: String,
+    },
     /// Appends values to an array at an absolute process path.
-    Append { path: String, values: Vec<Value> },
+    Append {
+        /// Absolute array path to extend.
+        path: String,
+        /// Persistent values appended in order.
+        values: Vec<Value>,
+    },
     /// Removes the exact expected first array value.
     RemoveFront {
+        /// Absolute array path to update.
         path: String,
+        /// Hash that must match the current first value.
         expected_value_hash: String,
     },
 }
@@ -100,7 +115,7 @@ impl TransactionHead {
 
 /// One canonical transition in the sole durable stream for a process.
 ///
-/// Agent events and derived messages occur inside this envelope as mutations
+/// Reasoning events and derived messages occur inside this envelope as mutations
 /// of `/thread/events` and `/thread/messages`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

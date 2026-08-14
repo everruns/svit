@@ -2308,6 +2308,7 @@ name = "lampa"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "everruns-test-support",
  "ratatui",
  "serde_json",
  "svit",
@@ -4211,6 +4212,7 @@ dependencies = [
 name = "svit-support-agent-process"
 version = "0.1.0"
 dependencies = [
+ "everruns-test-support",
  "serde_json",
  "svit",
  "thiserror 2.0.19",

@@ -11,3 +11,6 @@ svit = { path = "../../crates/svit" }
 thiserror.workspace = true
 tokio.workspace = true
 turso.workspace = true
+
+[dev-dependencies]
+everruns-test-support.workspace = true

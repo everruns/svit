@@ -1,3 +1,5 @@
+//! Host-defined policy hooks around process activations.
+
 use std::sync::Arc;
 
 use crate::{ProcessId, Value};
@@ -24,9 +26,15 @@ pub struct ActivationRequest {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActivationStatus {
     /// The activation committed this process version.
-    Committed { version: u64 },
+    Committed {
+        /// Newly committed process version.
+        version: u64,
+    },
     /// The activation failed and committed nothing.
-    Failed { error: String },
+    Failed {
+        /// Sanitized activation failure.
+        error: String,
+    },
 }
 
 /// Typed event passed to `after_activation` hooks.

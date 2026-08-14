@@ -1,3 +1,5 @@
+//! Persistent values and named Svit Lisp script records.
+
 use std::collections::BTreeMap;
 use std::fmt;
 

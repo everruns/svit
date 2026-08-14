@@ -1645,7 +1645,8 @@ fn status_view(app: &App, theme: &Theme) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use svit::{LLMSIM_MODEL_ID, LlmSimConfig, Mount, Reasoner, llm_sim_provider, value};
+    use everruns_test_support::{LLMSIM_MODEL_ID, LlmSimConfig, llm_sim_provider};
+    use svit::{Mount, Reasoner, value};
     use tuika::testing::{grid, render};
 
     /// A [`MemoryView`] over one in-memory value.
