@@ -140,7 +140,7 @@ Generated schema artifacts and cross-version SDK tests are not implemented
 yet, so the current JSON representation is a research interface rather than a
 stable public wire release.
 
-Run the deterministic two-client example:
+Run the two-client example:
 
 ```console
 cargo run -p svit --example multi_client_control

@@ -21,7 +21,7 @@ Applies to the initial vertical slice as it is implemented.
 2. Integration tests under `crates/svit/tests/` for complete process
    transitions and rollback.
 3. Rust examples under `crates/svit/examples/` for library API contracts.
-4. Consumer scenarios under `examples/` for agent-facing workflows.
+4. Consumer scenarios under `examples/` for complete model-driven workflows.
 5. Property and fuzz tests for serialization and isolation boundaries (not yet implemented).
 6. Documentation tests for public Rust APIs.
 7. Headless Tuika rendering and input-state tests for terminal interfaces.
@@ -49,7 +49,8 @@ The following scenarios execute with assertions and deterministic output under
 - a real folder, a materialized Turso query, and a writable folder mounted
   together, read lazily with node facts, and written back under an explicit
   grant while a read-only mount refuses the same write.
-- a process-owned agent thread restored and continued in an isolated child process.
+- a process-owned conversation thread restored and continued in an isolated
+  child process.
 - a started Svit drains its durable inbox, emits completed turns, and leaves a
   failed turn's input queued.
 - Svit supplies a base prompt without host instructions, wraps optional

@@ -4,7 +4,7 @@
 [![Security policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**A durable, scriptable runtime for agents.**
+**A durable, scriptable runtime.**
 
 Svit gives an agent one structured space in which to remember, act, and evolve.
 One `Svit` instance owns a reason/act loop, a durable conversation thread, one
@@ -19,7 +19,7 @@ implements the current reason/act loop behind the Svit API.
 
 ## Why Svit
 
-- **Durable agent state.** Conversation, `/memory`, scripts, inbox state, and
+- **Durable Svit state.** Conversation, `/memory`, scripts, inbox state, and
   runtime metadata commit into one process state root.
 - **Transactional actions.** A bounded script activation commits memory,
   scripts, and buffered message intents together, or commits nothing.
@@ -33,8 +33,7 @@ implements the current reason/act loop behind the Svit API.
 
 ## Quick start
 
-Svit uses the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml).
-Clone the repository and run the deterministic Svit reasoning example:
+Clone the repository and run the Svit reasoning example:
 
 ```console
 git clone https://github.com/everruns/svit.git
@@ -48,13 +47,13 @@ Expected output:
 process_reasoning color=blue version=26
 ```
 
-The example uses Everruns' deterministic simulated model, so it needs no API
-key or network access. It starts a `Svit`, submits a durable inbox message,
-lets the model invoke a process script, receives the completed message from the
-outbox, and verifies the committed value under `/memory`.
+The example needs no API key or network access. It starts a `Svit`, submits a
+durable inbox message, lets the model invoke a process script, receives the
+completed message from the outbox, and verifies the committed value under
+`/memory`.
 
 If the [`just`](https://github.com/casey/just) task runner is installed, run all
-deterministic acceptance examples with:
+examples with:
 
 ```console
 just examples
@@ -70,7 +69,7 @@ svit = { git = "https://github.com/everruns/svit", branch = "main" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-The primary API is `Svit`, not the underlying agent-loop implementation:
+The primary API is `Svit`, not the underlying reason/act-loop implementation:
 
 ```rust
 use svit::{Message, OpenAI, Reasoner, Svit};
@@ -103,16 +102,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`Svit::builder` creates the process and reasoning loop as one runtime-owned
+`Svit::builder` creates the process and reasoning loop as one Svit-owned
 instance. `Inbox::send` commits a message before waking the loop. `Outbox`
 publishes completed assistant messages, while `Events` publishes committed
 process changes and sanitized terminal failures. Hosts inspect state through
 owned reads such as `read` and `read_versioned`; they do not retain a mutable
 process-tree reference.
 
-For deterministic tests, construct a `Reasoner` with `llm_sim_provider` and
-`LlmSimConfig`. See
-[`process_reasoning.rs`](crates/svit/examples/process_reasoning.rs) for a
+See [`process_reasoning.rs`](crates/svit/examples/process_reasoning.rs) for a
 complete executable example.
 
 ## Runtime model
@@ -236,7 +233,7 @@ application-data directory.
 ## The lower-level `Process` API
 
 `Process` is the serializable state machine owned by `Svit`. Use it directly
-when you need bounded deterministic script activations without a model loop:
+when you need bounded script activations without a model loop:
 
 ```rust
 use svit::{Process, Value, svit_script, value};
@@ -300,7 +297,7 @@ Implemented now:
 - virtual folder and materialized-query mounts;
 - explicit built-ins for local data work and host-granted external effects;
 - VAST control semantics with process-version preconditions and conflicts;
-- deterministic acceptance examples and adversarial invariant tests.
+- runnable acceptance examples and adversarial invariant tests.
 
 Not implemented:
 
@@ -319,7 +316,7 @@ Svit validates persistent values and snapshots, applies configured resource
 limits, starts a fresh restricted interpreter for every activation, and rolls
 back failed activations. Those controls do not prove safe hostile
 multi-tenancy: the interpreter is native code, wall-time checks are not
-deterministic instruction fuel, and estimated memory is not an allocator cap.
+instruction-level fuel, and estimated memory is not an allocator cap.
 Run hostile workloads behind a Wasm or OS boundary with outer CPU, memory, and
 time limits.
 
@@ -332,11 +329,11 @@ policy.
 | Resource | Purpose |
 | --- | --- |
 | [Vision](docs/vision.md) | Product model and research direction |
-| [Examples](examples/README.md) | Deterministic and live end-to-end scenarios |
+| [Examples](examples/README.md) | End-to-end scenarios |
 | [Control protocol](docs/control-protocol.md) | VAST semantics and wire contract |
 | [Security policy](SECURITY.md) | Security model, limitations, and reporting |
 | [Changelog](CHANGELOG.md) | Unreleased and released changes |
-| [Svit skill](skills/svit/SKILL.md) | Agent-facing usage guidance |
+| [Svit skill](skills/svit/SKILL.md) | Usage guidance for Svit-aware models |
 
 Internal engineering decisions and executable claims live in the OKF v0.2
 [`knowledge/`](knowledge/) bundle.

@@ -52,7 +52,7 @@ a deterministic validated reducer, the intended safety argument is:
 1. two commits from the same observed head cannot both become reachable;
 2. every reachable head names one hash-linked prefix with no gaps;
 3. replay of that prefix produces one process version and root hash;
-4. agent events and their message projection become reachable together because
+4. reasoning events and their message projection become reachable together because
    both are mutations in one `ProcessTransaction`; and
 5. a runtime publishes a candidate only after the storage linearization point.
 
@@ -173,7 +173,8 @@ remains under implementation.
 
 ## One process transaction stream
 
-There are no separate memory, activation, inbox, thread, or agent event kinds.
+There are no separate memory, activation, inbox, thread, or reasoning-event
+kinds.
 Every tail record is one `ProcessTransaction`, encoded as a
 `svit-transaction@1` envelope:
 
@@ -273,10 +274,10 @@ catalog-refresh transaction.
 Prior conversation state is never rewritten into later records. Query metadata
 may say `source: reasoning`, but the reducer sees the same `append` operations
 used for any other process array. Svit therefore persists one process
-transaction stream. The agent sequence inside `/thread/events` is nested data,
+transaction stream. The Everruns sequence inside `/thread/events` is nested data,
 not a second storage stream.
 
-Agent event commits and Lisp activations remain separate process transactions
+Reasoning-event commits and Lisp activations remain separate process transactions
 around external model and built-in calls. Uniform persistence does not make a
 whole model turn or an external effect transactional.
 

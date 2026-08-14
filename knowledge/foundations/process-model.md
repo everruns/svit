@@ -12,7 +12,8 @@ tags:
 
 ## Status
 
-Implemented for the initial in-memory vertical slice.
+Implemented for volatile and local Turso-backed processes. Distributed
+ownership remains outside the current slice.
 
 ## Process state
 
@@ -45,7 +46,7 @@ The initial process exposes one conventional namespace:
 Thread state, memory, scripts, mounts, system metadata, and outbox form
 one committed logical root. Building a `Svit` replaces the bare process's null
 `/thread` node with optional host instructions, the Svit-owned system prompt,
-projected messages, and canonical events. The process address is the runtime
+projected messages, and canonical events. The process address is the Svit
 identity; Svit does not accept a second runtime name. Instructions are wrapped in
 an `<instructions>` block. Restore retains them, while fork recomposes the base
 prompt for the child address. Construction also refreshes `/bin` from the
@@ -141,7 +142,7 @@ mount directories, reserved nodes, and system state at every map or array
 depth. `read` returns a value. `stat` returns the facts record for one node.
 `write` and `remove` modify `/memory`, one typed `/lib/<name>` entry, or a leaf
 below a mount whose descriptor grants writes. The `/mounts` descriptor map
-itself and `/bin` are read-only. The agent-facing `exec` resolves
+itself and `/bin` are read-only. The model-facing `exec` resolves
 `/lib/<name>` to a transactional script activation or `/bin/<name>` to an
 attached built-in. `Process::exec` and Svit Lisp accept only `/lib` paths
 because a serializable process does not own host built-in authority.
@@ -150,9 +151,9 @@ these operations use
 the activation's transactional view; nested `exec` shares its transaction,
 deadline, output limits, and independent nesting-depth limit.
 Builders, snapshot, restore, and fork are
-lifecycle operations outside this agent contract. `svit::Svit` preserves
+lifecycle operations outside this process contract. `svit::Svit` preserves
 these names and semantics rather than introducing another vocabulary. A host
-may attenuate an agent to a subset of operations and named scripts; that host
+may attenuate a model to a subset of operations and named scripts; that host
 policy is not stored in or forgeable through process memory.
 
 Addresses are validated identifiers. In the initial local-only slice they name
@@ -176,13 +177,13 @@ bundle through `BuiltinExtension`; later registrations replace earlier
 entries of the same name. The frozen registry generates both dispatch and the
 catalog, so no separate name switch or manual table can drift.
 
-At agent construction, Svit derives `/bin` from the exact built-in
-implementations attached by the host. A snapshot records the last catalog for
+When Svit is built, it derives `/bin` from the exact built-in implementations
+attached by the host. A snapshot records the last catalog for
 inspection, but resume refreshes it from current host configuration before a
 turn; catalog values never authorize execution. Generic operations such as
 `discover`, `read`, and `exec` are API operations and do not appear under `/bin`.
-Every implementation receives bounded explicit JSON and an
-a `BuiltinContext` exposing committed reads and discovery without process
+Every implementation receives bounded explicit JSON and a `BuiltinContext`
+exposing committed reads and discovery without process
 mutation. Extension implementations are trusted native host code and may use
 only additional capabilities deliberately captured during registration.
 
@@ -295,7 +296,7 @@ records. Transaction position is separate from process version because future
 receipt-only metadata need not change process state. Both are separate from the
 Everruns sequence stored inside values under `/thread/events`: transaction
 position orders durable envelopes, process version orders committed roots, and
-agent sequence orders canonical reasoning events within the root. On-demand
+Everruns sequence orders canonical reasoning events within the root. On-demand
 snapshots support bounded replay, detached forks, migration, and safe history
 cuts; they are not written on every commit. The local `DurableProcess` adapter
 implements the process and runnable reasoning transition slices; durable
@@ -319,7 +320,7 @@ memory contents.
 `svit::Svit` binds one reason/act loop and one durable conversation thread to
 one process. Everruns implements the current loop behind the Svit API. Each
 durable Everruns event is validated and committed under `/thread`; callers do
-not construct an external Everruns agent and attach Svit as a tool.
+not construct an external Everruns runtime and attach Svit as a tool.
 `/thread/events` is the canonical replay source. `/thread/messages` is rebuilt
 from those events at the host-only commit boundary and checked against them on
 resume. `/bin` is refreshed from the currently attached built-in registry, so
@@ -337,13 +338,13 @@ strings. Live outbox receivers may await completion before, during, or after
 any turn. `block` stops admission, drains the committed queue, and joins the
 loop.
 
-A completed process snapshot therefore carries agent history as well as memory
-and scripts. Restore resumes the recorded thread. A process fork inherits the
-committed thread and then appends independently, so a subagent owns a distinct
+A completed process snapshot therefore carries conversation history as well as
+memory and scripts. Restore resumes the recorded thread. A process fork
+inherits the committed thread and then appends independently as a distinct
 child process. Each started Svit owns an independent local Tokio task; no
 distributed scheduler, timer, or automatic process discovery is implied.
 
-Agent event commits and Svit Lisp activations are individually atomic process
+Reasoning-event commits and Svit Lisp activations are individually atomic process
 transitions. A complete model turn is not one Svit activation: model calls and
 other external actions occur between event commits and cannot join a process
 transaction.

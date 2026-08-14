@@ -1,4 +1,4 @@
-# Svit - agent process runtime research
+# Svit - durable, scriptable process runtime research
 # Durable design decisions live in knowledge/.
 
 [workspace]
@@ -11,7 +11,7 @@ edition = "2024"
 license = "MIT"
 authors = ["Mykhailo Chalyi <mike@chaliy.name>", "Everruns"]
 repository = "https://github.com/everruns/svit"
-description = "In-memory agent process runtime"
+description = "Durable, scriptable runtime for Svit processes"
 keywords = ["agent", "runtime", "lisp", "sandbox", "memory"]
 categories = ["development-tools", "virtualization"]
 

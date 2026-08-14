@@ -1,4 +1,4 @@
 interface:
   display_name: "Svit"
-  short_description: "Use Svit's transactional agent process runtime"
+  short_description: "Use Svit's durable, scriptable process runtime"
   default_prompt: "Use $svit to show a runnable transactional process example and explain the current sandbox boundary."

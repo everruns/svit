@@ -6,6 +6,11 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Define `Svit` as the primary runnable contract: one reason/act loop, durable
+  conversation thread, and serializable `Process`, with the embedding
+  application as host and `Reasoner` as model/provider configuration.
+- Stop re-exporting Everruns simulator fixtures from the public `svit` API;
+  tests and examples import them through direct development dependencies.
 - Replace construction-time snapshot mounts with virtual mounts. `/mounts/<name>`
   commits only a descriptor — kind, host-disclosed source, locality, and granted
   access — while nodes below it resolve through a host-attached `MountProvider`

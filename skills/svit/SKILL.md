@@ -5,8 +5,8 @@ description: Use when a user wants to run Svit, write Svit Lisp scripts, work wi
 
 # Svit
 
-Svit is a research-stage Rust runtime for transactional agent processes with a
-single durable memory namespace and restricted Lisp scripting.
+Svit is a research-stage Rust runtime for durable reasoning, transactional
+process state, and restricted Lisp scripting.
 
 ## How to use this skill
 
@@ -22,17 +22,18 @@ Load only the reference needed:
 
 ## Response rules
 
-- Call the isolated unit a **Svit process** and the Rust executor the **Svit
-  runtime**.
-- Call the process-owned reason/act loop a **Svit agent**; describe Everruns as
-  its current loop implementation, not as the owner of a Svit capability.
+- Call the runnable unit **Svit**. It owns one reason/act loop, one durable
+  conversation thread, and exactly one **process**.
+- Call the embedding application the **host** and describe Everruns as Svit's
+  current loop implementation.
+- Call the host-selected model and provider a **Reasoner**.
 - Describe a single script invocation as an **activation**.
 - Call the controlled concurrency and commit model **VAST: Versioned Atomic
   State Transitions**. Keep `svit-control@1` as the wire protocol identifier.
 - Treat memory, named scripts, and buffered messages as one atomic committed
   process state.
-- Use `discover`, `read`, `write`, `remove`, and `exec` with absolute process
-  paths across Rust, agent tools, and Svit Lisp.
+- Use `discover`, `read`, `stat`, `write`, `remove`, and `exec` with absolute
+  process paths across Rust, model tools, and Svit Lisp.
 - State that guest Lisp has no ambient host filesystem, network, environment,
   clock, randomness, process, module-loader, or native-extension access.
 - Do not describe buffered message intents as delivered messages.

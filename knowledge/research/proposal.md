@@ -1,6 +1,6 @@
 ---
 type: Research Proposal
-title: Svit Agent Process Runtime Research Proposal
+title: Svit Runtime Research Proposal
 description: Research hypothesis, architecture options, assurance targets, experiments, and open decisions for Svit.
 tags:
   - svit
@@ -9,18 +9,20 @@ tags:
   - security
 ---
 
-# Svit: an agent process runtime
+# Svit: a durable, scriptable process runtime
 
 Status: working research proposal
 Date: 2026-07-31
-Updated: 2026-08-05
+Updated: 2026-08-14
 
 ## Executive summary
 
-Svit should be a **capability-oriented agent process runtime** implemented in
-Rust. A Svit host runs many isolated **agent processes**. Each process has:
+Svit should be a **capability-oriented process runtime** implemented in Rust.
+A host application runs one or more isolated **Svit** instances. Each Svit
+owns a reason/act loop, durable conversation thread, and exactly one process.
+Each process has:
 
-- one guest-visible, serializable state tree;
+- one guest-visible, serializable memory tree;
 - named Lisp scripts stored in that same tree;
 - a mailbox, timers, identity, resource budget, and capability grants;
 - transactional execution with no ambient filesystem, network, environment,
@@ -28,26 +30,28 @@ Rust. A Svit host runs many isolated **agent processes**. Each process has:
 - snapshots, copy-on-write forks, migration, and lineage;
 - reflection over its state, scripts, APIs, limits, and granted capabilities.
 
-The process is the unit an agent owns. The runtime is the Rust host that
-executes processes. This terminology resolves the naming ambiguity without
-inventing a new metaphor:
+The process is the serializable state machine. Svit is the runnable unit, while
+the host is the embedding application. This terminology matches the public
+Rust API without inventing another runtime or agent entity:
 
 | Term | Meaning |
 | --- | --- |
-| **Svit runtime/host** | The Rust executor, scheduler, and security boundary |
-| **Svit process** | One isolated, globally addressable agent state machine |
+| **Host** | The embedding application that constructs and supervises Svit |
+| **Svit** | One reason/act loop and durable conversation thread bound to one process |
+| **Reasoner** | The host-selected model and provider used by one Svit |
+| **Process** | One isolated, addressable, serializable state machine |
 | **Activation** | One bounded response to a message, timer, or explicit call |
-| **State tree** | The process's single durable guest namespace |
+| **Memory tree** | The process's complete guest-visible namespace under `/` |
 | **Projection** | A capability-controlled view of external state |
-| **Script** | Named source plus metadata stored under the state tree |
+| **Script** | Named source plus metadata stored under the memory tree |
 | **Fork** | A new process created from a committed snapshot |
 
-`Process` is the best name for the isolated unit because it naturally carries
-state, identity, an address, resource limits, children, and a lifecycle.
-`Runtime` remains the right name for the system that executes it. `VM` is too
-language-specific, `sandbox` describes only one property, and names such as
-`realm` or `capsule` would require new vocabulary without adding precision.
-Internally, `kernel` is a useful name for the small trusted transition layer.
+`Process` is the right name for serializable committed state because it
+naturally carries an address, resource limits, lineage, and lifecycle.
+`Svit` is the public runnable contract that adds reasoning and host ports.
+`VM` is too language-specific, `sandbox` describes only one property, and names
+such as `realm` or `capsule` would require vocabulary without adding precision.
+Internally, `kernel` remains useful for the small trusted transition layer.
 
 The strongest recommendation is to separate the **language** from the
 **interpreter implementation**. Define a small, versioned "Svit Lisp" contract
@@ -92,7 +96,7 @@ events and snapshots can be persisted, moved, or replicated by the host.
 6. Make committed processes serializable, forkable, and migratable.
 7. Let an agent discover and modify its memory and functional library within
    its permissions.
-8. Own the agent lifecycle while using a replaceable reason/act engine; the
+8. Own the reasoning lifecycle while using a replaceable reason/act engine; the
    initial implementation uses Everruns behind the Svit API.
 
 ### Initial non-goals
@@ -145,13 +149,13 @@ mutable values, immutable metadata, capability handles, and lazy projections.
 
 ```mermaid
 flowchart TB
-    Application["Application"] --> Agent["Svit agent\nEverruns loop"]
-    Agent --> API["Process API"]
+    Application["Host application"] --> Svit["Svit\nreason/act loop + thread"]
+    Svit --> API["Process API"]
 
-    subgraph Host["Svit runtime host (Rust)"]
+    subgraph Host["Host-owned runtime boundary (Rust)"]
         Supervisor["Supervisor + fair scheduler"]
         Kernel["Process kernel\ntransaction · mailbox · timers · fork"]
-        State["Persistent state tree\npatches · snapshots · hashes"]
+        State["Persistent memory tree\npatches · snapshots · hashes"]
         VM["Svit Lisp interpreter\ndeadline · memory estimate · restricted library"]
         Broker["Capability broker\nidentity · authz · effects"]
         Supervisor --> Kernel
@@ -188,7 +192,7 @@ This transition should be pure at the kernel boundary. External reads are
 inputs whose returned values are recorded; external writes are intents that a
 host adapter performs only after the commit boundary.
 
-## 5. The single state tree
+## 5. The memory tree
 
 ### 5.1 Shape
 
@@ -197,7 +201,7 @@ application data:
 
 ```text
 /
-├── memory/                 agent-owned durable data
+├── memory/                 process-owned durable data
 ├── lib/                    named scripts and libraries
 ├── tasks/                  durable schedules and workflow state
 ├── inbox/                  reflected message metadata/history window
@@ -467,7 +471,7 @@ sign or authenticate a specific, policy-checked operation.
 For service-to-service authentication, SPIFFE is a good interoperable option:
 it defines URI workload identities and verifiable identity documents without
 coupling identity to a machine address. This authenticates Svit hosts; it does
-not replace per-agent authorization.
+not replace per-process authorization.
 
 Authorization should be capability-first:
 
@@ -531,9 +535,10 @@ event type in a local Turso database partitioned by address. Database
 transactions atomically maintain head CAS, event rows, path projections,
 snapshots, fork references, and cuts. A deterministic reducer
 reconstructs process state without re-executing guest code or external effects.
-The core `DurableProcess` slice is implemented. Reasoning events and control
-receipts remain under implementation; they must use ordinary process-tree
-transactions rather than a second event domain.
+The core `DurableProcess` slice and runnable reasoning persistence are
+implemented. Inbox transitions, canonical reasoning events, their message
+projection, built-in refresh, and acknowledgements use ordinary process-tree
+transactions. Durable control receipts remain under implementation.
 
 Each event carries its address, stable position, previous record hash, process
 version transition, ordered mutations, optional atomic receipt delta, derived
@@ -659,10 +664,11 @@ exposes a compact tool surface:
 
 ```text
 discover
-exec
 read
-remove
+stat
 write
+remove
+exec
 ```
 
 Domain operations such as search and committing a result are named Svit
@@ -677,19 +683,18 @@ current `InProcessRuntime` executes that composition behind the Svit contract;
 it is an implementation mechanism, not Svit's public runtime abstraction.
 Forking is allowed only at compatible committed boundaries.
 
-Domain agents may receive an attenuated view of the same vocabulary. The
+Domain workflows may receive an attenuated view of the same vocabulary. The
 support workflow exposes discovery, reads, and `exec` for a host-selected
 script allowlist; generic writes, removes, and unintended scripts remain
 unavailable to the model.
 
-The first executable integration lives directly in `svit`. It maps those five
-generic tools to one in-memory process and uses Everruns' deterministic
-simulator or OpenAI Responses driver. The support search and result commit live in
-discoverable Svit scripts; the latter appends a ticket intent to the committed
-outbox. A host-issued request ID binds retrieval and commit, and the host emits
-only the validated committed answer rather than the model's independent final
-text. It demonstrates the ownership boundary without adding production delivery
-or persistence.
+The executable integration lives directly in `svit`. It maps those six generic
+tools to volatile or locally persisted process state and uses an Everruns model
+driver. The support search and result commit live in discoverable Svit scripts;
+the latter appends a ticket intent to the committed outbox. A host-issued
+request ID binds retrieval and commit, and the host emits only the validated
+committed answer rather than the model's independent final text. It
+demonstrates the ownership boundary without adding production delivery.
 
 ### Yolop
 

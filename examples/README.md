@@ -1,7 +1,7 @@
 # Built-in examples
 
-The Rust examples are deterministic acceptance tests for the initial process
-runtime. Run them from the repository root:
+The Rust examples exercise the main Svit and Process APIs. Run them from the
+repository root:
 
 ```console
 cargo run -p svit --example durable_counter
@@ -36,10 +36,11 @@ loop is live, and then blocks until the committed queue drains.
 `BuiltinExtension`. The extension reads committed process state through
 `BuiltinContext` without receiving process mutation authority.
 
-## Everruns support-agent-process demo
+## Process-configured support workflow
 
-`support-agent-process/` runs `gpt-5.6-terra` through the process-owned Everruns loop.
-The support model sees an attenuated Svit capability surface:
+`support-agent-process/` constructs memory, mounts, and scripts through the
+lower-level `Process` builder, then runs that process through `Svit::resume`
+with `gpt-5.6-terra`. The model sees an attenuated Svit capability surface:
 
 - `discover`: list children under any Svit process path;
 - `read`: read a value by absolute process path;
@@ -74,12 +75,12 @@ shows the committed ticket intent in the Svit outbox. The displayed answer is
 loaded from the validated committed result; independent final text from the
 model is ignored.
 
-## Svit-owned support agent
+## Direct Svit support workflow
 
-`support-agent-svit/` is the live reference for the new ownership model. It uses
-OpenAI `gpt-5.6-terra` and demonstrates:
+`support-agent-svit/` builds the complete instance directly through
+`Svit::builder`. It uses OpenAI `gpt-5.6-terra` and demonstrates:
 
-- a root agent constructed through `svit::Svit`, with Everruns behind the Svit API;
+- one runnable `Svit`, with Everruns behind the Svit API;
 - explicit inbox submission, process start, outbox listening, and blocking drain;
 - a model-authored support answer committed to process memory before reply.
 
@@ -89,5 +90,5 @@ Run it with `OPENAI_API_KEY` injected by Doppler:
 doppler run --project PROJECT --config CONFIG -- just support-agent-svit
 ```
 
-This credentialed demo is excluded from `just examples`; deterministic loop,
-inbox, snapshot, and fork behavior remains covered by the Svit test suite.
+This credentialed demo is excluded from `just examples`; loop, inbox, snapshot,
+and fork behavior remains covered by the Svit test suite.

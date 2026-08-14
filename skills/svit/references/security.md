@@ -16,8 +16,9 @@ addresses as untrusted. Resume verifies content hashes, the event hash chain,
 typed mutations, process versions, complete roots, and resulting root hashes.
 Event append and head compare-and-swap share one database transaction. These
 hashes detect corruption; they do not authenticate the database or its writer.
-The runnable reasoning loop and control receipts are not yet wired to this
-store, and local Turso storage does not provide distributed ownership fencing.
+The runnable reasoning loop uses this store for inbox, thread, memory,
+built-in-catalog, and acknowledgement transitions. Durable control receipts
+and distributed ownership fencing are not implemented.
 
 The embedded interpreter runs in the native host process. Svit therefore does
 not yet claim formal isolation or production readiness for mutually hostile

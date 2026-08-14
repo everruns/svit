@@ -9,18 +9,20 @@ bounded transactions.
 That space should persist across activations and compose through snapshots,
 forks, identities, capabilities, and messages.
 
-Svit explores that space as an agent process runtime. The goal is to identify
-the primitives agentic execution requires and design them together from first
+Svit explores that space as a runtime for long-lived agent work. The goal is to
+identify the primitives such work requires and design them together from first
 principles.
 
 ## The model
 
-A Svit **runtime** is the Rust host that executes and supervises agents. A Svit
-**agent** owns a reason/act loop, one durable thread, and exactly one Svit
-**process**. The process contains structured memory, named scripts, an address,
-and resource limits. Everruns is the current loop implementation behind the
-Svit API. The broader model adds a mailbox, identity, capabilities, schedules,
-projections, and lineage.
+A host application embeds one or more **Svit** instances. Each `Svit` owns a
+reason/act loop, one durable conversation thread, and exactly one
+**process**. The process is the serializable state machine: it contains the
+memory tree, named scripts, address, limits, inbox, and committed thread state.
+Everruns implements the current loop behind the Svit API, while a
+**Reasoner** binds the selected model and provider. The broader model adds
+delivery, authenticated identity, capabilities, schedules, projections, and
+distributed ownership.
 
 An **activation** is one bounded transition. It receives input, runs a named
 script against a working copy, and either commits the resulting state and
@@ -34,21 +36,25 @@ VAST does not merge concurrent activations.
 
 ```mermaid
 flowchart LR
-    Event["Input event"] --> Activation["Bounded activation"]
-    subgraph Process["Agent process"]
-        Thread["Host-managed agent thread"] --> Activation
-        Activation --> Space["Structured agent space"]
-        Space --> Memory["Memory tree"]
-        Space --> Scripts["Script library"]
-        Space --> Effects["Explicit effect intents"]
+    Host["Host application"] --> Loop
+    Event["Inbox message"] --> Loop
+    subgraph Svit["Svit"]
+        Loop["Reason/act loop"] --> Process
+        Thread["Durable conversation thread"] --> Process
+        subgraph Process["Process"]
+            Activation["Bounded activation"] --> Space["Memory tree"]
+            Space --> Memory["Memory"]
+            Space --> Scripts["Script library"]
+            Space --> Effects["Message intents"]
+        end
     end
-    Space --> Snapshot["Snapshot or fork"]
+    Process --> Snapshot["Snapshot or fork"]
 ```
 
-The process is portable data plus explicit transition semantics. Its snapshot
-includes the committed agent thread, so restore resumes conversation history
-and fork gives a subagent an independent process. The agent can reason about
-the same space that the runtime validates, commits, snapshots, and forks.
+The process is portable data plus explicit transition semantics. A Svit
+snapshot includes the committed conversation thread, so restore resumes its
+history and fork creates an independent child process. The reason/act loop can
+inspect the same space that Svit validates, commits, snapshots, and forks.
 
 ## One structured space
 
@@ -66,8 +72,8 @@ The current implementation supports both in-memory processes and a local Turso
 adapter that durably stores one address-keyed stream of process transactions.
 Each transaction can mutate any committed process state, including memory,
 scripts, inbox/outbox, canonical reasoning events, and their derived message
-projection. Agent events live under `/thread/events` inside that stream; they
-are not a second event log. Deterministic snapshots, restore, forks, bounded
+projection. Reasoning events live under `/thread/events` inside that stream;
+they are not a second event log. Snapshots, restore, forks, bounded
 queries, and safe history cuts use the same state model.
 
 The storage contract is designed so an object store such as S3 can store
@@ -96,18 +102,17 @@ failure preserves the previous committed space in full.
 
 A committed process can be snapshotted, restored, moved, or forked. A fork
 starts a new process from the same committed state and then evolves
-independently. This makes a sub-agent another process with explicit lineage,
-state, limits, and policy relationships.
+independently. This gives a child its own process with explicit lineage, state,
+limits, and policy relationships.
 
-Processes communicate by addressed messages. An address identifies where a
-message is intended to go. Identity, authentication, authorization, and
-reachability remain separate concepts. Authority is represented by explicit,
-attenuable capabilities that can govern projections, messages, and other
-effects.
+Processes can commit addressed message intents. An address identifies where a
+future dispatcher should send a message; it does not mean delivery occurred.
+Identity, authentication, authorization, and reachability remain separate
+concepts. Authority is represented by explicit, attenuable capabilities that
+can govern projections, messages, and other effects.
 
-The current implementation commits deterministic message intents but does not
-deliver them. Routing, delivery, global addressing, identity, and capabilities
-remain future work.
+The current implementation does not deliver those intents. Routing, delivery,
+global addressing, identity, and capabilities remain future work.
 
 ## Security is part of the semantics
 
@@ -125,12 +130,13 @@ operating-system boundary.
 
 The current implementation tests the smallest useful part of the idea:
 
-- one process-owned agent thread implemented through Everruns;
+- one process-owned conversation thread and reason/act loop implemented through
+  Everruns;
 - one serializable memory tree;
 - named, self-authored Svit Lisp scripts;
 - bounded transactional activations;
 - atomic state, script, and outbox changes;
-- deterministic snapshots, local durable replay, and isolated forks;
+- snapshots, local durable replay, and isolated forks;
 - reflection over memory and the script library;
 - no ambient filesystem, network, process, environment, clock, or randomness.
 
@@ -149,7 +155,7 @@ fork, and move that work through explicit semantics.
 The research should also be allowed to fail. If restricted scripting is too
 weak, reflection does not improve agent behavior, forks are not economical, or
 secure containment costs too much, Svit may be more valuable as a focused
-memory-and-automation capability than as a complete agent process runtime.
+memory-and-automation capability than as a complete runtime for agent work.
 
 See the [README](../README.md) for the runnable implementation and its current
 limitations.

@@ -16,30 +16,32 @@ Initial executable vertical slice implemented. Hardening remains in progress.
 
 ## Decision
 
-Svit is a Rust library for running isolated agents. A Svit agent owns one
-process and its durable conversation thread. A process is an actor-like state
-machine: it handles one transition at a time and owns one committed state root.
-Everruns implements the current host-side reason/act loop behind `svit::Svit`.
+Svit is a Rust library for durable reasoning over isolated processes. One
+`Svit` owns a reason/act loop, a durable conversation thread, and exactly one
+process. The process is an actor-like state machine: it handles one transition
+at a time and owns one committed state root. A `Reasoner` binds its model and
+provider. Everruns implements the current loop behind `svit::Svit`.
 Parallelism comes from independent processes, not shared guest memory.
 
 The first executable slice contains:
 
 ```text
-Rust caller ----> Svit Agent
-                      |
-                      +----> Everruns reason/act loop
-                      |
-                      v
-                  Process ----> transaction working copy ----> commit or rollback
-                      |                    |
-                      |                    v
-                      |               restricted Lisp VM
-                      |
-                      +----> snapshot / restore / fork
-                      +----> durable inbox / live turn outbox
-                      +----> buffered message intents (not delivery)
-                      +----> bounded folder / Turso snapshot import
-                      +----> opt-in `/bin` built-ins
+Host application ----> Svit
+                        |
+                        +----> Everruns reason/act loop
+                        +----> durable thread / inbox
+                        +----> transient outbox / events observers
+                        |
+                        v
+                    Process ----> transaction working copy ----> commit or rollback
+                        |                    |
+                        |                    v
+                        |               restricted Lisp VM
+                        |
+                        +----> snapshot / restore / fork
+                        +----> buffered message intents (not delivery)
+                        +----> bounded folder / Turso query mounts
+                        +----> opt-in `/bin` built-ins
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -79,7 +81,7 @@ The contract exposes a cloneable `Inbox` sink and creates independent `Outbox`
 and `Events` observers for transient host consumption; Tokio broadcast channels
 remain an implementation detail behind those ports.
 Tree expansion and selection remain local UI state, so the TUI does not become
-another process-state owner or poll the runtime. Raw durable agent events
+another process-state owner or poll the runtime. Raw durable reasoning events
 remain part of the process tree; the timeline does not duplicate message
 events already rendered as chat. When several commits arrive before one frame,
 Lampa retains the original selected path until the refreshed ancestors resolve;
@@ -94,7 +96,7 @@ canonical log. `InProcessRuntime` remains Everruns' current execution mechanism
 for advanced embedders; it is kept behind the Svit contract rather than exposed
 as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
-read projection only after storage accepts the process transaction. Agent
+read projection only after storage accepts the process transaction. Reasoning
 events are appended values within those transactions, never a second
 persistence stream. Svit's standard built-in setup derives local
 `search` and `jq` plus model-backed `llm` and `spawn` from the instance
@@ -109,8 +111,8 @@ Turso event transaction. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a
 partially configured reasoning loop. Built-ins remain separate because their
 external authority is not part of reasoning identity.
-The process address is the Svit runtime identity; there is no independent agent
-name. Svit owns the base system prompt, including the generic requirement to use
+The process address is the Svit identity; there is no independent runtime name.
+Svit owns the base system prompt, including the generic requirement to use
 the memory tree for durable facts and working state, and derives the prompt from
 that address. Optional application `instructions` are appended inside an
 `<instructions>` block and persisted separately so restore preserves them and
@@ -167,9 +169,7 @@ Module names may evolve; the ownership boundary is the decision.
 ## Deferred architecture
 
 Schedulers, durable effect delivery, read-through or writable projections,
-reasoning/control integration for the implemented
-[single-Svit process transaction persistence](persistence.md) adapter, distributed routing,
-auth services, migrations
+durable control receipts, distributed routing, auth services, migrations
 between hosts, and production Wasm/OS isolation are outside this slice. See
 [Limitations](../operations/limitations.md).
 

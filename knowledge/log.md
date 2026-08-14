@@ -1,5 +1,22 @@
 # Svit Knowledge Update Log
 
+## 2026-08-14
+
+* **Canonical domain model**: Made `Svit` the runnable unit that owns one
+  reason/act loop, durable conversation thread, and `Process`. The embedding
+  application is the host, `Reasoner` binds model and provider, an activation
+  is one script transaction, and a turn is one reason/act cycle. Removed the
+  separate “Svit agent” entity from current documentation.
+* **Current persistence boundary**: Reconciled architecture, process,
+  limitations, proposal, and public skill guidance with the implemented
+  `Svit::persisted` path. Local Turso persistence covers inbox, reasoning
+  events, derived messages, built-in refresh, acknowledgements, memory,
+  snapshots, and forks; durable control receipts, crash qualification, and
+  distributed ownership remain open under `L-006`.
+* **One operation vocabulary**: Restated the complete process contract as
+  `discover`, `read`, `stat`, `write`, `remove`, and `exec` across host calls,
+  model tools, and Svit Lisp.
+
 ## 2026-08-13
 
 * **One persistence stream**: Named the sole address-keyed envelope
