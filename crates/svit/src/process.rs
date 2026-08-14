@@ -570,12 +570,23 @@ impl Process {
         )
     }
 
-    /// Replaces host-managed durable reasoning state under `/thread`.
+    /// Initializes host-managed durable reasoning state under `/thread`.
     ///
     /// Guest scripts and generic reasoning tools may inspect this node through
     /// `read` and `discover`, but cannot write or remove it. The Everruns
     /// adapter uses this boundary for replay and audit state that untrusted
     /// model output must not rewrite.
+    pub(crate) fn initialize_thread_state(&mut self, value: Value) -> Result<Change> {
+        if !matches!(self.read("/thread")?, Some(Value::Null)) {
+            return Err(Error::InvalidPath("/thread".into()));
+        }
+        self.replace_thread_state(value)
+    }
+
+    /// Replaces host-managed reasoning state for restore validation and migration.
+    ///
+    /// Runnable Svit persistence uses append-only thread transitions instead;
+    /// this trusted-host boundary is retained for explicit snapshot assembly.
     pub fn replace_thread_state(&mut self, value: Value) -> Result<Change> {
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
@@ -593,6 +604,77 @@ impl Process {
         )
     }
 
+    /// Updates only host-owned thread metadata without rewriting its history.
+    pub(crate) fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> Result<Change> {
+        instructions.validate(&self.limits, false)?;
+        system_prompt.validate(&self.limits, false)?;
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let thread = root_map_mut(root.get_mut("thread").expect("validated process root"))?;
+        thread.insert("instructions".into(), instructions.clone());
+        thread.insert("system_prompt".into(), system_prompt.clone());
+        self.commit(
+            Value::Map(root),
+            vec![
+                Mutation::Set {
+                    path: "/thread/instructions".into(),
+                    value: instructions,
+                },
+                Mutation::Set {
+                    path: "/thread/system_prompt".into(),
+                    value: system_prompt,
+                },
+            ],
+            Vec::new(),
+        )
+    }
+
+    /// Appends one canonical reasoning event and its newly derived messages.
+    pub(crate) fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> Result<Change> {
+        event.validate(&self.limits, false)?;
+        for message in &messages {
+            message.validate(&self.limits, false)?;
+        }
+        let mut root = root_map(self.root.as_ref())?.clone();
+        let thread = root_map_mut(root.get_mut("thread").expect("validated process root"))?;
+        let Value::Array(events) = thread
+            .get_mut("events")
+            .ok_or_else(|| Error::InvalidSnapshot("/thread/events is missing".into()))?
+        else {
+            return Err(Error::InvalidSnapshot(
+                "/thread/events is not an array".into(),
+            ));
+        };
+        events.push(event.clone());
+        let Value::Array(committed_messages) = thread
+            .get_mut("messages")
+            .ok_or_else(|| Error::InvalidSnapshot("/thread/messages is missing".into()))?
+        else {
+            return Err(Error::InvalidSnapshot(
+                "/thread/messages is not an array".into(),
+            ));
+        };
+        committed_messages.extend(messages.clone());
+        let mut mutations = vec![Mutation::Append {
+            path: "/thread/events".into(),
+            values: vec![event],
+        }];
+        if !messages.is_empty() {
+            mutations.push(Mutation::Append {
+                path: "/thread/messages".into(),
+                values: messages,
+            });
+        }
+        self.commit(Value::Map(root), mutations, Vec::new())
+    }
+
     /// Replaces the host-managed built-in catalog under `/bin`.
     pub(crate) fn replace_builtins(&mut self, value: Value) -> Result<Change> {
         let builtins = root_map(&value)?;
@@ -601,6 +683,9 @@ impl Process {
         }
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
+        if root.get("bin") == Some(&value) {
+            return Ok(Change::notification(self.version, Vec::new()));
+        }
         root.insert("bin".into(), value.clone());
         self.commit(
             Value::Map(root),

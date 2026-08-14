@@ -71,8 +71,19 @@
   persistence for host mutations, activations, inbox transitions, deterministic
   resume, hash-validated queries, exact-boundary forks, on-demand snapshots, and
   safe cuts. Head CAS keeps failed stale writes out of both Turso and the local
-  process. Runnable reasoning and control receipts remain explicit follow-up
-  work rather than being claimed complete.
+  process. Control receipts remain explicit follow-up work rather than being
+  claimed complete.
+* **Durable Svit owner**: Added `Svit::persisted` over the adapter-neutral
+  `DurableProcessHandle`. Inbox transitions, model-visible process tools,
+  append-only canonical reasoning events, derived messages, and built-in
+  catalog refresh commit through one serialized owner before Svit refreshes its
+  read projection.
+* **Persistent Lampa instances**: Lampa now creates or resumes
+  `svit://local/lampa/{instance-id}` in one shared database below the
+  platform-native user data directory. `--instance` selects the address and
+  `LAMPA_DB` overrides the database path. Restarting with the same store and
+  instance ID recovers committed memory, thread history, and pending inbox;
+  different instance addresses remain isolated.
 * **Persistence adapter boundary**: Added adapter-neutral `ProcessStore`,
   `DurableProcessHandle`, event-record, and snapshot-record traits. The default
   `TursoProcessStore` implementation is now behind the enabled-by-default

@@ -208,6 +208,12 @@ notifications do not replace the durable process event log or outbox. Each
 `events` or `outbox` call creates an independent observer behind the Svit
 contract; consumers do not receive the underlying channel implementation.
 
+`Svit::persisted` accepts any `DurableProcessHandle`. One serialized owner
+routes host writes, removals, Lisp activations, inbox transitions, reasoning
+events, and built-in catalog refresh through that handle. The owner publishes a
+new cloned read projection only after the adapter accepts the transition, so a
+CAS conflict cannot leak an uncommitted candidate into Svit reads or tools.
+
 The child executable is named `spawn`, distinguishing process creation from
 executing an existing `/bin` or `/lib` path. It takes a child address and task,
 forks the last committed parent state, uses a separately supplied child model driver, runs one child turn, and
@@ -284,8 +290,8 @@ an immutable base plus one address-keyed tail of uniform transaction events.
 Event position is separate from process version because future receipt-only
 event metadata need not change process state. On-demand snapshots support bounded
 replay, detached forks, migration, and safe history cuts; they are not written
-on every commit. The local `DurableProcess` adapter implements the core
-transition slice; durable reasoning and control receipts remain under
+on every commit. The local `DurableProcess` adapter implements the process and
+runnable reasoning transition slices; durable control receipts remain under
 implementation. See
 [Single-Svit Event Persistence](persistence.md).
 

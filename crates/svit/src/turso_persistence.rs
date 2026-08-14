@@ -1157,14 +1157,8 @@ impl DurableProcess {
         self.process.stat(path)
     }
 
-    /// Reattaches one mount provider to a resumed durable process.
-    ///
-    /// Providers are never persisted, so a resumed process resolves nothing
-    /// below its mount descriptors until the host attaches them again. The
-    /// mount's identity must match the committed descriptor: changing it is a
-    /// state transition, which a durable process only accepts through a
-    /// recorded write.
-    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> Result<()> {
+    /// Reattaches one runtime mount whose descriptor already persisted.
+    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> Result<crate::Change> {
         let name = name.into();
         let descriptor = mount.provider().descriptor().to_value();
         let recorded = match self.process.read("/mounts")? {
@@ -1176,7 +1170,7 @@ impl DurableProcess {
                 "mount identity for {name} differs from the persisted descriptor"
             )));
         }
-        self.process.attach_mount(name, mount).map(|_| ())
+        self.process.attach_mount(name, mount)
     }
 
     /// Returns the current committed root hash.
@@ -1184,32 +1178,37 @@ impl DurableProcess {
         self.process.root_hash()
     }
 
+    /// Serializes the committed process boundary owned by this handle.
+    pub fn process_projection(&self) -> Process {
+        self.process.clone()
+    }
+
     /// Durably commits one host write as a uniform transaction event.
     ///
     /// The transition itself reports the mutations it applied, so the stored
     /// event and a live observer always describe the same change.
-    pub async fn write(&mut self, path: &str, value: Value) -> Result<()> {
+    pub async fn write(&mut self, path: &str, value: Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.write(path, value)?;
         self.commit_change(candidate, change, "host.write").await
     }
 
     /// Durably commits one host removal as a uniform transaction event.
-    pub async fn remove(&mut self, path: &str) -> Result<()> {
+    pub async fn remove(&mut self, path: &str) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.remove(path)?;
         self.commit_change(candidate, change, "host.remove").await
     }
 
     /// Durably appends one host-supplied value to the process inbox.
-    pub async fn enqueue_inbox(&mut self, value: Value) -> Result<()> {
+    pub async fn enqueue_inbox(&mut self, value: Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.enqueue_inbox(value)?;
         self.commit_change(candidate, change, "inbox.enqueue").await
     }
 
     /// Durably removes the exact inbox head observed by a completed turn.
-    pub async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()> {
+    pub async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.acknowledge_inbox(expected)?;
         self.commit_change(candidate, change, "inbox.acknowledge")
@@ -1225,13 +1224,54 @@ impl DurableProcess {
         candidate: Process,
         change: crate::Change,
         source: &str,
-    ) -> Result<()> {
+    ) -> Result<crate::Change> {
         if change.mutations().is_empty() {
             self.process = candidate;
-            return Ok(());
+            return Ok(change);
         }
         self.commit_candidate(candidate, change.mutations().to_vec(), source)
+            .await?;
+        Ok(change)
+    }
+
+    /// Durably initializes the host-managed Svit thread projection.
+    pub async fn initialize_thread_state(&mut self, value: Value) -> Result<()> {
+        let mut candidate = self.process.clone();
+        let change = candidate.initialize_thread_state(value)?;
+        self.commit_change(candidate, change, "reasoning.initialize")
             .await
+            .map(|_| ())
+    }
+
+    /// Durably updates thread metadata without rewriting retained history.
+    pub async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> Result<()> {
+        let mut candidate = self.process.clone();
+        let change = candidate.update_thread_metadata(instructions, system_prompt)?;
+        self.commit_change(candidate, change, "reasoning.metadata")
+            .await
+            .map(|_| ())
+    }
+
+    /// Durably appends one canonical reasoning event and newly derived messages.
+    pub async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()> {
+        let mut candidate = self.process.clone();
+        let change = candidate.append_thread_event(event, messages)?;
+        self.commit_change(candidate, change, "reasoning")
+            .await
+            .map(|_| ())
+    }
+
+    /// Durably refreshes the descriptive built-in catalog.
+    pub async fn replace_builtins(&mut self, value: Value) -> Result<()> {
+        let mut candidate = self.process.clone();
+        let change = candidate.replace_builtins(value)?;
+        self.commit_change(candidate, change, "builtins.refresh")
+            .await
+            .map(|_| ())
     }
 
     /// Executes guest Lisp and durably publishes its exact committed write set.
@@ -1338,11 +1378,15 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::root_hash(self)
     }
 
-    async fn write(&mut self, path: &str, value: Value) -> Result<()> {
+    fn process_projection(&self) -> Process {
+        DurableProcess::process_projection(self)
+    }
+
+    async fn write(&mut self, path: &str, value: Value) -> Result<crate::Change> {
         DurableProcess::write(self, path, value).await
     }
 
-    async fn remove(&mut self, path: &str) -> Result<()> {
+    async fn remove(&mut self, path: &str) -> Result<crate::Change> {
         DurableProcess::remove(self, path).await
     }
 
@@ -1350,12 +1394,36 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::exec(self, path, input).await
     }
 
-    async fn enqueue_inbox(&mut self, value: Value) -> Result<()> {
+    async fn enqueue_inbox(&mut self, value: Value) -> Result<crate::Change> {
         DurableProcess::enqueue_inbox(self, value).await
     }
 
-    async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()> {
+    async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<crate::Change> {
         DurableProcess::acknowledge_inbox(self, expected).await
+    }
+
+    async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<crate::Change> {
+        DurableProcess::attach_mount(self, name, mount)
+    }
+
+    async fn initialize_thread_state(&mut self, value: Value) -> Result<()> {
+        DurableProcess::initialize_thread_state(self, value).await
+    }
+
+    async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> Result<()> {
+        DurableProcess::update_thread_metadata(self, instructions, system_prompt).await
+    }
+
+    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()> {
+        DurableProcess::append_thread_event(self, event, messages).await
+    }
+
+    async fn replace_builtins(&mut self, value: Value) -> Result<()> {
+        DurableProcess::replace_builtins(self, value).await
     }
 
     async fn query(&self, query: EventQuery) -> Result<Vec<Self::Event>> {

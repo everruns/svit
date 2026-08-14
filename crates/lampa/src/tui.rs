@@ -827,12 +827,12 @@ pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
     let mut outbox = svit.outbox();
     svit.start().map_err(|error| error.to_string())?;
 
-    let ui_result = run_terminal(&mut app, &svit, &inbox, &mut events, &mut outbox);
+    let ui_result = run_terminal(&mut app, &svit, &inbox, &mut events, &mut outbox).await;
     svit.block().await.map_err(|error| error.to_string())?;
     ui_result
 }
 
-fn run_terminal(
+async fn run_terminal(
     app: &mut App,
     svit: &Svit,
     inbox: &Inbox,
@@ -850,7 +850,7 @@ fn run_terminal(
     )
     .map_err(|error| error.to_string())?;
 
-    let result = (|| {
+    let result = async {
         loop {
             while let Ok(event) = events.try_recv() {
                 match event {
@@ -886,6 +886,7 @@ fn run_terminal(
                     AppAction::Submit(text) => {
                         inbox
                             .send(Message::user(text.clone()))
+                            .await
                             .map_err(|error| error.to_string())?;
                         app.push_user(text);
                     }
@@ -894,7 +895,8 @@ fn run_terminal(
             }
         }
         Ok(())
-    })();
+    }
+    .await;
     let _ = terminal.clear();
     result
 }
@@ -1874,7 +1876,7 @@ mod tests {
         // Building a Svit commits its thread and built-in catalog, so the
         // write continues an existing version chain rather than starting one.
         let committed_before = MemoryView::version(&svit);
-        let change = svit.write("/memory/count", value!(1)).unwrap();
+        let change = svit.write("/memory/count", value!(1)).await.unwrap();
         assert_eq!(change.paths(), ["/memory/count".to_owned()]);
         assert_eq!(change.version(), committed_before + 1);
 

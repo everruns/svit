@@ -79,6 +79,10 @@ assert_eq!(events.len(), 1);
 projection, and address-head compare-and-swap commit in one Turso transaction.
 Resume validates content hashes, the base-bound event chain, typed mutations,
 versions, and complete resulting root hashes without rerunning guest code.
+`Svit::persisted` attaches a reasoner and host grants to a newly created or
+resumed `DurableProcessHandle`; inbox transitions, model-driven process tools,
+canonical conversation events, derived messages, and built-in catalog refresh
+then use that same durable owner.
 
 Persistence is adapter-neutral at the public boundary. `ProcessStore` creates
 and resumes a `DurableProcessHandle`; `PersistedEventRecord` and
@@ -102,6 +106,21 @@ For an interactive process, start Lampa with an OpenAI API key:
 ```console
 OPENAI_API_KEY=... cargo run -p lampa
 ```
+
+Lampa creates or resumes `svit://local/lampa/default` in one shared database
+below the platform-native user data directory: `~/Library/Application
+Support/lampa/lampa.db` on macOS, `$XDG_DATA_HOME/lampa/lampa.db` on Linux, or
+`%APPDATA%\lampa\lampa.db` on Windows. Select another instance with
+`--instance <instance-id>` (or `LAMPA_INSTANCE_ID`):
+
+```console
+OPENAI_API_KEY=... cargo run -p lampa -- --instance research-one
+```
+
+That resumes `svit://local/lampa/research-one`. Instances share the database
+but are isolated by address. Set `LAMPA_DB=/path/to/lampa.db` only when an
+explicit database location is needed. Restarting with the same database and
+instance ID resumes its committed memory, conversation, and pending inbox.
 
 ![Lampa terminal process viewer](docs/lampa.gif)
 
@@ -146,7 +165,8 @@ allowlist:
 OPENAI_API_KEY=... cargo run -p lampa
 ```
 
-Lampa's entry point only configures and builds the `Svit` instance. The TUI
+Lampa's entry point opens the process store and configures one persisted `Svit`
+instance. The TUI
 then sends through `Inbox`, renders completed messages from `outbox`, and
 refreshes memory through `Svit::read_versioned` after
 `SvitEvent::Committed`; it does not retain a `Process`, assemble runtimes, or
@@ -309,14 +329,15 @@ just support-agent-svit
   commit, or none do.
 - Structured `log-info!` records and deterministic buffered `send!` intents.
 - Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
-- Local Turso event persistence for core process mutations, deterministic
-  resume, bounded queries, exact-boundary forks, on-demand snapshots, and safe
-  history cuts.
+- Local Turso event persistence for process mutations and runnable reasoning,
+  deterministic resume, bounded queries, exact-boundary forks, on-demand
+  snapshots, and safe history cuts.
 - Forks that copy committed memory and scripts into an independently mutable
   child without copying the parent's outbox. Agent-process forks also inherit
   committed conversation history and isolate future turns.
-- A process-owned `svit::Svit` loop implemented by Everruns, with bounded
-  durable events carried by snapshots, restores, and forks.
+- A process-owned `svit::Svit` loop implemented by Everruns, with canonical
+  conversation events and model-driven process changes committed through an
+  optional durable process owner.
 - Configurable execution deadline, nested-exec depth, VM stack, namespace,
   syntax, integer, estimated guest-memory, value, text, script, log, message,
   and staged-script limits.
@@ -422,8 +443,8 @@ described in [SECURITY.md](SECURITY.md).
 
 Svit does not yet provide scheduling, timers, background activations, message
 delivery, retries, global routing, authenticated identity, authorization,
-filesystem or network read-through projections, secrets, durable reasoning or
-control-receipt storage, distributed migration, exactly-once effects, snapshot
+filesystem or network read-through projections, secrets, durable control
+receipts, distributed migration, exactly-once effects, snapshot
 signatures, or formal verification. Process addresses are validated logical
 identifiers; they are not authenticated principals.
 

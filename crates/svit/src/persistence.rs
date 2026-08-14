@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::{Activation, Process, ProcessId, Result, Value};
+use crate::{Activation, Change, Mount, Process, ProcessId, Result, Value};
 
 /// One ordered process-tree operation stored in a Svit transaction event.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -240,16 +240,32 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     fn read(&self, path: &str) -> Result<Option<Value>>;
     /// Returns the current committed root hash.
     fn root_hash(&self) -> String;
+    /// Returns an owned committed read projection with current runtime mounts.
+    fn process_projection(&self) -> Process;
     /// Durably commits one host write.
-    async fn write(&mut self, path: &str, value: Value) -> Result<()>;
+    async fn write(&mut self, path: &str, value: Value) -> Result<Change>;
     /// Durably commits one host removal.
-    async fn remove(&mut self, path: &str) -> Result<()>;
+    async fn remove(&mut self, path: &str) -> Result<Change>;
     /// Executes guest Lisp and durably commits its successful transition.
     async fn exec(&mut self, path: &str, input: Value) -> Result<Activation>;
     /// Durably appends one host-supplied inbox value.
-    async fn enqueue_inbox(&mut self, value: Value) -> Result<()>;
+    async fn enqueue_inbox(&mut self, value: Value) -> Result<Change>;
     /// Durably removes the exact expected inbox head.
-    async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<()>;
+    async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<Change>;
+    /// Attaches one host-selected runtime mount and durably records its descriptor.
+    async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<Change>;
+    /// Durably initializes Svit-owned conversation and reasoning state.
+    async fn initialize_thread_state(&mut self, value: Value) -> Result<()>;
+    /// Durably updates thread metadata without rewriting retained history.
+    async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> Result<()>;
+    /// Durably appends one canonical reasoning event and newly derived messages.
+    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()>;
+    /// Durably refreshes the descriptive built-in catalog from current host grants.
+    async fn replace_builtins(&mut self, value: Value) -> Result<()>;
     /// Queries retained transaction events.
     async fn query(&self, query: EventQuery) -> Result<Vec<Self::Event>>;
     /// Persists an on-demand process snapshot at the current event boundary.

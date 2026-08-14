@@ -18,13 +18,13 @@ use everruns_host::{
 };
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
-    Activation, ActivationHook, Builtins, Change, Limits, MessageIntent, Mount, Process,
-    ProcessBuilder, ProcessId, Reasoner, Script, Value,
+    Activation, ActivationHook, Builtins, Change, DurableProcessHandle, Limits, MessageIntent,
+    Mount, Process, ProcessBuilder, ProcessId, Reasoner, Script, Value,
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
@@ -128,8 +128,8 @@ pub enum SvitEvent {
 /// One configured, independently running Svit process.
 pub struct Svit {
     reasoning: Option<ReasoningLoop>,
-    process: Arc<Mutex<Process>>,
-    inbox_state: Arc<Mutex<InboxState>>,
+    process: ProcessState,
+    inbox_state: Arc<AsyncMutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
     outbox_sender: broadcast::Sender<Message>,
@@ -141,8 +141,8 @@ pub struct Svit {
 /// Cloneable handle for committing messages to one Svit process inbox.
 #[derive(Clone)]
 pub struct Inbox {
-    process: Arc<Mutex<Process>>,
-    state: Arc<Mutex<InboxState>>,
+    process: ProcessState,
+    state: Arc<AsyncMutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     event_sender: broadcast::Sender<SvitEvent>,
 }
@@ -167,6 +167,326 @@ enum RuntimeCommand {
     Stop,
 }
 
+#[derive(Clone)]
+struct ProcessState {
+    view: Arc<Mutex<Process>>,
+    owner: Arc<AsyncMutex<Box<dyn ProcessOwner>>>,
+    durable: bool,
+    #[cfg(test)]
+    append_barrier: Option<Arc<tokio::sync::Barrier>>,
+}
+
+impl ProcessState {
+    fn volatile(process: Process) -> Self {
+        let view = Arc::new(Mutex::new(process.clone()));
+        Self {
+            view,
+            owner: Arc::new(AsyncMutex::new(Box::new(VolatileProcess { process }))),
+            durable: false,
+            #[cfg(test)]
+            append_barrier: None,
+        }
+    }
+
+    fn persisted(handle: impl DurableProcessHandle + 'static) -> crate::Result<Self> {
+        let process = handle.process_projection();
+        Ok(Self {
+            view: Arc::new(Mutex::new(process)),
+            owner: Arc::new(AsyncMutex::new(Box::new(PersistedProcess { handle }))),
+            durable: true,
+            #[cfg(test)]
+            append_barrier: None,
+        })
+    }
+
+    #[cfg(test)]
+    fn with_append_barrier(mut self, barrier: Arc<tokio::sync::Barrier>) -> Self {
+        self.append_barrier = Some(barrier);
+        self
+    }
+
+    fn view(&self) -> Arc<Mutex<Process>> {
+        self.view.clone()
+    }
+
+    async fn write(&self, path: &str, value: Value) -> crate::Result<Change> {
+        let mut owner = self.owner.lock().await;
+        let change = owner.write(path, value).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(change)
+    }
+
+    async fn remove(&self, path: &str) -> crate::Result<Change> {
+        let mut owner = self.owner.lock().await;
+        let change = owner.remove(path).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(change)
+    }
+
+    async fn exec(&self, path: &str, input: Value) -> crate::Result<Activation> {
+        let mut owner = self.owner.lock().await;
+        let activation = owner.exec(path, input).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(activation)
+    }
+
+    async fn enqueue_inbox(&self, value: Value) -> crate::Result<Change> {
+        let mut owner = self.owner.lock().await;
+        let change = owner.enqueue_inbox(value).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(change)
+    }
+
+    async fn acknowledge_inbox(&self, expected: &Value) -> crate::Result<Change> {
+        let mut owner = self.owner.lock().await;
+        let change = owner.acknowledge_inbox(expected).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(change)
+    }
+
+    async fn attach_mount(&self, name: String, mount: Mount) -> crate::Result<Change> {
+        let mut owner = self.owner.lock().await;
+        let change = owner.attach_mount(name, mount).await?;
+        self.refresh_view(owner.as_ref())?;
+        Ok(change)
+    }
+
+    async fn initialize_thread_state(&self, value: Value) -> crate::Result<()> {
+        let mut owner = self.owner.lock().await;
+        owner.initialize_thread_state(value).await?;
+        self.refresh_view(owner.as_ref())
+    }
+
+    async fn update_thread_metadata(
+        &self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> crate::Result<()> {
+        let mut owner = self.owner.lock().await;
+        owner
+            .update_thread_metadata(instructions, system_prompt)
+            .await?;
+        self.refresh_view(owner.as_ref())
+    }
+
+    async fn append_reasoning_event(&self, request: EventRequest) -> Result<Event, EventLogError> {
+        #[cfg(test)]
+        if let Some(barrier) = &self.append_barrier {
+            barrier.wait().await;
+        }
+        let mut owner = self.owner.lock().await;
+        let process = owner.process_projection();
+        let mut state = load_thread_state(&process)
+            .map_err(event_log_corruption)?
+            .ok_or_else(|| EventLogError::Corruption {
+                detail: "missing Svit /thread state".into(),
+            })?;
+        if state.session_id != request.session_id {
+            return Err(EventLogError::InvalidAppend {
+                detail: "event belongs to a different Everruns session".into(),
+            });
+        }
+        let sequence =
+            i32::try_from(state.events.len() + 1).map_err(|_| EventLogError::InvalidAppend {
+                detail: "Everruns event sequence limit exceeded".into(),
+            })?;
+        let event = request.into_event(EventId::new(), sequence);
+        let previous_message_count = state.messages.len();
+        state.events.push(event.clone());
+        state.messages = messages_from_events(&state.events);
+        if state.messages.len() < previous_message_count {
+            return Err(EventLogError::Corruption {
+                detail: "Svit message projection shrank after an event append".into(),
+            });
+        }
+
+        // THREAT[TM-DOS-003]: Prompts, model output, and tool values remain
+        // untrusted; Svit value validation and process limits fail closed.
+        let event_value = Value::from_json(serde_json::to_value(&event).map_err(event_log_append)?)
+            .map_err(event_log_append)?;
+        let message_values = state.messages[previous_message_count..]
+            .iter()
+            .map(|message| {
+                serde_json::to_value(message)
+                    .map_err(event_log_append)
+                    .and_then(|value| Value::from_json(value).map_err(event_log_append))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        owner
+            .append_thread_event(event_value, message_values)
+            .await
+            .map_err(event_log_append)?;
+        self.refresh_view(owner.as_ref())
+            .map_err(event_log_append)?;
+        Ok(event)
+    }
+
+    async fn replace_builtins(&self, value: Value) -> crate::Result<()> {
+        let mut owner = self.owner.lock().await;
+        owner.replace_builtins(value).await?;
+        self.refresh_view(owner.as_ref())
+    }
+
+    fn refresh_view(&self, owner: &dyn ProcessOwner) -> crate::Result<()> {
+        let process = owner.process_projection();
+        *self
+            .view
+            .lock()
+            .map_err(|_| crate::Error::ControlUnavailable)? = process;
+        Ok(())
+    }
+}
+
+#[async_trait]
+trait ProcessOwner: Send + Sync {
+    fn process_projection(&self) -> Process;
+    async fn write(&mut self, path: &str, value: Value) -> crate::Result<Change>;
+    async fn remove(&mut self, path: &str) -> crate::Result<Change>;
+    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation>;
+    async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change>;
+    async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change>;
+    async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change>;
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()>;
+    async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> crate::Result<()>;
+    async fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> crate::Result<()>;
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()>;
+}
+
+struct VolatileProcess {
+    process: Process,
+}
+
+#[async_trait]
+impl ProcessOwner for VolatileProcess {
+    fn process_projection(&self) -> Process {
+        self.process.clone()
+    }
+
+    async fn write(&mut self, path: &str, value: Value) -> crate::Result<Change> {
+        self.process.write(path, value)
+    }
+
+    async fn remove(&mut self, path: &str) -> crate::Result<Change> {
+        self.process.remove(path)
+    }
+
+    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation> {
+        self.process.exec(path, input)
+    }
+
+    async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change> {
+        self.process.enqueue_inbox(value)
+    }
+
+    async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change> {
+        self.process.acknowledge_inbox(expected)
+    }
+
+    async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change> {
+        self.process.attach_mount(name, mount)
+    }
+
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()> {
+        self.process.initialize_thread_state(value).map(|_| ())
+    }
+
+    async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> crate::Result<()> {
+        self.process
+            .update_thread_metadata(instructions, system_prompt)
+            .map(|_| ())
+    }
+
+    async fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> crate::Result<()> {
+        self.process
+            .append_thread_event(event, messages)
+            .map(|_| ())
+    }
+
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()> {
+        self.process.replace_builtins(value).map(|_| ())
+    }
+}
+
+struct PersistedProcess<H> {
+    handle: H,
+}
+
+#[async_trait]
+impl<H> ProcessOwner for PersistedProcess<H>
+where
+    H: DurableProcessHandle + 'static,
+{
+    fn process_projection(&self) -> Process {
+        self.handle.process_projection()
+    }
+
+    async fn write(&mut self, path: &str, value: Value) -> crate::Result<Change> {
+        self.handle.write(path, value).await
+    }
+
+    async fn remove(&mut self, path: &str) -> crate::Result<Change> {
+        self.handle.remove(path).await
+    }
+
+    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation> {
+        self.handle.exec(path, input).await
+    }
+
+    async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change> {
+        self.handle.enqueue_inbox(value).await
+    }
+
+    async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change> {
+        self.handle.acknowledge_inbox(expected).await
+    }
+
+    async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change> {
+        self.handle.attach_mount(name, mount).await
+    }
+
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()> {
+        self.handle.initialize_thread_state(value).await
+    }
+
+    async fn update_thread_metadata(
+        &mut self,
+        instructions: Value,
+        system_prompt: Value,
+    ) -> crate::Result<()> {
+        self.handle
+            .update_thread_metadata(instructions, system_prompt)
+            .await
+    }
+
+    async fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> crate::Result<()> {
+        self.handle.append_thread_event(event, messages).await
+    }
+
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()> {
+        self.handle.replace_builtins(value).await
+    }
+}
+
 impl Svit {
     /// Starts one process and loop definition around `id`.
     pub fn builder(id: impl Into<String>) -> crate::Result<SvitBuilder> {
@@ -183,6 +503,13 @@ impl Svit {
         }
     }
 
+    /// Configures a runnable Svit around an adapter-owned durable process.
+    pub fn persisted(handle: impl DurableProcessHandle + 'static) -> SvitResult<SvitResumeBuilder> {
+        Ok(SvitResumeBuilder {
+            reasoning: ReasoningLoopBuilder::persisted(handle)?,
+        })
+    }
+
     fn from_reasoning(reasoning: ReasoningLoop) -> Self {
         let process = reasoning.process();
         let builtins = reasoning.builtins.clone();
@@ -192,7 +519,7 @@ impl Svit {
         Self {
             reasoning: Some(reasoning),
             process,
-            inbox_state: Arc::new(Mutex::new(InboxState { accepting: true })),
+            inbox_state: Arc::new(AsyncMutex::new(InboxState { accepting: true })),
             command_sender,
             command_receiver: Some(command_receiver),
             outbox_sender,
@@ -241,9 +568,7 @@ impl Svit {
         let inbox_state = self.inbox_state.clone();
         self.task = Some(tokio::spawn(async move {
             let result = run_process_loop(reasoning, receiver, outbox, events.clone()).await;
-            if let Ok(mut state) = inbox_state.lock() {
-                state.accepting = false;
-            }
+            inbox_state.lock().await.accepting = false;
             if let Err(error) = &result {
                 // THREAT[TM-INF-001]: Operational subscribers receive the same
                 // bounded diagnostic surface as other runtime callers.
@@ -259,10 +584,7 @@ impl Svit {
     pub async fn block(&mut self) -> SvitResult<()> {
         let task = self.task.take().ok_or(SvitError::NotStarted)?;
         {
-            let mut state = self
-                .inbox_state
-                .lock()
-                .map_err(|_| SvitError::ProcessUnavailable)?;
+            let mut state = self.inbox_state.lock().await;
             state.accepting = false;
             let _ = self.command_sender.send(RuntimeCommand::Stop);
         }
@@ -282,6 +604,7 @@ impl Svit {
     pub fn id(&self) -> SvitResult<ProcessId> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .id()
@@ -292,6 +615,7 @@ impl Svit {
     pub fn version(&self) -> SvitResult<u64> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .version())
@@ -301,6 +625,7 @@ impl Svit {
     pub fn limits(&self) -> SvitResult<Limits> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .limits()
@@ -311,6 +636,7 @@ impl Svit {
     pub fn discover(&self, path: &str) -> SvitResult<Vec<String>> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .discover(path)?)
@@ -320,6 +646,7 @@ impl Svit {
     pub fn read(&self, path: &str) -> SvitResult<Option<Value>> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .read(path)?)
@@ -329,18 +656,19 @@ impl Svit {
     pub fn stat(&self, path: &str) -> SvitResult<Option<Value>> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .stat(path)?)
     }
 
     /// Attaches or replaces one mount provider on the running process.
-    pub fn attach_mount(&mut self, name: impl Into<String>, mount: Mount) -> SvitResult<Change> {
-        let change = self
-            .process
-            .lock()
-            .map_err(|_| SvitError::ProcessUnavailable)?
-            .attach_mount(name, mount)?;
+    pub async fn attach_mount(
+        &mut self,
+        name: impl Into<String>,
+        mount: Mount,
+    ) -> SvitResult<Change> {
+        let change = self.process.attach_mount(name.into(), mount).await?;
         publish_committed(&self.event_sender, &change);
         Ok(change)
     }
@@ -349,46 +677,29 @@ impl Svit {
     pub fn read_versioned(&self, path: &str) -> SvitResult<(Option<Value>, u64)> {
         let process = self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?;
         Ok((process.read(path)?, process.version()))
     }
 
     /// Commits a host write through the process path contract.
-    pub fn write(&mut self, path: &str, value: Value) -> SvitResult<Change> {
-        let change = {
-            let mut process = self
-                .process
-                .lock()
-                .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.write(path, value)?
-        };
+    pub async fn write(&mut self, path: &str, value: Value) -> SvitResult<Change> {
+        let change = self.process.write(path, value).await?;
         publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
     /// Commits a host removal through the process path contract.
-    pub fn remove(&mut self, path: &str) -> SvitResult<Change> {
-        let change = {
-            let mut process = self
-                .process
-                .lock()
-                .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.remove(path)?
-        };
+    pub async fn remove(&mut self, path: &str) -> SvitResult<Change> {
+        let change = self.process.remove(path).await?;
         publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
     /// Executes one transactional process script by its absolute `/lib` path.
-    pub fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
-        let activation = {
-            let mut process = self
-                .process
-                .lock()
-                .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.exec(path, input)?
-        };
+    pub async fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
+        let activation = self.process.exec(path, input).await?;
         publish_committed(&self.event_sender, &activation_change(&activation));
         Ok(activation)
     }
@@ -397,6 +708,7 @@ impl Svit {
     pub fn message_intents(&self) -> SvitResult<Vec<MessageIntent>> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .outbox()?)
@@ -406,6 +718,7 @@ impl Svit {
     pub fn snapshot(&self) -> SvitResult<Vec<u8>> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .snapshot()?)
@@ -415,6 +728,7 @@ impl Svit {
     pub fn root_hash(&self) -> SvitResult<String> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .root_hash())
@@ -424,6 +738,7 @@ impl Svit {
     pub fn fork_process(&self, child_id: impl Into<String>) -> SvitResult<Process> {
         Ok(self
             .process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .fork(child_id)?)
@@ -493,24 +808,15 @@ impl From<broadcast::error::TryRecvError> for ObserveError {
 
 impl Inbox {
     /// Atomically commits one message, then wakes the process loop.
-    pub fn send(&self, message: Message) -> SvitResult<()> {
-        let state = self
-            .state
-            .lock()
-            .map_err(|_| SvitError::ProcessUnavailable)?;
+    pub async fn send(&self, message: Message) -> SvitResult<()> {
+        let state = self.state.lock().await;
         if !state.accepting {
             return Err(SvitError::InboxClosed);
         }
         let json = serde_json::to_value(message)
             .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
         let value = Value::from_json(json)?;
-        let change = {
-            let mut process = self
-                .process
-                .lock()
-                .map_err(|_| SvitError::ProcessUnavailable)?;
-            process.enqueue_inbox(value)?
-        };
+        let change = self.process.enqueue_inbox(value).await?;
         publish_committed(&self.event_sender, &change);
         self.command_sender
             .send(RuntimeCommand::Wake)
@@ -528,7 +834,7 @@ async fn run_process_loop(
 ) -> SvitResult<ReasoningLoop> {
     loop {
         let next = {
-            let process = reasoning.process();
+            let process = reasoning.process().view();
             process
                 .lock()
                 .map_err(|_| SvitError::ProcessUnavailable)?
@@ -545,11 +851,7 @@ async fn run_process_loop(
                 .filter(|message| message.role == MessageRole::Agent)
                 .cloned()
                 .ok_or(SvitError::MissingOutboxMessage)?;
-            let change = {
-                let process = reasoning.process();
-                let mut process = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
-                process.acknowledge_inbox(&value)?
-            };
+            let change = reasoning.process().acknowledge_inbox(&value).await?;
             publish_committed(&events, &change);
             let _ = outbox.send(response);
             continue;
@@ -698,7 +1000,7 @@ impl SvitBuilder {
 
 /// A running Everruns reasoning represented by one Svit process.
 struct ReasoningLoop {
-    process: Arc<Mutex<Process>>,
+    process: ProcessState,
     runtime: InProcessRuntime,
     session_id: SessionId,
     messages: Vec<Message>,
@@ -731,13 +1033,13 @@ impl ReasoningLoop {
     }
 
     /// Returns a shared handle for host-side inspection of committed state.
-    fn process(&self) -> Arc<Mutex<Process>> {
+    fn process(&self) -> ProcessState {
         self.process.clone()
     }
 }
 
 struct ReasoningLoopBuilder {
-    process: Option<Arc<Mutex<Process>>>,
+    process: Option<ProcessState>,
     access: ReasoningAccess,
     instructions: Option<String>,
     reasoner: Option<Reasoner>,
@@ -762,8 +1064,15 @@ impl ReasoningLoopBuilder {
     }
 
     fn with_process(mut self, process: Process) -> Self {
-        self.process = Some(Arc::new(Mutex::new(process)));
+        self.process = Some(ProcessState::volatile(process));
         self
+    }
+
+    fn persisted(handle: impl DurableProcessHandle + 'static) -> crate::Result<Self> {
+        Ok(Self {
+            process: Some(ProcessState::persisted(handle)?),
+            ..Self::detached()
+        })
     }
 
     fn instructions(mut self, instructions: impl Into<String>) -> Self {
@@ -810,7 +1119,8 @@ impl ReasoningLoopBuilder {
             })
             .transpose()?;
         let stored_state = {
-            let process = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+            let view = process.view();
+            let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;
             load_thread_state(&process).map_err(SvitError::from)?
         };
         let instructions = self
@@ -822,6 +1132,7 @@ impl ReasoningLoopBuilder {
             })
             .filter(|instructions| !instructions.trim().is_empty());
         let process_id = process
+            .view
             .lock()
             .map_err(|_| SvitError::ProcessUnavailable)?
             .id()
@@ -835,18 +1146,19 @@ impl ReasoningLoopBuilder {
             .as_ref()
             .map(Builtins::catalog)
             .unwrap_or_else(|| json!({}));
-        {
-            // THREAT[TM-CAP-005]: `/bin` is refreshed from current host
-            // configuration before Everruns can run a turn.
-            let mut owned = process.lock().map_err(|_| SvitError::ProcessUnavailable)?;
-            owned.replace_builtins(Value::from_json(builtin_catalog)?)?;
-            initialize_thread_state(
-                &mut owned,
-                session_id,
-                instructions.as_deref(),
-                &system_prompt,
-            )?;
-        }
+        // THREAT[TM-CAP-005]: `/bin` is refreshed from current host
+        // configuration before Everruns can run a turn. Durable owners commit
+        // both this projection and thread initialization before publication.
+        process
+            .replace_builtins(Value::from_json(builtin_catalog)?)
+            .await?;
+        initialize_thread_state(
+            &process,
+            session_id,
+            instructions.as_deref(),
+            &system_prompt,
+        )
+        .await?;
 
         let capability = ProcessCapability {
             process: process.clone(),
@@ -854,11 +1166,7 @@ impl ReasoningLoopBuilder {
             builtins: builtins.clone(),
         };
         let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
-        let event_log = Arc::new(ProcessEventLog::new(
-            process.clone(),
-            instructions.clone(),
-            system_prompt.clone(),
-        ));
+        let event_log = Arc::new(ProcessEventLog::new(process.clone()));
         let backends = HostBackends::in_memory().with_event_log(event_log);
         // Svit is an advanced Everruns host because the application facade owns
         // its event log. This host builder is the boundary that installs Svit's
@@ -913,7 +1221,7 @@ enum ReasoningAccess {
 
 #[derive(Clone)]
 struct ProcessCapability {
-    process: Arc<Mutex<Process>>,
+    process: ProcessState,
     access: ReasoningAccess,
     builtins: Option<Builtins>,
 }
@@ -988,7 +1296,8 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
             let process = discover_process.clone();
             async move {
                 let path = arguments["path"].as_str().unwrap_or_default();
-                let Ok(process) = process.lock() else {
+                let view = process.view();
+                let Ok(process) = view.lock() else {
                     return tool_error("Svit process lock is unavailable");
                 };
                 match process.discover(path) {
@@ -1012,7 +1321,8 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
             let process = read_process.clone();
             async move {
                 let path = arguments["path"].as_str().unwrap_or_default();
-                let Ok(process) = process.lock() else {
+                let view = process.view();
+                let Ok(process) = view.lock() else {
                     return tool_error("Svit process lock is unavailable");
                 };
                 match process.read(path) {
@@ -1042,7 +1352,8 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
             let process = stat_process.clone();
             async move {
                 let path = arguments["path"].as_str().unwrap_or_default();
-                let Ok(process) = process.lock() else {
+                let view = process.view();
+                let Ok(process) = view.lock() else {
                     return tool_error("Svit process lock is unavailable");
                 };
                 match process.stat(path) {
@@ -1081,7 +1392,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                         return tool_error("built-in not found");
                     };
                     return builtins
-                        .execute(name, arguments["input"].clone(), process)
+                        .execute(name, arguments["input"].clone(), process.view())
                         .await;
                 }
                 let Some(script) = path.strip_prefix("/lib/") else {
@@ -1095,7 +1406,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                 {
                     return tool_error(format!("script is not allowed: {script}"));
                 }
-                execute_script(&process, path, arguments["input"].clone())
+                execute_script(&process, path, arguments["input"].clone()).await
             }
         },
     );
@@ -1123,10 +1434,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                     Ok(value) => value,
                     Err(error) => return tool_error(error.to_string()),
                 };
-                let Ok(mut process) = process.lock() else {
-                    return tool_error("Svit process lock is unavailable");
-                };
-                match process.write(path, value) {
+                match process.write(path, value).await {
                     Ok(change) => tool_json(json!({
                         "path": path,
                         "version": change.version(),
@@ -1153,10 +1461,7 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                 let Some(path) = arguments["path"].as_str() else {
                     return tool_error("path must be text");
                 };
-                let Ok(mut process) = process.lock() else {
-                    return tool_error("Svit process lock is unavailable");
-                };
-                match process.remove(path) {
+                match process.remove(path).await {
                     Ok(change) => tool_json(json!({
                         "path": path,
                         "version": change.version(),
@@ -1171,8 +1476,8 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     vec![discover, read, stat, write, remove, exec]
 }
 
-fn execute_script(
-    process: &Arc<Mutex<Process>>,
+async fn execute_script(
+    process: &ProcessState,
     path: &str,
     input: JsonValue,
 ) -> ToolExecutionResult {
@@ -1180,10 +1485,7 @@ fn execute_script(
         Ok(input) => input,
         Err(error) => return tool_error(error.to_string()),
     };
-    let Ok(mut process) = process.lock() else {
-        return tool_error("Svit process lock is unavailable");
-    };
-    let activation = match process.exec(path, input) {
+    let activation = match process.exec(path, input).await {
         Ok(activation) => activation,
         Err(error) => return tool_error(error.to_string()),
     };
@@ -1209,29 +1511,20 @@ fn execute_script(
 // Svit owns durability: the Everruns EventLog SPI commits each canonical event
 // and its derived guest-readable message projection in one process transition.
 struct ProcessEventLog {
-    process: Arc<Mutex<Process>>,
-    instructions: Option<Arc<str>>,
-    system_prompt: Arc<str>,
+    process: ProcessState,
 }
 
 impl ProcessEventLog {
-    fn new(
-        process: Arc<Mutex<Process>>,
-        instructions: Option<String>,
-        system_prompt: String,
-    ) -> Self {
-        Self {
-            process,
-            instructions: instructions.map(Into::into),
-            system_prompt: system_prompt.into(),
-        }
+    fn new(process: ProcessState) -> Self {
+        Self { process }
     }
 }
 
 #[async_trait]
 impl EventReader for ProcessEventLog {
     async fn read_page(&self, request: EventReadRequest) -> Result<EventPage, EventLogError> {
-        let process = self.process.lock().map_err(|_| EventLogError::Backend {
+        let view = self.process.view();
+        let process = view.lock().map_err(|_| EventLogError::Backend {
             detail: "Svit process lock is unavailable".into(),
         })?;
         let Some(state) = load_thread_state(&process).map_err(event_log_corruption)? else {
@@ -1310,43 +1603,15 @@ impl EventLog for ProcessEventLog {
                 detail: "ephemeral events are sink-only".into(),
             });
         }
-        let mut process = self.process.lock().map_err(|_| EventLogError::Backend {
-            detail: "Svit process lock is unavailable".into(),
-        })?;
-        let mut state = load_thread_state(&process)
-            .map_err(event_log_corruption)?
-            .ok_or_else(|| EventLogError::Corruption {
-                detail: "missing Svit /thread state".into(),
-            })?;
-        if state.session_id != request.session_id {
-            return Err(EventLogError::InvalidAppend {
-                detail: "event belongs to a different Everruns session".into(),
-            });
-        }
-        let sequence =
-            i32::try_from(state.events.len() + 1).map_err(|_| EventLogError::InvalidAppend {
-                detail: "Everruns event sequence limit exceeded".into(),
-            })?;
-        let event = request.into_event(EventId::new(), sequence);
-        state.events.push(event.clone());
-        state.messages = messages_from_events(&state.events);
-
-        // THREAT[TM-DOS-003]: Prompts, model output, and tool values remain
-        // untrusted; Svit value validation and process limits fail closed.
-        persist_thread_state(
-            &mut process,
-            state.session_id,
-            self.instructions.as_deref(),
-            self.system_prompt.as_ref(),
-            state.events,
-            state.messages,
-        )
-        .map_err(event_log_append)?;
-        Ok(event)
+        self.process.append_reasoning_event(request).await
     }
 
     fn durability(&self) -> EventDurability {
-        EventDurability::Volatile
+        if self.process.durable {
+            EventDurability::CrashDurable
+        } else {
+            EventDurability::Volatile
+        }
     }
 }
 
@@ -1358,38 +1623,48 @@ struct ThreadState {
     events: Vec<Event>,
 }
 
-fn initialize_thread_state(
-    process: &mut Process,
+async fn initialize_thread_state(
+    process: &ProcessState,
     session_id: SessionId,
     instructions: Option<&str>,
     system_prompt: &str,
-) -> EverrunsResult<()> {
-    match load_thread_state(process)? {
-        Some(state) if state.session_id != session_id => Err(event_error(
+) -> SvitResult<()> {
+    let state = {
+        let view = process.view();
+        let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+        load_thread_state(&process).map_err(SvitError::from)?
+    };
+    match state {
+        Some(state) if state.session_id != session_id => Err(SvitError::from(event_error(
             "Svit process already owns a different Everruns session",
-        )),
+        ))),
         Some(state)
             if state.instructions.as_deref() == instructions
                 && state.system_prompt == system_prompt =>
         {
             Ok(())
         }
-        Some(state) => persist_thread_state(
-            process,
-            session_id,
-            instructions,
-            system_prompt,
-            state.events,
-            state.messages,
-        ),
-        None => persist_thread_state(
-            process,
-            session_id,
-            instructions,
-            system_prompt,
-            Vec::new(),
-            Vec::new(),
-        ),
+        Some(_) => {
+            let instructions = instructions
+                .map(|instructions| Value::String(instructions.to_owned()))
+                .unwrap_or(Value::Null);
+            process
+                .update_thread_metadata(instructions, Value::String(system_prompt.to_owned()))
+                .await?;
+            Ok(())
+        }
+        None => {
+            let value = thread_state_value(
+                session_id,
+                instructions,
+                system_prompt,
+                Vec::new(),
+                Vec::new(),
+            )
+            .map_err(SvitError::from)?;
+            process.initialize_thread_state(value).await?;
+            Ok(())
+        }
     }
 }
 
@@ -1472,14 +1747,13 @@ fn validate_thread_events(session_id: SessionId, events: &[Event]) -> EverrunsRe
     Ok(())
 }
 
-fn persist_thread_state(
-    process: &mut Process,
+fn thread_state_value(
     session_id: SessionId,
     instructions: Option<&str>,
     system_prompt: &str,
     events: Vec<Event>,
     messages: Vec<Message>,
-) -> EverrunsResult<()> {
+) -> EverrunsResult<Value> {
     // THREAT[TM-AUD-001]: Everruns events are canonical. The guest-readable
     // history is derived and committed at this host-only boundary.
     let value = Value::from_json(json!({
@@ -1491,10 +1765,7 @@ fn persist_thread_state(
         "events": events,
     }))
     .map_err(event_error)?;
-    process
-        .replace_thread_state(value)
-        .map(|_| ())
-        .map_err(event_error)
+    Ok(value)
 }
 
 fn messages_from_events(events: &[Event]) -> Vec<Message> {
@@ -1581,5 +1852,53 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
 fn event_log_append(error: impl fmt::Display) -> EventLogError {
     EventLogError::InvalidAppend {
         detail: error.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use everruns::core::events::{EventContext, InputMessageData};
+
+    use super::*;
+
+    #[tokio::test]
+    async fn concurrent_event_appends_receive_distinct_sequences() {
+        let session_id = SessionId::new();
+        let process = Process::builder("svit://local/concurrent-events")
+            .unwrap()
+            .build()
+            .unwrap();
+        let process = ProcessState::volatile(process)
+            .with_append_barrier(Arc::new(tokio::sync::Barrier::new(2)));
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let event_log = ProcessEventLog::new(process.clone());
+        let first = EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            InputMessageData::new(Message::user("first")),
+        );
+        let second = EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            InputMessageData::new(Message::user("second")),
+        );
+
+        let (first, second) = tokio::join!(event_log.append(first), event_log.append(second));
+
+        first.unwrap();
+        second.unwrap();
+        let view = process.view();
+        let process = view.lock().unwrap();
+        let thread = load_thread_state(&process).unwrap().unwrap();
+        assert_eq!(
+            thread
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![Some(1), Some(2)]
+        );
     }
 }

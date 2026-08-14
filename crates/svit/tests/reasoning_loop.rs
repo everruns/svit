@@ -8,6 +8,8 @@ use svit::{
     Limits, LlmSimConfig, Message, MessageRole, ObserveError, Process, Reasoner, Script,
     SimToolCall, SimTurn, Svit, SvitError, SvitEvent, Value, llm_sim_provider, value,
 };
+#[cfg(feature = "persistence-turso")]
+use svit::{EventQuery, Mutation, TursoProcessStore};
 
 struct FixtureHttp;
 
@@ -173,6 +175,7 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
     assert_eq!(svit.read("/memory/status").unwrap(), Some(value!("idle")));
     inbox
         .send(Message::user("Do the configured work."))
+        .await
         .unwrap();
     svit.block().await.unwrap();
     let result = outbox.recv().await.unwrap();
@@ -190,9 +193,98 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
         vec![ContentPart::text("Do the configured work.")]
     );
     assert!(matches!(
-        inbox.send(Message::user("too late")),
+        inbox.send(Message::user("too late")).await,
         Err(svit::SvitError::InboxClosed)
     ));
+}
+
+#[tokio::test]
+#[cfg(feature = "persistence-turso")]
+// THREAT[TM-AUD-001] THREAT[TM-MSG-002] THREAT[TM-PERS-002]
+async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reasoning() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let process = Process::builder("svit://local/persisted-reasoning")
+        .unwrap()
+        .memory("status", value!("idle"))
+        .build()
+        .unwrap();
+    let durable = store.create(process).await.unwrap();
+    let mut svit = Svit::persisted(durable)
+        .unwrap()
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call(
+                "write",
+                json!({"path": "/memory/status", "value": "complete"}),
+            ),
+            SimTurn::text("persisted answer"),
+        ]))
+        .builtins(Builtins::standard())
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox
+        .send(Message::user("persist this turn"))
+        .await
+        .unwrap();
+    svit.block().await.unwrap();
+    let expected_messages = serde_json::to_value(svit.messages().unwrap()).unwrap();
+    let expected_version = svit.version().unwrap();
+    drop(svit);
+
+    let durable = store
+        .resume("svit://local/persisted-reasoning")
+        .await
+        .unwrap();
+    let events = durable.query(EventQuery::new()).await.unwrap();
+    let sources = events
+        .iter()
+        .map(|event| event.source().to_owned())
+        .collect::<Vec<_>>();
+    assert!(sources.iter().any(|source| source == "builtins.refresh"));
+    assert!(sources.iter().any(|source| source == "reasoning"));
+    assert!(sources.iter().any(|source| source == "inbox.enqueue"));
+    assert!(sources.iter().any(|source| source == "inbox.acknowledge"));
+    for event in events.iter().filter(|event| event.source() == "reasoning") {
+        assert!(matches!(
+            event.mutations().first(),
+            Some(Mutation::Append { path, values })
+                if path == "/thread/events" && values.len() == 1
+        ));
+        assert!(event.mutations().iter().all(|mutation| matches!(
+            mutation,
+            Mutation::Append { path, .. }
+                if path == "/thread/events" || path == "/thread/messages"
+        )));
+    }
+    let resumed = Svit::persisted(durable)
+        .unwrap()
+        .reasoner(scripted_reasoner([]))
+        .builtins(Builtins::standard())
+        .build()
+        .await
+        .unwrap();
+
+    assert_eq!(
+        resumed.read("/memory/status").unwrap(),
+        Some(value!("complete"))
+    );
+    assert_eq!(
+        serde_json::to_value(resumed.messages().unwrap()).unwrap(),
+        expected_messages
+    );
+    assert_eq!(
+        resumed.messages().unwrap()[0].text(),
+        Some("persist this turn")
+    );
+    assert_eq!(
+        resumed.messages().unwrap().last().unwrap().text(),
+        Some("persisted answer")
+    );
+    assert_eq!(resumed.read("/inbox").unwrap(), Some(value!([])));
+    assert_eq!(resumed.version().unwrap(), expected_version);
 }
 
 #[tokio::test]
@@ -240,7 +332,7 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
     assert!(matches!(outbox.try_recv(), Err(ObserveError::Empty)));
 
     svit.start().unwrap();
-    inbox.send(Message::user("run")).unwrap();
+    inbox.send(Message::user("run")).await.unwrap();
     let queued = events.recv().await.unwrap();
     assert!(matches!(queued, SvitEvent::Committed { .. }));
     assert!(matches!(
@@ -276,12 +368,12 @@ async fn started_svit_processes_inbox_messages_in_commit_order() {
     let mut outbox = svit.outbox();
 
     svit.start().unwrap();
-    inbox.send(Message::user("first question")).unwrap();
+    inbox.send(Message::user("first question")).await.unwrap();
     assert_eq!(outbox.recv().await.unwrap().text(), Some("first answer"));
 
     // The process remains live after a completed turn. A message committed
     // while it is waiting becomes the next turn without restarting the loop.
-    inbox.send(Message::user("second question")).unwrap();
+    inbox.send(Message::user("second question")).await.unwrap();
     assert_eq!(outbox.recv().await.unwrap().text(), Some("second answer"));
 
     svit.block().await.unwrap();
@@ -336,7 +428,10 @@ async fn reasoning_loop_projects_prompt_messages_and_events() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("inspect projection")).unwrap();
+    inbox
+        .send(Message::user("inspect projection"))
+        .await
+        .unwrap();
     svit.block().await.unwrap();
 
     let projected_messages = svit.read("/thread/messages").unwrap().unwrap().to_json();
@@ -397,7 +492,7 @@ async fn reasoning_resume_rejects_a_divergent_message_projection() {
         .unwrap();
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("record this")).unwrap();
+    inbox.send(Message::user("record this")).await.unwrap();
     svit.block().await.unwrap();
 
     let mut process = svit
@@ -471,7 +566,7 @@ async fn svit_resumes_its_thread_from_the_process_snapshot() {
 
     let inbox = agent.inbox();
     agent.start().unwrap();
-    inbox.send(Message::user("first question")).unwrap();
+    inbox.send(Message::user("first question")).await.unwrap();
     agent.block().await.unwrap();
     let snapshot = agent.snapshot().unwrap();
     drop(agent);
@@ -501,7 +596,7 @@ async fn svit_resumes_its_thread_from_the_process_snapshot() {
     );
     let inbox = resumed.inbox();
     resumed.start().unwrap();
-    inbox.send(Message::user("second question")).unwrap();
+    inbox.send(Message::user("second question")).await.unwrap();
     resumed.block().await.unwrap();
     assert_eq!(resumed.messages().unwrap().len(), 4);
     assert_eq!(
@@ -524,7 +619,7 @@ async fn child_process_owns_an_isolated_forked_process() {
         .unwrap();
     let inbox = parent.inbox();
     parent.start().unwrap();
-    inbox.send(Message::user("parent question")).unwrap();
+    inbox.send(Message::user("parent question")).await.unwrap();
     parent.block().await.unwrap();
 
     let parent_hash = parent.root_hash().unwrap();
@@ -557,7 +652,7 @@ async fn child_process_owns_an_isolated_forked_process() {
     );
     let inbox = child.inbox();
     child.start().unwrap();
-    inbox.send(Message::user("child question")).unwrap();
+    inbox.send(Message::user("child question")).await.unwrap();
     child.block().await.unwrap();
 
     assert_eq!(parent.root_hash().unwrap(), parent_hash);
@@ -589,7 +684,10 @@ async fn process_reasoning_enforces_its_script_allowlist() {
 
     let inbox = agent.inbox();
     agent.start().unwrap();
-    inbox.send(Message::user("try the denied script")).unwrap();
+    inbox
+        .send(Message::user("try the denied script"))
+        .await
+        .unwrap();
     agent.block().await.unwrap();
 
     assert_eq!(agent.read("/memory/changed").unwrap(), Some(value!(false)));
@@ -618,6 +716,7 @@ async fn reasoning_event_growth_fails_closed_at_the_process_limit() {
     agent.start().unwrap();
     inbox
         .send(Message::user("produce too much output"))
+        .await
         .unwrap();
     let reported = loop {
         if let SvitEvent::Failed(error) = events.recv().await.unwrap() {
@@ -672,7 +771,7 @@ async fn host_extension_registers_discoverable_process_builtin() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("read the color")).unwrap();
+    inbox.send(Message::user("read the color")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_result = svit
@@ -721,7 +820,7 @@ async fn host_builtin_output_is_globally_bounded() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("run oversized")).unwrap();
+    inbox.send(Message::user("run oversized")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_result = svit
@@ -776,7 +875,10 @@ async fn builtin_search_and_jq_process_structured_data() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("find the active record")).unwrap();
+    inbox
+        .send(Message::user("find the active record"))
+        .await
+        .unwrap();
     svit.block().await.unwrap();
 
     let tool_results = svit
@@ -812,7 +914,7 @@ async fn builtin_http_is_denied_without_an_explicit_url_grant() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("try the network")).unwrap();
+    inbox.send(Message::user("try the network")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_result = message_text(
@@ -852,7 +954,7 @@ async fn builtin_http_uses_the_host_allowlist_and_transport() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("read the fixture")).unwrap();
+    inbox.send(Message::user("read the fixture")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_result = message_text(
@@ -888,7 +990,7 @@ async fn builtin_llm_uses_only_the_host_selected_nested_model() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("delegate once")).unwrap();
+    inbox.send(Message::user("delegate once")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_result = message_text(
@@ -933,7 +1035,7 @@ async fn builtin_spawn_runs_and_retains_an_isolated_child_svit() {
 
     let inbox = parent.inbox();
     parent.start().unwrap();
-    inbox.send(Message::user("create a child")).unwrap();
+    inbox.send(Message::user("create a child")).await.unwrap();
     parent.block().await.unwrap();
 
     assert_eq!(parent.child_ids(), vec![child_id.clone()]);
@@ -993,7 +1095,7 @@ async fn builtin_data_tools_reject_unbounded_or_oversized_work() {
 
     let inbox = svit.inbox();
     svit.start().unwrap();
-    inbox.send(Message::user("loop forever")).unwrap();
+    inbox.send(Message::user("loop forever")).await.unwrap();
     svit.block().await.unwrap();
 
     let tool_results = svit
