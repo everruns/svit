@@ -193,9 +193,9 @@ dependencies = [
 
 [[package]]
 name = "async-trait"
-version = "0.1.91"
+version = "0.1.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae36dc4177970ef04fde5178d3e2429882def40e57a451f919c098f72baa6cec"
+checksum = "82f6aeea286b8eb4dd3431a1be1b59d290ace00f5bfd8e2a159bc2a05e2c1667"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -851,7 +851,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10d60334b3b2e7c9d91ef8150abfb6fa4c1c39ebbcf4a81c2e346aad939fee3e"
 dependencies = [
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -1030,7 +1030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1056,7 +1056,7 @@ dependencies = [
 [[package]]
 name = "everruns"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1064,16 +1064,19 @@ dependencies = [
  "everruns-core",
  "everruns-host",
  "everruns-openai",
+ "everruns-provider",
  "everruns-test-support",
  "serde_json",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]
 name = "everruns-capability"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "serde",
  "serde_json",
@@ -1082,7 +1085,7 @@ dependencies = [
 [[package]]
 name = "everruns-core"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1101,7 +1104,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sha2 0.11.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tokio-util",
  "toml",
@@ -1113,31 +1116,42 @@ dependencies = [
 [[package]]
 name = "everruns-engine"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
+ "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
+ "everruns-provider",
+ "futures",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "everruns-host"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
  "everruns-engine",
  "everruns-platform",
+ "everruns-provider",
  "futures",
  "ignore",
  "regex",
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid",
@@ -1146,7 +1160,7 @@ dependencies = [
 [[package]]
 name = "everruns-openai"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1161,18 +1175,20 @@ dependencies = [
 [[package]]
 name = "everruns-platform"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
+ "everruns-provider",
  "inventory",
  "jsonschema",
  "reqwest",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "uuid",
@@ -1181,7 +1197,7 @@ dependencies = [
 [[package]]
 name = "everruns-provider"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1199,7 +1215,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "url",
@@ -1209,13 +1225,16 @@ dependencies = [
 [[package]]
 name = "everruns-test-support"
 version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+source = "git+https://github.com/everruns/everruns?branch=main#9c60afadc172188d7640bfa14cb863a4ca45697e"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
+ "everruns-engine",
  "everruns-host",
+ "everruns-provider",
  "futures",
  "inventory",
  "llmsim",
@@ -2162,7 +2181,7 @@ dependencies = [
  "jni-sys",
  "log",
  "simd_cesu8",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "walkdir",
  "windows-link",
 ]
@@ -2280,7 +2299,7 @@ checksum = "bde5057d6143cc94e861d90f591b9303d6716c6b9602309150bd068853c10899"
 dependencies = [
  "hashbrown 0.16.1",
  "portable-atomic",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
 ]
 
 [[package]]
@@ -2437,7 +2456,7 @@ dependencies = [
  "rand 0.10.2",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "toml",
  "tracing",
@@ -2628,7 +2647,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3107,7 +3126,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3138,7 +3157,7 @@ dependencies = [
  "rustc-hash 2.1.3",
  "rustls",
  "socket2",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "tracing",
  "web-time",
@@ -3161,7 +3180,7 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "slab",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tinyvec",
  "tracing",
  "web-time",
@@ -3178,7 +3197,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3384,7 +3403,7 @@ dependencies = [
  "palette",
  "serde",
  "strum 0.28.0",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.2",
@@ -3694,7 +3713,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3752,7 +3771,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4194,7 +4213,7 @@ dependencies = [
  "sha2 0.11.0",
  "svit-macros",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "turso",
  "url",
@@ -4205,7 +4224,7 @@ name = "svit-macros"
 version = "0.1.0"
 dependencies = [
  "ketos",
- "syn 2.0.119",
+ "syn 3.0.3",
 ]
 
 [[package]]
@@ -4215,7 +4234,7 @@ dependencies = [
  "everruns-test-support",
  "serde_json",
  "svit",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tokio",
  "turso",
 ]
@@ -4303,7 +4322,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4417,11 +4436,11 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09a43598840e33d5b0331f38c5e30d13bb11c11210a4b58f0d9b18a5a5eefcd9"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
 dependencies = [
- "thiserror-impl 2.0.19",
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -4437,9 +4456,9 @@ dependencies = [
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.19"
+version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43cbfe0cf76104d42a574802844187e84a305e531ed54455f11fbde0f10541cd"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4667,7 +4686,7 @@ checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
 dependencies = [
  "crossbeam-channel",
  "symlink",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "time",
  "tracing-subscriber",
 ]
@@ -4774,7 +4793,7 @@ checksum = "cd7a0c48d503cf4e0a57a2453424eaef2fce4b4269f13e3579e52f0d0c9e5cc8"
 dependencies = [
  "regex",
  "streaming-iterator",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tree-sitter",
 ]
 
@@ -4892,9 +4911,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tuika"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "342a82ee8016637ca1ac001a442e10cba08cd30230d9984f9a7d039b5c4d9c70"
+checksum = "3df8ce9b27d3a5e4541ead23a9c187a2923b5c33a8dad162e390d5817f902523"
 dependencies = [
  "crossterm",
  "pulldown-cmark",
@@ -4907,9 +4926,9 @@ dependencies = [
 
 [[package]]
 name = "tuika-codeformatters"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "100174a0ba5b7ef8187403c4546682bfd16ddb70e3f0c458c73b10f2b386e730"
+checksum = "ca76bf36ab565bba6b0530d86b7573c5169827d06d06d85968451c17baebefb7"
 dependencies = [
  "ratatui",
  "tree-sitter",
@@ -4932,11 +4951,11 @@ dependencies = [
 
 [[package]]
 name = "turso"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e12c87700c0bab45291de268cfcf60a6ca4f1e2cfad136960b1fbe57616c5539"
+checksum = "c0f9d85f8ae2bf9397e50e505b5d4b3c517c96687bc8a34d9927db739e23b967"
 dependencies = [
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
  "turso_core",
@@ -4946,9 +4965,9 @@ dependencies = [
 
 [[package]]
 name = "turso_core"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "841bf28f752f3d91496e66ac024aae881290934b3c44deeef6e8892d427dfe76"
+checksum = "91d21d176e7cc7dc607778f33b186ad981003969451ca0e3dca7494ea5ebb08a"
 dependencies = [
  "aegis",
  "aes",
@@ -5005,7 +5024,7 @@ dependencies = [
  "strum 0.26.3",
  "strum_macros 0.26.4",
  "tempfile",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
  "turso_ext",
@@ -5019,9 +5038,9 @@ dependencies = [
 
 [[package]]
 name = "turso_ext"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7ff611dfc3c8d104ee92fd5fbf44a7ed69d14cb3342eedb3c50991a96c5fdd5"
+checksum = "d9c1d40548fd1ddfa1e9486b864de3e625658a9c9013031a0d7f69ffbcab2773"
 dependencies = [
  "chrono",
  "getrandom 0.4.3",
@@ -5030,9 +5049,9 @@ dependencies = [
 
 [[package]]
 name = "turso_macros"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0fbc94903fa3f5e7a09cbee0ecd72a64e390e57493917f0b074c93cc10f05bb"
+checksum = "20622919c832ac37fb4f784e450f5dfe10598ffbd42c735aa9b2e756c4044137"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5041,24 +5060,24 @@ dependencies = [
 
 [[package]]
 name = "turso_parser"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b7c2706b7b21a708ccb625dcea40d996acc6bd92a75fd18447301a975419081"
+checksum = "5aad14b801fcb7ec1970f51c135e9ddcbbd79d7bce99b16eeb6a2213e536d478"
 dependencies = [
  "bitflags 2.13.1",
  "memchr",
  "miette",
  "strum 0.26.3",
  "strum_macros 0.26.4",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "turso_macros",
 ]
 
 [[package]]
 name = "turso_sdk_kit"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b3671c3ac2075e2c77fb15e3bc84f140ed09252033bf201dd86038bb3a9ad07"
+checksum = "7a5ea9b302726356d3acefea2bcf9d82a2a02699d2dd02c9af374d63262b7d0e"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -5073,9 +5092,9 @@ dependencies = [
 
 [[package]]
 name = "turso_sdk_kit_macros"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43d3ecda78a1589ea3d0a2aa6e77b7c1467c643b4f95a74dd6c9efb82d729728"
+checksum = "0eeffe0b97d9634278423c015635552d1985a875eb008efd19e7f063a985dc6e"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -5084,9 +5103,9 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_engine"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42ac3b76245e58b79385752a3e0eb7f14ec6ab746cd746360bdad298d4a38321"
+checksum = "8dbcab3b5478ca099f4caec6fa1e01097fc44a2e9542748d4b330005397b8074"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -5098,7 +5117,7 @@ dependencies = [
  "roaring",
  "serde",
  "serde_json",
- "thiserror 2.0.19",
+ "thiserror 2.0.20",
  "tracing",
  "turso_core",
  "turso_parser",
@@ -5107,9 +5126,9 @@ dependencies = [
 
 [[package]]
 name = "turso_sync_sdk_kit"
-version = "0.8.0-pre.3"
+version = "0.8.0-pre.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "202a056fbcb09a3a2dbd55740ea8a819b44861e773c2d78e5df950317114a6ba"
+checksum = "93641c07b2f6b3b89e57e4ca815d6f31eb7913336923ccc358078d9c6313cde3"
 dependencies = [
  "bindgen",
  "env_logger",
@@ -5130,7 +5149,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"
 dependencies = [
- "rand 0.9.5",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -5574,7 +5593,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
