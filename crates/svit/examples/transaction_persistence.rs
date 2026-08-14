@@ -1,4 +1,4 @@
-use svit::{EventQuery, Process, Script, TursoProcessStore, value};
+use svit::{Process, Script, TransactionQuery, TursoProcessStore, value};
 
 const COUNTER: &str = r#"
     (define (main input)
@@ -22,12 +22,12 @@ async fn main() -> svit::Result<()> {
         .resume("svit://local/examples/event-persistence")
         .await?;
     let events = resumed
-        .query(EventQuery::new().path_prefix("/memory"))
+        .transactions(TransactionQuery::new().path_prefix("/memory"))
         .await?;
 
     assert_eq!(resumed.read("/memory/count")?, Some(value!(3)));
     assert_eq!(resumed.version(), 1);
     assert_eq!(events.len(), 1);
-    println!("event_persistence count=3 version=1 events=1");
+    println!("transaction_persistence count=3 version=1 transactions=1");
     Ok(())
 }

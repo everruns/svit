@@ -107,11 +107,11 @@ state forward. Durable variables belong under `/memory` and change through
 control; `do` sequences effects. Every recursive computation remains subject
 to the configured execution, call-stack, value-stack, and memory limits.
 
-Persist process transitions as Turso-backed events when resume, queries,
+Persist process transitions as Turso-backed transactions when resume, queries,
 fork references, snapshots, and cuts must survive beyond one `Process` value:
 
 ```rust,no_run
-use svit::{EventQuery, Process, TursoProcessStore, value};
+use svit::{TransactionQuery, Process, TursoProcessStore, value};
 
 # async fn example() -> svit::Result<()> {
 let store = TursoProcessStore::open("svit.db").await?;
@@ -123,34 +123,50 @@ durable.write("/memory/status", value!("ready")).await?;
 
 drop(durable);
 let resumed = store.resume("svit://local/demo/persisted").await?;
-let events = resumed
-    .query(EventQuery::new().path_prefix("/memory"))
+let transactions = resumed
+    .transactions(TransactionQuery::new().path_prefix("/memory"))
     .await?;
-assert_eq!(events.len(), 1);
+assert_eq!(transactions.len(), 1);
 # Ok(())
 # }
 ```
 
-`DurableProcess` publishes its in-memory candidate only after the event, path
-projection, and address-head compare-and-swap commit in one Turso transaction.
-Resume validates content hashes, the base-bound event chain, typed mutations,
-versions, and complete resulting root hashes without rerunning guest code.
+`DurableProcess` publishes its in-memory candidate only after the transaction,
+path projection, and address-head compare-and-swap commit in one Turso
+transaction. Resume validates content hashes, the base-bound transaction chain,
+typed mutations, versions, and complete resulting root hashes without rerunning
+guest code.
 `Svit::persisted` attaches a reasoner and host grants to a newly created or
 resumed `DurableProcessHandle`; inbox transitions, model-driven process tools,
 canonical conversation events, derived messages, and built-in catalog refresh
 then use that same durable owner.
 
-Persistence is adapter-neutral at the public boundary. `ProcessStore` creates
-and resumes a `DurableProcessHandle`; `PersistedEventRecord` and
-`PersistenceSnapshotRecord` expose query and snapshot metadata without Turso
-types. `DefaultProcessStore` aliases `TursoProcessStore` when the default
+Persistence has one stream per process. A `ProcessTransaction` is the canonical
+envelope for memory, scripts, inbox/outbox, reasoning state, and host-managed
+thread changes. Everruns events are values appended to `/thread/events` inside
+those transactions; `/thread/messages` is a checked derived projection, not a
+second persistence stream.
+
+The public boundary is adapter-neutral. `ProcessStore` creates and resumes a
+`DurableProcessHandle`, while `ProcessTransaction`, `TransactionHead`, and
+`TransactionQuery` define the exact envelope, reducer, CAS identity, and read
+surface an S3 or other adapter must preserve. `ProcessTransaction::to_bytes`,
+`from_bytes`, and `replay` reuse Svit's validation instead of requiring an
+adapter to reimplement it. `PersistenceSnapshotRecord` exposes snapshot
+metadata. `DefaultProcessStore` aliases `TursoProcessStore` when the default
 `persistence-turso` feature is enabled.
+
+This is sufficient to implement an object-store adapter, but it is not by
+itself a distributed Durable Object guarantee. Such an adapter must provide an
+atomic conditional head update, immutable object writes, fencing for the
+single active executor, and tested recovery from ambiguous writes. Durable
+control receipts and formal/model-checked distributed evidence remain open.
 
 The default features are:
 
 | Feature | Purpose |
 | --- | --- |
-| `persistence-turso` | Local Turso event-store implementation and its concrete event, snapshot, and process-handle types |
+| `persistence-turso` | Local Turso transaction-store implementation and its concrete snapshot and process-handle types |
 | `turso-mount` | Host-side materialization of a bounded Turso query as a mount |
 
 Build with `--no-default-features` to compile the process runtime and
@@ -400,7 +416,7 @@ just support-agent-svit
   commit, or none do.
 - Structured `log-info!` records and deterministic buffered `send!` intents.
 - Versioned JSON snapshots with validation and a SHA-256 root integrity hash.
-- Local Turso event persistence for process mutations and runnable reasoning,
+- Local Turso process-transaction persistence for process mutations and runnable reasoning,
   deterministic resume, bounded queries, exact-boundary forks, on-demand
   snapshots, and safe history cuts.
 - Forks that copy committed memory and scripts into an independently mutable

@@ -2,10 +2,15 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{Activation, Change, Mount, Process, ProcessId, Result, Value};
 
-/// One ordered process-tree operation stored in a Svit transaction event.
+const TRANSACTION_FORMAT: &str = "svit-transaction@1";
+const MAX_TRANSACTION_METADATA_BYTES: usize = 4096;
+const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
+
+/// One ordered process-tree operation stored in a Svit process transaction.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Mutation {
@@ -62,27 +67,298 @@ pub(crate) fn validate_change_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Bounded filters for retained transaction events.
+/// Content-addressed head of one process transaction stream.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransactionHead {
+    pub(crate) position: Option<u64>,
+    pub(crate) hash: String,
+}
+
+impl TransactionHead {
+    /// Creates a validated stream head from adapter-owned metadata.
+    pub fn new(position: Option<u64>, hash: impl Into<String>) -> Result<Self> {
+        let hash = hash.into();
+        if hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction head hash is invalid".into(),
+            ));
+        }
+        Ok(Self { position, hash })
+    }
+
+    /// Returns the last transaction position, or `None` at the base boundary.
+    pub fn position(&self) -> Option<u64> {
+        self.position
+    }
+
+    /// Returns the base or last-transaction integrity hash.
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+}
+
+/// One canonical transition in the sole durable stream for a process.
+///
+/// Agent events and derived messages occur inside this envelope as mutations
+/// of `/thread/events` and `/thread/messages`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProcessTransaction {
+    #[serde(rename = "event_format")]
+    pub(crate) transaction_format: String,
+    pub(crate) address: ProcessId,
+    pub(crate) position: u64,
+    pub(crate) previous_hash: String,
+    pub(crate) process_version_before: u64,
+    pub(crate) process_version_after: u64,
+    pub(crate) mutations: Vec<Mutation>,
+    pub(crate) touched_paths: Vec<String>,
+    pub(crate) source: String,
+    pub(crate) resulting_root_hash: String,
+    #[serde(rename = "event_hash")]
+    pub(crate) transaction_hash: String,
+}
+
+#[derive(Serialize)]
+struct TransactionHashMaterial<'a> {
+    #[serde(rename = "event_format")]
+    transaction_format: &'a str,
+    address: &'a ProcessId,
+    position: u64,
+    previous_hash: &'a str,
+    process_version_before: u64,
+    process_version_after: u64,
+    mutations: &'a [Mutation],
+    touched_paths: &'a [String],
+    source: &'a str,
+    resulting_root_hash: &'a str,
+}
+
+impl ProcessTransaction {
+    /// Builds and validates the next transaction after `head`.
+    pub fn new(
+        address: ProcessId,
+        head: &TransactionHead,
+        process_version_before: u64,
+        process_version_after: u64,
+        mutations: Vec<Mutation>,
+        source: impl Into<String>,
+        resulting_root_hash: String,
+    ) -> Result<Self> {
+        let position = match head.position {
+            Some(position) => {
+                position
+                    .checked_add(1)
+                    .ok_or(crate::Error::ResourceLimitExceeded(
+                        "persistence transaction position",
+                    ))?
+            }
+            None => 0,
+        };
+        let touched_paths = touched_paths(&mutations)?;
+        let mut transaction = Self {
+            transaction_format: TRANSACTION_FORMAT.into(),
+            address,
+            position,
+            previous_hash: head.hash.clone(),
+            process_version_before,
+            process_version_after,
+            mutations,
+            touched_paths,
+            source: source.into(),
+            resulting_root_hash,
+            transaction_hash: String::new(),
+        };
+        transaction.transaction_hash = transaction.compute_hash()?;
+        transaction.validate()?;
+        Ok(transaction)
+    }
+
+    /// Decodes and validates a canonical transaction envelope.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() > MAX_TRANSACTION_BYTES {
+            return Err(crate::Error::ResourceLimitExceeded(
+                "persistence transaction bytes",
+            ));
+        }
+        let transaction: Self = serde_json::from_slice(bytes).map_err(|_| {
+            crate::Error::InvalidPersistence("transaction encoding is invalid".into())
+        })?;
+        transaction.validate()?;
+        Ok(transaction)
+    }
+
+    /// Encodes this validated transaction for content-addressed storage.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        let bytes = serde_json::to_vec(self)
+            .map_err(|_| crate::Error::InvalidPersistence("transaction encoding failed".into()))?;
+        if bytes.len() > MAX_TRANSACTION_BYTES {
+            return Err(crate::Error::ResourceLimitExceeded(
+                "persistence transaction bytes",
+            ));
+        }
+        Ok(bytes)
+    }
+
+    /// Applies this transaction through Svit's canonical reducer.
+    pub fn replay(&self, process: &mut Process) -> Result<()> {
+        self.validate()?;
+        if process.id() != &self.address {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction address does not match process".into(),
+            ));
+        }
+        let mut candidate = process.clone();
+        candidate.apply_persisted_mutations(
+            self.process_version_before,
+            self.process_version_after,
+            &self.mutations,
+        )?;
+        if candidate.root_hash() != self.resulting_root_hash {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction reducer root hash mismatch".into(),
+            ));
+        }
+        *process = candidate;
+        Ok(())
+    }
+
+    /// Verifies that this transaction is the unique next record after `head`.
+    pub fn validate_successor(&self, head: &TransactionHead) -> Result<()> {
+        self.validate()?;
+        let expected_position = match head.position {
+            Some(position) => {
+                position
+                    .checked_add(1)
+                    .ok_or(crate::Error::ResourceLimitExceeded(
+                        "persistence transaction position",
+                    ))?
+            }
+            None => 0,
+        };
+        if self.position != expected_position || self.previous_hash != head.hash {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction sequence or predecessor is invalid".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Returns the process address.
+    pub fn address(&self) -> &ProcessId {
+        &self.address
+    }
+    /// Returns the stable address-local transaction position.
+    pub fn position(&self) -> u64 {
+        self.position
+    }
+    /// Returns the process version produced by this transaction.
+    pub fn process_version(&self) -> u64 {
+        self.process_version_after
+    }
+    /// Returns the canonical paths derived from the mutations.
+    pub fn touched_paths(&self) -> &[String] {
+        &self.touched_paths
+    }
+    /// Returns descriptive, non-authoritative source metadata.
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    /// Returns the stored ordered mutations.
+    pub fn mutations(&self) -> &[Mutation] {
+        &self.mutations
+    }
+    /// Returns the transaction integrity hash.
+    pub fn transaction_hash(&self) -> &str {
+        &self.transaction_hash
+    }
+    /// Returns the preceding base or transaction hash.
+    pub fn previous_hash(&self) -> &str {
+        &self.previous_hash
+    }
+    /// Returns the process version expected before replay.
+    pub fn process_version_before(&self) -> u64 {
+        self.process_version_before
+    }
+    /// Returns the resulting process root hash.
+    pub fn resulting_root_hash(&self) -> &str {
+        &self.resulting_root_hash
+    }
+
+    fn compute_hash(&self) -> Result<String> {
+        let bytes = serde_json::to_vec(&TransactionHashMaterial {
+            transaction_format: &self.transaction_format,
+            address: &self.address,
+            position: self.position,
+            previous_hash: &self.previous_hash,
+            process_version_before: self.process_version_before,
+            process_version_after: self.process_version_after,
+            mutations: &self.mutations,
+            touched_paths: &self.touched_paths,
+            source: &self.source,
+            resulting_root_hash: &self.resulting_root_hash,
+        })
+        .map_err(|_| crate::Error::InvalidPersistence("transaction hash encoding failed".into()))?;
+        Ok(Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect())
+    }
+
+    /// Validates the envelope, mutation projection, version step, and hash.
+    pub fn validate(&self) -> Result<()> {
+        if self.transaction_format != TRANSACTION_FORMAT {
+            return Err(crate::Error::InvalidPersistence(
+                "unsupported transaction format".into(),
+            ));
+        }
+        if self.source.is_empty() || self.source.len() > MAX_TRANSACTION_METADATA_BYTES {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction source is invalid".into(),
+            ));
+        }
+        if self.process_version_before.checked_add(1) != Some(self.process_version_after) {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction version step is invalid".into(),
+            ));
+        }
+        if self.touched_paths != touched_paths(&self.mutations)? {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction touched paths do not match mutations".into(),
+            ));
+        }
+        if self.transaction_hash != self.compute_hash()? {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction hash mismatch".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// Bounded filters for retained process transactions.
 #[derive(Clone, Debug)]
-pub struct EventQuery {
+pub struct TransactionQuery {
     pub(crate) after_position: Option<u64>,
     pub(crate) through_position: Option<u64>,
     pub(crate) path_prefix: Option<String>,
     pub(crate) source: Option<String>,
     pub(crate) process_version_from: Option<u64>,
     pub(crate) process_version_through: Option<u64>,
-    pub(crate) event_hash: Option<String>,
+    pub(crate) transaction_hash: Option<String>,
     pub(crate) limit: u32,
 }
 
-impl Default for EventQuery {
+impl Default for TransactionQuery {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl EventQuery {
-    /// Creates a query over all retained events with the default result limit.
+impl TransactionQuery {
+    /// Creates a query over all retained transactions with the default result limit.
     pub fn new() -> Self {
         Self {
             after_position: None,
@@ -91,65 +367,65 @@ impl EventQuery {
             source: None,
             process_version_from: None,
             process_version_through: None,
-            event_hash: None,
+            transaction_hash: None,
             limit: 1024,
         }
     }
 
-    /// Selects events strictly after this stable position.
+    /// Selects transactions strictly after this stable position.
     pub fn after_position(mut self, position: u64) -> Self {
         self.after_position = Some(position);
         self
     }
 
-    /// Selects events at or before this stable position.
+    /// Selects transactions at or before this stable position.
     pub fn through_position(mut self, position: u64) -> Self {
         self.through_position = Some(position);
         self
     }
 
-    /// Selects events touching this absolute path or one of its descendants.
+    /// Selects transactions touching this absolute path or one of its descendants.
     pub fn path_prefix(mut self, path: impl Into<String>) -> Self {
         self.path_prefix = Some(path.into());
         self
     }
 
-    /// Selects descriptive event-source metadata.
+    /// Selects descriptive transaction-source metadata.
     pub fn source(mut self, source: impl Into<String>) -> Self {
         self.source = Some(source.into());
         self
     }
 
-    /// Selects events producing this process version or a later one.
+    /// Selects transactions producing this process version or a later one.
     pub fn process_version_from(mut self, version: u64) -> Self {
         self.process_version_from = Some(version);
         self
     }
 
-    /// Selects events producing this process version or an earlier one.
+    /// Selects transactions producing this process version or an earlier one.
     pub fn process_version_through(mut self, version: u64) -> Self {
         self.process_version_through = Some(version);
         self
     }
 
-    /// Selects one event by its integrity hash.
-    pub fn event_hash(mut self, hash: impl Into<String>) -> Self {
-        self.event_hash = Some(hash.into());
+    /// Selects one process transaction by its integrity hash.
+    pub fn transaction_hash(mut self, hash: impl Into<String>) -> Self {
+        self.transaction_hash = Some(hash.into());
         self
     }
 
-    /// Replaces the bounded maximum number of returned events.
+    /// Replaces the bounded maximum number of returned transactions.
     pub fn limit(mut self, limit: u32) -> Self {
         self.limit = limit;
         self
     }
 
-    /// Returns the exclusive lower event-position bound.
+    /// Returns the exclusive lower transaction-position bound.
     pub fn after(&self) -> Option<u64> {
         self.after_position
     }
 
-    /// Returns the inclusive upper event-position bound.
+    /// Returns the inclusive upper transaction-position bound.
     pub fn through(&self) -> Option<u64> {
         self.through_position
     }
@@ -174,13 +450,13 @@ impl EventQuery {
         self.process_version_through
     }
 
-    /// Returns the selected exact event hash.
+    /// Returns the selected exact transaction hash.
     pub fn hash(&self) -> Option<&str> {
-        self.event_hash.as_deref()
+        self.transaction_hash.as_deref()
     }
 
-    /// Returns the requested maximum event count.
-    pub fn max_events(&self) -> u32 {
+    /// Returns the requested maximum transaction count.
+    pub fn max_transactions(&self) -> u32 {
         self.limit
     }
 }
@@ -201,22 +477,6 @@ pub trait ProcessStore: Send + Sync {
     async fn resume(&self, address: &ProcessId) -> Result<Self::Handle>;
 }
 
-/// Adapter-neutral read surface for one retained transaction event.
-pub trait PersistedEventRecord: Send + Sync {
-    /// Returns the stable address-local event position.
-    fn position(&self) -> u64;
-    /// Returns the process version produced by this event.
-    fn process_version(&self) -> u64;
-    /// Returns the canonical paths derived from the event mutations.
-    fn touched_paths(&self) -> &[String];
-    /// Returns descriptive, non-authoritative source metadata.
-    fn source(&self) -> &str;
-    /// Returns the stored ordered mutations.
-    fn mutations(&self) -> &[Mutation];
-    /// Returns the event integrity hash.
-    fn event_hash(&self) -> &str;
-}
-
 /// Adapter-neutral read surface for one on-demand persistence snapshot.
 pub trait PersistenceSnapshotRecord: Send + Sync {
     /// Returns the content hash of this store snapshot.
@@ -230,8 +490,6 @@ pub trait PersistenceSnapshotRecord: Send + Sync {
 /// Adapter-neutral operations supported by one durable process handle.
 #[async_trait]
 pub trait DurableProcessHandle: Sized + Send + Sync {
-    /// Event value returned by retained-history queries.
-    type Event: PersistedEventRecord;
     /// Snapshot descriptor returned by on-demand persistence snapshots.
     type Snapshot: PersistenceSnapshotRecord;
 
@@ -269,9 +527,9 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<Change>;
     /// Durably refreshes the descriptive built-in catalog from current host grants.
     async fn replace_builtins(&mut self, value: Value) -> Result<Change>;
-    /// Queries retained transaction events.
-    async fn query(&self, query: EventQuery) -> Result<Vec<Self::Event>>;
-    /// Persists an on-demand process snapshot at the current event boundary.
+    /// Queries retained process transactions.
+    async fn transactions(&self, query: TransactionQuery) -> Result<Vec<ProcessTransaction>>;
+    /// Persists an on-demand process snapshot at the current transaction boundary.
     async fn snapshot(&self) -> Result<Self::Snapshot>;
     /// Replaces retained history with a snapshot base when references permit it.
     async fn cut(&mut self) -> Result<()>;
@@ -284,15 +542,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn event_query_filters_are_visible_to_adapter_implementations() {
-        let query = EventQuery::new()
+    fn transaction_query_filters_are_visible_to_adapter_implementations() {
+        let query = TransactionQuery::new()
             .after_position(2)
             .through_position(9)
             .path_prefix("/memory")
             .source("activation")
             .process_version_from(3)
             .process_version_through(8)
-            .event_hash("abc")
+            .transaction_hash("abc")
             .limit(17);
 
         assert_eq!(query.after(), Some(2));
@@ -302,6 +560,49 @@ mod tests {
         assert_eq!(query.version_from(), Some(3));
         assert_eq!(query.version_through(), Some(8));
         assert_eq!(query.hash(), Some("abc"));
-        assert_eq!(query.max_events(), 17);
+        assert_eq!(query.max_transactions(), 17);
+    }
+
+    #[test]
+    fn canonical_transaction_round_trips_and_replays_without_turso() {
+        let process = Process::builder("svit://local/test/portable-transaction")
+            .unwrap()
+            .memory("status", crate::value!("new"))
+            .build()
+            .unwrap();
+        let mut candidate = process.clone();
+        let change = candidate
+            .write("/memory/status", crate::value!("ready"))
+            .unwrap();
+        let head = TransactionHead::new(None, "0".repeat(64)).unwrap();
+        let transaction = ProcessTransaction::new(
+            process.id().clone(),
+            &head,
+            process.version(),
+            candidate.version(),
+            change.mutations().to_vec(),
+            "host.write",
+            candidate.root_hash(),
+        )
+        .unwrap();
+
+        let decoded = ProcessTransaction::from_bytes(&transaction.to_bytes().unwrap()).unwrap();
+        decoded.validate_successor(&head).unwrap();
+        let mut rejected = process.clone();
+        let mut replayed = process;
+        decoded.replay(&mut replayed).unwrap();
+
+        assert_eq!(decoded, transaction);
+        assert_eq!(replayed.version(), candidate.version());
+        assert_eq!(replayed.root_hash(), candidate.root_hash());
+
+        let mut wrong_root = transaction;
+        wrong_root.resulting_root_hash = "f".repeat(64);
+        wrong_root.transaction_hash = wrong_root.compute_hash().unwrap();
+        let before_version = rejected.version();
+        let before_root_hash = rejected.root_hash();
+        assert!(wrong_root.replay(&mut rejected).is_err());
+        assert_eq!(rejected.version(), before_version);
+        assert_eq!(rejected.root_hash(), before_root_hash);
     }
 }

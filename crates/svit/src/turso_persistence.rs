@@ -9,19 +9,18 @@ use turso::transaction::{Transaction, TransactionBehavior};
 use turso::{Connection, Database, Row, Value as SqlValue, params};
 
 use crate::persistence::{
-    DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
-    ProcessStore, touched_paths,
+    DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
+    TransactionHead, TransactionQuery,
 };
 use crate::{Activation, Error, Mount, Process, ProcessId, Result, Value};
 
 const SCHEMA_VERSION: &str = "1";
 const BASE_FORMAT: &str = "svit-base@1";
-const EVENT_FORMAT: &str = "svit-transaction@1";
 const SNAPSHOT_FORMAT: &str = "svit-store-snapshot@1";
-const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
-const MAX_QUERY_EVENTS: u32 = 4096;
+const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
+const MAX_QUERY_TRANSACTIONS: u32 = 4096;
 const MAX_QUERY_TEXT_BYTES: usize = 4096;
-const MAX_REPLAY_EVENTS: usize = 100_000;
+const MAX_REPLAY_TRANSACTIONS: usize = 100_000;
 const MAX_FORK_DEPTH: usize = 64;
 
 const SCHEMA: &str = r#"
@@ -111,68 +110,6 @@ CREATE INDEX IF NOT EXISTS fork_refs_by_parent
 
 "#;
 
-/// One validated retained transaction event returned by a store query.
-#[derive(Clone, Debug, PartialEq)]
-pub struct PersistedEvent(StoredEvent);
-
-impl PersistedEvent {
-    /// Returns the stable address-local event position.
-    pub fn position(&self) -> u64 {
-        self.0.position
-    }
-
-    /// Returns the process version produced by this event.
-    pub fn process_version(&self) -> u64 {
-        self.0.process_version_after
-    }
-
-    /// Returns the canonical paths derived from this event's mutations.
-    pub fn touched_paths(&self) -> &[String] {
-        &self.0.touched_paths
-    }
-
-    /// Returns descriptive, non-authoritative source metadata.
-    pub fn source(&self) -> &str {
-        &self.0.source
-    }
-
-    /// Returns the stored ordered mutations.
-    pub fn mutations(&self) -> &[Mutation] {
-        &self.0.mutations
-    }
-
-    /// Returns the event integrity hash.
-    pub fn event_hash(&self) -> &str {
-        &self.0.event_hash
-    }
-}
-
-impl PersistedEventRecord for PersistedEvent {
-    fn position(&self) -> u64 {
-        PersistedEvent::position(self)
-    }
-
-    fn process_version(&self) -> u64 {
-        PersistedEvent::process_version(self)
-    }
-
-    fn touched_paths(&self) -> &[String] {
-        PersistedEvent::touched_paths(self)
-    }
-
-    fn source(&self) -> &str {
-        PersistedEvent::source(self)
-    }
-
-    fn mutations(&self) -> &[Mutation] {
-        PersistedEvent::mutations(self)
-    }
-
-    fn event_hash(&self) -> &str {
-        PersistedEvent::event_hash(self)
-    }
-}
-
 /// One persisted on-demand process image at an exact event boundary.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PersistenceSnapshot(StoredSnapshot);
@@ -208,113 +145,6 @@ impl PersistenceSnapshotRecord for PersistenceSnapshot {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Head {
-    position: Option<u64>,
-    hash: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StoredEvent {
-    event_format: String,
-    address: ProcessId,
-    position: u64,
-    previous_hash: String,
-    process_version_before: u64,
-    process_version_after: u64,
-    mutations: Vec<Mutation>,
-    touched_paths: Vec<String>,
-    source: String,
-    resulting_root_hash: String,
-    event_hash: String,
-}
-
-#[derive(Serialize)]
-struct EventHashMaterial<'a> {
-    event_format: &'a str,
-    address: &'a ProcessId,
-    position: u64,
-    previous_hash: &'a str,
-    process_version_before: u64,
-    process_version_after: u64,
-    mutations: &'a [Mutation],
-    touched_paths: &'a [String],
-    source: &'a str,
-    resulting_root_hash: &'a str,
-}
-
-impl StoredEvent {
-    fn new(
-        address: ProcessId,
-        head: &Head,
-        process_version_before: u64,
-        process_version_after: u64,
-        mutations: Vec<Mutation>,
-        source: impl Into<String>,
-        resulting_root_hash: String,
-    ) -> Result<Self> {
-        let position = match head.position {
-            Some(position) => position
-                .checked_add(1)
-                .ok_or(Error::ResourceLimitExceeded("persistence event position"))?,
-            None => 0,
-        };
-        let touched_paths = touched_paths(&mutations)?;
-        let mut event = Self {
-            event_format: EVENT_FORMAT.into(),
-            address,
-            position,
-            previous_hash: head.hash.clone(),
-            process_version_before,
-            process_version_after,
-            mutations,
-            touched_paths,
-            source: source.into(),
-            resulting_root_hash,
-            event_hash: String::new(),
-        };
-        event.event_hash = event.compute_hash()?;
-        event.validate()?;
-        Ok(event)
-    }
-
-    fn compute_hash(&self) -> Result<String> {
-        canonical_hash(&EventHashMaterial {
-            event_format: &self.event_format,
-            address: &self.address,
-            position: self.position,
-            previous_hash: &self.previous_hash,
-            process_version_before: self.process_version_before,
-            process_version_after: self.process_version_after,
-            mutations: &self.mutations,
-            touched_paths: &self.touched_paths,
-            source: &self.source,
-            resulting_root_hash: &self.resulting_root_hash,
-        })
-    }
-
-    fn validate(&self) -> Result<()> {
-        if self.event_format != EVENT_FORMAT {
-            return invalid("unsupported event format");
-        }
-        if self.source.is_empty() || self.source.len() > MAX_QUERY_TEXT_BYTES {
-            return invalid("event source is invalid");
-        }
-        if self.process_version_before.checked_add(1) != Some(self.process_version_after) {
-            return invalid("event version transition is invalid");
-        }
-        if self.touched_paths != touched_paths(&self.mutations)? {
-            return invalid("event touched paths do not match mutations");
-        }
-        if self.event_hash != self.compute_hash()? {
-            return invalid("event hash mismatch");
-        }
-        Ok(())
-    }
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "origin", rename_all = "snake_case", deny_unknown_fields)]
 enum BaseOrigin {
@@ -328,7 +158,7 @@ enum BaseOrigin {
 #[serde(deny_unknown_fields)]
 struct ForkBoundary {
     parent_address: ProcessId,
-    parent_head: Head,
+    parent_head: TransactionHead,
     parent_process_version: u64,
     parent_root_hash: String,
 }
@@ -425,7 +255,7 @@ struct SnapshotHashMaterial<'a> {
 }
 
 impl StoredSnapshot {
-    fn new(process: &Process, head: &Head) -> Result<Self> {
+    fn new(process: &Process, head: &TransactionHead) -> Result<Self> {
         let mut snapshot = Self {
             snapshot_format: SNAPSHOT_FORMAT.into(),
             address: process.id().clone(),
@@ -521,7 +351,7 @@ impl TursoProcessStore {
             process.root_hash(),
             origin,
         )?;
-        let head = Head {
+        let head = TransactionHead {
             position: None,
             hash: base.base_hash.clone(),
         };
@@ -609,12 +439,13 @@ impl TursoProcessStore {
         Ok(connection)
     }
 
-    async fn append(&self, expected: &Head, event: &StoredEvent) -> Result<Head> {
-        event.validate()?;
-        let event_bytes = encode(event)?;
-        if event_bytes.len() > MAX_EVENT_BYTES {
-            return Err(Error::ResourceLimitExceeded("persistence event bytes"));
-        }
+    async fn append(
+        &self,
+        expected: &TransactionHead,
+        event: &ProcessTransaction,
+    ) -> Result<TransactionHead> {
+        event.validate_successor(expected)?;
+        let event_bytes = event.to_bytes()?;
         let event_blob_hash = bytes_hash(&event_bytes);
         let mut connection = self.write_connection().await?;
         let transaction = connection.transaction().await.map_err(store_error)?;
@@ -636,7 +467,7 @@ impl TursoProcessStore {
                     to_i64(event.process_version_after)?,
                     event.source.as_str(),
                     event.resulting_root_hash.as_str(),
-                    event.event_hash.as_str(),
+                    event.transaction_hash.as_str(),
                     event_blob_hash.as_str(),
                 ],
             )
@@ -663,7 +494,7 @@ impl TursoProcessStore {
                    AND ((head_position IS NULL AND ?7 IS NULL) OR head_position = ?8)",
                 params![
                     to_i64(event.position)?,
-                    event.event_hash.as_str(),
+                    event.transaction_hash.as_str(),
                     to_i64(event.process_version_after)?,
                     event.resulting_root_hash.as_str(),
                     event.address.as_str(),
@@ -678,22 +509,28 @@ impl TursoProcessStore {
             return Err(Error::PersistenceConflict);
         }
         transaction.commit().await.map_err(store_error)?;
-        Ok(Head {
+        Ok(TransactionHead {
             position: Some(event.position),
-            hash: event.event_hash.clone(),
+            hash: event.transaction_hash.clone(),
         })
     }
 
-    async fn query(&self, address: &ProcessId, query: EventQuery) -> Result<Vec<PersistedEvent>> {
+    async fn query_transactions(
+        &self,
+        address: &ProcessId,
+        query: TransactionQuery,
+    ) -> Result<Vec<ProcessTransaction>> {
         // THREAT[TM-DOS-009]: Query text and result counts are bounded before
         // constructing a database result set.
-        if query.limit == 0 || query.limit > MAX_QUERY_EVENTS {
-            return Err(Error::ResourceLimitExceeded("persistence query events"));
+        if query.limit == 0 || query.limit > MAX_QUERY_TRANSACTIONS {
+            return Err(Error::ResourceLimitExceeded(
+                "persistence query transactions",
+            ));
         }
         if let Some(path) = query.path_prefix.as_deref() {
             validate_query_path(path)?;
         }
-        for text in [query.source.as_deref(), query.event_hash.as_deref()]
+        for text in [query.source.as_deref(), query.transaction_hash.as_deref()]
             .into_iter()
             .flatten()
         {
@@ -729,7 +566,7 @@ impl TursoProcessStore {
             sql.push_str(" AND e.process_version_after <= ?");
             parameters.push(SqlValue::Integer(to_i64(version)?));
         }
-        if let Some(hash) = query.event_hash {
+        if let Some(hash) = query.transaction_hash {
             sql.push_str(" AND e.event_hash = ?");
             parameters.push(SqlValue::Text(hash));
         }
@@ -753,11 +590,11 @@ impl TursoProcessStore {
             .map_err(store_error)?;
         let mut events = Vec::new();
         while let Some(row) = rows.next().await.map_err(store_error)? {
-            let event: StoredEvent = decode_content_addressed(&row, 0, 1, "event")?;
+            let event: ProcessTransaction = decode_content_addressed(&row, 0, 1, "event")?;
             event.validate()?;
             if event.address != *address
                 || event.position != u64_column(&row, 2)?
-                || event.event_hash != text(&row, 3)?
+                || event.transaction_hash != text(&row, 3)?
                 || event.source != text(&row, 4)?
                 || event.process_version_after != u64_column(&row, 5)?
             {
@@ -773,7 +610,7 @@ impl TursoProcessStore {
             {
                 return invalid("event path projection does not match its envelope");
             }
-            events.push(PersistedEvent(event));
+            events.push(event);
         }
         Ok(events)
     }
@@ -781,7 +618,7 @@ impl TursoProcessStore {
     async fn persist_snapshot(
         &self,
         process: &Process,
-        expected: &Head,
+        expected: &TransactionHead,
     ) -> Result<PersistenceSnapshot> {
         let snapshot = StoredSnapshot::new(process, expected)?;
         let bytes = encode(&snapshot)?;
@@ -811,7 +648,7 @@ impl TursoProcessStore {
         Ok(PersistenceSnapshot(snapshot))
     }
 
-    async fn cut(&self, process: &Process, expected: &Head) -> Result<Head> {
+    async fn cut(&self, process: &Process, expected: &TransactionHead) -> Result<TransactionHead> {
         let snapshot = StoredSnapshot::new(process, expected)?;
         let snapshot_bytes = encode(&snapshot)?;
         let snapshot_blob_hash = bytes_hash(&snapshot_bytes);
@@ -886,7 +723,7 @@ impl TursoProcessStore {
             .await
             .map_err(store_error)?;
         transaction.commit().await.map_err(store_error)?;
-        Ok(Head {
+        Ok(TransactionHead {
             position: expected.position,
             hash: base.base_hash,
         })
@@ -895,7 +732,7 @@ impl TursoProcessStore {
     async fn create_fork(
         &self,
         parent: &Process,
-        parent_head: &Head,
+        parent_head: &TransactionHead,
         child: Process,
     ) -> Result<DurableProcess> {
         let boundary = ForkBoundary {
@@ -914,7 +751,7 @@ impl TursoProcessStore {
                 parent: boundary.clone(),
             },
         )?;
-        let child_head = Head {
+        let child_head = TransactionHead {
             position: None,
             hash: base.base_hash.clone(),
         };
@@ -1035,37 +872,32 @@ impl TursoProcessStore {
                 )
                 .await
                 .map_err(store_error)?;
-            let mut expected_position = start;
-            let mut expected_hash = base.base_hash.clone();
+            let mut expected_head = TransactionHead {
+                position: base.covered_position,
+                hash: base.base_hash.clone(),
+            };
             let mut count = 0usize;
             while let Some(row) = rows.next().await.map_err(store_error)? {
                 count += 1;
-                if count > MAX_REPLAY_EVENTS {
-                    return Err(Error::ResourceLimitExceeded("persistence replay events"));
+                if count > MAX_REPLAY_TRANSACTIONS {
+                    return Err(Error::ResourceLimitExceeded(
+                        "persistence replay transactions",
+                    ));
                 }
-                let event: StoredEvent = decode_content_addressed(&row, 0, 1, "event")?;
+                let event: ProcessTransaction = decode_content_addressed(&row, 0, 1, "event")?;
                 // THREAT[TM-PERS-001]: Treat every stored event as untrusted;
                 // verify its hash chain, typed reducer, and resulting root.
-                event.validate()?;
-                if event.address != address
-                    || event.position != expected_position
-                    || event.previous_hash != expected_hash
-                    || event.process_version_before != process.version()
-                {
-                    return invalid("event sequence or predecessor is invalid");
+                event.validate_successor(&expected_head)?;
+                if event.address != address || event.process_version_before != process.version() {
+                    return invalid("transaction address or process version is invalid");
                 }
-                process.apply_persisted_mutations(
-                    event.process_version_before,
-                    event.process_version_after,
-                    &event.mutations,
-                )?;
-                if process.root_hash() != event.resulting_root_hash {
-                    return invalid("event reducer root hash mismatch");
-                }
-                expected_position += 1;
-                expected_hash = event.event_hash;
+                event.replay(&mut process)?;
+                expected_head = TransactionHead {
+                    position: Some(event.position),
+                    hash: event.transaction_hash,
+                };
             }
-            if expected_position != end + 1 || expected_hash != target.hash {
+            if expected_head.position != Some(end) || expected_head.hash != target.hash {
                 return invalid("event tail is incomplete or has the wrong head");
             }
             verify_target(process, &target)
@@ -1090,7 +922,7 @@ impl TursoProcessStore {
         Ok(SvitRow {
             base_hash: text(&row, 0)?,
             covered_position: optional_u64(&row, 1)?,
-            head: Head {
+            head: TransactionHead {
                 position: optional_u64(&row, 2)?,
                 hash: text(&row, 3)?,
             },
@@ -1146,7 +978,7 @@ impl TursoProcessStore {
 pub struct DurableProcess {
     store: TursoProcessStore,
     process: Process,
-    head: Head,
+    head: TransactionHead,
 }
 
 impl DurableProcess {
@@ -1289,7 +1121,7 @@ impl DurableProcess {
     /// Executes guest Lisp and durably publishes its exact committed write set.
     pub async fn exec(&mut self, path: &str, input: Value) -> Result<Activation> {
         let prepared = self.process.prepare_exec(path, input)?;
-        let event = StoredEvent::new(
+        let event = ProcessTransaction::new(
             self.process.id().clone(),
             &self.head,
             self.process.version(),
@@ -1311,8 +1143,10 @@ impl DurableProcess {
     }
 
     /// Queries retained transaction envelopes without executing guest code.
-    pub async fn query(&self, query: EventQuery) -> Result<Vec<PersistedEvent>> {
-        self.store.query(self.process.id(), query).await
+    pub async fn transactions(&self, query: TransactionQuery) -> Result<Vec<ProcessTransaction>> {
+        self.store
+            .query_transactions(self.process.id(), query)
+            .await
     }
 
     /// Persists an on-demand replay or migration snapshot without cutting history.
@@ -1340,7 +1174,7 @@ impl DurableProcess {
         mutations: Vec<Mutation>,
         source: &str,
     ) -> Result<()> {
-        let event = StoredEvent::new(
+        let event = ProcessTransaction::new(
             self.process.id().clone(),
             &self.head,
             self.process.version(),
@@ -1375,7 +1209,6 @@ impl ProcessStore for TursoProcessStore {
 
 #[async_trait]
 impl DurableProcessHandle for DurableProcess {
-    type Event = PersistedEvent;
     type Snapshot = PersistenceSnapshot;
 
     fn id(&self) -> &ProcessId {
@@ -1446,8 +1279,8 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::replace_builtins(self, value).await
     }
 
-    async fn query(&self, query: EventQuery) -> Result<Vec<Self::Event>> {
-        DurableProcess::query(self, query).await
+    async fn transactions(&self, query: TransactionQuery) -> Result<Vec<ProcessTransaction>> {
+        DurableProcess::transactions(self, query).await
     }
 
     async fn snapshot(&self) -> Result<Self::Snapshot> {
@@ -1466,7 +1299,7 @@ impl DurableProcessHandle for DurableProcess {
 struct SvitRow {
     base_hash: String,
     covered_position: Option<u64>,
-    head: Head,
+    head: TransactionHead,
     process_version: u64,
     root_hash: String,
 }
@@ -1546,7 +1379,7 @@ async fn insert_base(transaction: &Transaction<'_>, base: &StoredBase) -> Result
 async fn require_head(
     transaction: &Transaction<'_>,
     address: &ProcessId,
-    expected: &Head,
+    expected: &TransactionHead,
 ) -> Result<()> {
     let mut rows = transaction
         .query(
@@ -1569,7 +1402,7 @@ async fn require_head(
 async fn update_base_head(
     transaction: &Transaction<'_>,
     process: &Process,
-    expected: &Head,
+    expected: &TransactionHead,
     base: &StoredBase,
 ) -> Result<u64> {
     let expected_position = sql_position(expected.position)?;
@@ -1634,7 +1467,7 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
 }
 
 fn decode<T: for<'de> Deserialize<'de>>(bytes: &[u8], kind: &str) -> Result<T> {
-    if bytes.len() > MAX_EVENT_BYTES && kind == "event" {
+    if bytes.len() > MAX_TRANSACTION_BYTES && kind == "event" {
         return Err(Error::ResourceLimitExceeded("persistence event bytes"));
     }
     serde_json::from_slice(bytes)

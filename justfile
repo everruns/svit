@@ -16,7 +16,7 @@ test:
 # Run every deterministic acceptance example.
 examples:
     cargo run --locked -p svit --example durable_counter
-    cargo run --locked -p svit --example event_persistence
+    cargo run --locked -p svit --example transaction_persistence
     cargo run --locked -p svit --example self_authoring_library
     cargo run --locked -p svit --example atomic_outbox
     cargo run --locked -p svit --example fork_research

@@ -62,8 +62,8 @@ pub use mounts::{
     MountProvider,
 };
 pub use persistence::{
-    DurableProcessHandle, EventQuery, Mutation, PersistedEventRecord, PersistenceSnapshotRecord,
-    ProcessStore,
+    DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
+    TransactionHead, TransactionQuery,
 };
 pub use process::{
     Activation, Change, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId,
@@ -78,9 +78,7 @@ pub mod __private {
     pub use svit_macros::{compile_svit_script, validate_svit_script, validate_svit_script_file};
 }
 #[cfg(feature = "persistence-turso")]
-pub use turso_persistence::{
-    DurableProcess, PersistedEvent, PersistenceSnapshot, TursoProcessStore,
-};
+pub use turso_persistence::{DurableProcess, PersistenceSnapshot, TursoProcessStore};
 /// Enabled-by-default local persistence adapter.
 #[cfg(feature = "persistence-turso")]
 pub type DefaultProcessStore = TursoProcessStore;
