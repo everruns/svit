@@ -159,7 +159,7 @@ and request receipt. If that atomic storage transaction is not implemented, the
 host may claim compare-and-swap safety but not durable result replay across a
 crash. The adopted event boundary is implemented for `DurableProcess`, but
 atomic control receipts remain under implementation as specified in
-[Single-Svit Event Persistence](../foundations/persistence.md).
+[Single-Svit Process Transaction Persistence](../foundations/persistence.md).
 
 Receipt lookup is part of the authorized operation. A remote host must
 authenticate and authorize the caller before checking a receipt, then partition

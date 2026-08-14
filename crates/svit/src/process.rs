@@ -897,7 +897,6 @@ impl Process {
         })
     }
 
-    #[cfg(feature = "persistence-turso")]
     pub(crate) fn apply_persisted_mutations(
         &mut self,
         version_before: u64,
@@ -2243,7 +2242,6 @@ fn set_value_path(root: &mut Value, path: &str, value: Value) -> Result<()> {
     }
 }
 
-#[cfg(feature = "persistence-turso")]
 fn apply_mutation(root: &mut Value, mutation: &Mutation) -> Result<()> {
     match mutation {
         Mutation::Set { path, value } => {
@@ -2288,7 +2286,6 @@ fn apply_mutation(root: &mut Value, mutation: &Mutation) -> Result<()> {
     }
 }
 
-#[cfg(feature = "persistence-turso")]
 fn persisted_path(path: &str) -> Result<&str> {
     let path = path
         .strip_prefix('/')
@@ -2301,7 +2298,6 @@ fn persisted_path(path: &str) -> Result<&str> {
     Ok(path)
 }
 
-#[cfg(feature = "persistence-turso")]
 fn value_path_mut<'a>(root: &'a mut Value, path: &str) -> Result<&'a mut Value> {
     let mut current = root;
     for segment in path.split('/') {

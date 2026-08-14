@@ -1,7 +1,7 @@
 #![cfg(feature = "persistence-turso")]
 
 use svit::{
-    DurableProcessHandle, Error, EventQuery, Mount, Process, ProcessId, ProcessStore, Script,
+    DurableProcessHandle, Error, Mount, Process, ProcessId, ProcessStore, Script, TransactionQuery,
     TursoProcessStore, Value, value,
 };
 
@@ -15,7 +15,7 @@ const COUNTER: &str = r#"
 "#;
 
 #[tokio::test]
-async fn committed_events_resume_without_reexecuting_guest_code() {
+async fn committed_transactions_resume_without_reexecuting_guest_code() {
     let store = TursoProcessStore::memory().await.unwrap();
     let process = Process::builder("svit://local/persistence/resume")
         .unwrap()
@@ -42,7 +42,7 @@ async fn committed_events_resume_without_reexecuting_guest_code() {
     assert_eq!(resumed.read("/memory/last").unwrap(), Some(value!(2)));
 
     let events = resumed
-        .query(EventQuery::new().path_prefix("/memory"))
+        .transactions(TransactionQuery::new().path_prefix("/memory"))
         .await
         .unwrap();
     assert_eq!(events.len(), 1);
@@ -105,13 +105,22 @@ async fn importing_a_current_boundary_preserves_state_and_starts_a_new_tail() {
         imported.read("/memory/state").unwrap(),
         Some(value!("current"))
     );
-    assert!(imported.query(EventQuery::new()).await.unwrap().is_empty());
+    assert!(
+        imported
+            .transactions(TransactionQuery::new())
+            .await
+            .unwrap()
+            .is_empty()
+    );
 
     imported
         .write("/memory/after-import", value!(true))
         .await
         .unwrap();
-    let tail = imported.query(EventQuery::new()).await.unwrap();
+    let tail = imported
+        .transactions(TransactionQuery::new())
+        .await
+        .unwrap();
     assert_eq!(tail.len(), 1);
     assert_eq!(tail[0].position(), 0);
     assert_eq!(tail[0].process_version(), expected_version + 1);
@@ -160,14 +169,14 @@ async fn fork_references_history_until_the_child_is_cut() {
     );
     assert!(
         resumed_parent
-            .query(EventQuery::new())
+            .transactions(TransactionQuery::new())
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
         resumed_child
-            .query(EventQuery::new())
+            .transactions(TransactionQuery::new())
             .await
             .unwrap()
             .is_empty()
@@ -176,7 +185,7 @@ async fn fork_references_history_until_the_child_is_cut() {
 
 #[tokio::test]
 // THREAT[TM-DOS-009]
-async fn event_queries_fail_closed_outside_the_result_bound() {
+async fn transaction_queries_fail_closed_outside_the_result_bound() {
     let store = TursoProcessStore::memory().await.unwrap();
     let process = Process::builder("svit://local/persistence/query-limit")
         .unwrap()
@@ -185,8 +194,12 @@ async fn event_queries_fail_closed_outside_the_result_bound() {
     let durable = store.create(process).await.unwrap();
 
     assert!(matches!(
-        durable.query(EventQuery::new().limit(4097)).await,
-        Err(Error::ResourceLimitExceeded("persistence query events"))
+        durable
+            .transactions(TransactionQuery::new().limit(4097))
+            .await,
+        Err(Error::ResourceLimitExceeded(
+            "persistence query transactions"
+        ))
     ));
 }
 
@@ -217,7 +230,7 @@ async fn stale_writer_cannot_publish_or_mutate_its_local_process() {
 }
 
 #[tokio::test]
-async fn every_process_transition_has_a_replayable_uniform_event() {
+async fn every_process_transition_has_a_replayable_uniform_transaction() {
     let store = TursoProcessStore::memory().await.unwrap();
     let process = Process::builder("svit://local/persistence/mutations")
         .unwrap()
@@ -245,12 +258,12 @@ async fn every_process_transition_has_a_replayable_uniform_event() {
     let expected_hash = durable.root_hash();
     let expected_version = durable.version();
 
-    let all = durable.query(EventQuery::new()).await.unwrap();
+    let all = durable.transactions(TransactionQuery::new()).await.unwrap();
     assert_eq!(all.len(), 4);
     assert!(all[1].mutations().is_empty());
     let selected = durable
-        .query(
-            EventQuery::new()
+        .transactions(
+            TransactionQuery::new()
                 .process_version_from(2)
                 .process_version_through(3)
                 .path_prefix("/inbox"),
@@ -259,7 +272,7 @@ async fn every_process_transition_has_a_replayable_uniform_event() {
         .unwrap();
     assert_eq!(selected.len(), 1);
     let by_hash = durable
-        .query(EventQuery::new().event_hash(all[0].event_hash()))
+        .transactions(TransactionQuery::new().transaction_hash(all[0].transaction_hash()))
         .await
         .unwrap();
     assert_eq!(by_hash, vec![all[0].clone()]);

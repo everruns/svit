@@ -53,13 +53,14 @@ the boundary.
 | --- | --- |
 | Value model | Bounded serializable guest values with deterministic encoding |
 | Process | Address, version, committed root, limits, and lifecycle operations |
-| Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with durable events under host-managed `/thread` |
+| Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with canonical events under host-managed `/thread` |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
 | Mounts | Virtual external namespaces resolved lazily through host-attached providers, with committed descriptors, node facts, and granted access |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
+| Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, snapshots, forks, cuts, recovery, and fencing |
 | Built-ins | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
 
 The current workspace implements the process and process-owned reasoning loop in
@@ -89,7 +90,9 @@ advanced Everruns host: it composes the compact single-session host builder and
 `HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
 history from that canonical log. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
-read projection only after storage accepts the event. Svit's standard built-in setup derives local
+read projection only after storage accepts the process transaction. Agent
+events are appended values within those transactions, never a second
+persistence stream. Svit's standard built-in setup derives local
 `search` and `jq` plus model-backed `llm` and `spawn` from the instance
 configuration. Lampa selects that standard registry without additional HTTP
 policy; selecting the complete research registry explicitly grants unrestricted
@@ -161,7 +164,7 @@ Module names may evolve; the ownership boundary is the decision.
 
 Schedulers, durable effect delivery, read-through or writable projections,
 reasoning/control integration for the implemented
-[single-Svit event persistence](persistence.md) adapter, distributed routing,
+[single-Svit process transaction persistence](persistence.md) adapter, distributed routing,
 auth services, migrations
 between hosts, and production Wasm/OS isolation are outside this slice. See
 [Limitations](../operations/limitations.md).

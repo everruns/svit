@@ -541,7 +541,7 @@ touched paths, resulting root hash, and event hash. On-demand snapshots bound
 replay, detach forks, support migration, and establish safe history cuts; they
 are not written per transition. Host authority is never serialized. The exact
 resume, fork, query, snapshot, cut, crash, and S3 contracts are defined in
-[Single-Svit Event Persistence](../foundations/persistence.md).
+[Single-Svit Process Transaction Persistence](../foundations/persistence.md).
 
 Process history and an agent conversation history are related but distinct.
 Svit should not hide its state mutations inside model chat messages. An agent

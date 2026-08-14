@@ -2,6 +2,18 @@
 
 ## 2026-08-13
 
+* **One persistence stream**: Named the sole address-keyed envelope
+  `ProcessTransaction`; canonical Everruns events remain values appended under
+  `/thread/events`, with `/thread/messages` committed as their checked
+  projection rather than as a second log.
+* **Adapter contract**: Made transaction construction, canonical encoding,
+  decoding, integrity validation, and replay available independently of Turso
+  through `ProcessTransaction`, `TransactionHead`, and `TransactionQuery`.
+  Storage CAS, fencing, ambiguous-write recovery, forks, cuts, and snapshot
+  evidence remain adapter obligations (`L-041`).
+* **Durability claim boundary**: Documented the S3 conditional-head mapping and
+  kept distributed Durable Object guarantees, durable control receipts, and
+  formal/model-checked evidence explicitly under implementation.
 * **Compile-checked script embedding**: Added `svit_script!` for direct Lisp
   forms, source string literals, and package-relative files. It catches Lisp
   parser/compiler failures during the Rust build while leaving configured

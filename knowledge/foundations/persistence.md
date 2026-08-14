@@ -1,7 +1,7 @@
 ---
 type: Architecture
-title: Single-Svit Event Persistence
-description: Turso-backed address-keyed transaction events with resume, fork, query, snapshot, and cut semantics.
+title: Single-Svit Process Transaction Persistence
+description: Address-keyed process transactions with Turso replay, fork, query, snapshot, and cut semantics.
 tags:
   - svit
   - persistence
@@ -10,7 +10,7 @@ tags:
   - sqlite
 ---
 
-# Single-Svit Event Persistence
+# Single-Svit Process Transaction Persistence
 
 ## Status
 
@@ -32,21 +32,48 @@ One persistence model must provide all of these properties:
 | Forkable | Create a child base from an exact committed parent position without copying the full parent state |
 | Snapshot-capable | Materialize an on-demand state image for replay acceleration, migration, fork detachment, or a history cut |
 | Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the process root and runnable reasoning, but not receipts |
-| Uniform | Persist one Svit transaction event type; reasoning is not a second event system or special agent event kind |
-| Queryable | Stream retained events by position, process version, touched path, source metadata, receipt key, or hash without replaying guest code |
+| Uniform | Persist one `ProcessTransaction` type; reasoning is not a second persistence stream or special transaction kind |
+| Queryable | Stream retained transactions by position, process version, touched path, source metadata, receipt key, or hash without replaying guest code |
 | Cuttable | Replace a retained prefix with a validated base snapshot, keep positions stable, and delete old data only when no fork references it |
+
+## Safety model and proof boundary
+
+For one address, define durable state as `(base, transactions, head)` today and
+as `(base, transactions, head, receipts, owner_epoch)` once control receipts
+and distributed ownership are implemented. A process commit is admissible only
+when its envelope is a valid successor of the observed head, its before-version
+matches the reconstructed process, and—on a distributed adapter—its fencing
+epoch is current. The linearization point is the atomic conditional update of
+the address head after immutable content has been written.
+
+Under atomic head CAS, immutable object reads, collision-resistant SHA-256, and
+a deterministic validated reducer, the intended safety argument is:
+
+1. two commits from the same observed head cannot both become reachable;
+2. every reachable head names one hash-linked prefix with no gaps;
+3. replay of that prefix produces one process version and root hash;
+4. agent events and their message projection become reachable together because
+   both are mutations in one `ProcessTransaction`; and
+5. a runtime publishes a candidate only after the storage linearization point.
+
+These are specified obligations, not a completed mathematical proof. The local
+Turso tests exercise head conflicts, atomic rows, replay, and reasoning
+projection coherence. An S3 implementation must additionally test or formally
+model conditional-write linearizability, stale-owner fencing, ambiguous
+success responses, orphan objects, and recovery. Durable receipts must join the
+same reachable state before the model covers complete control-plane retries.
 
 ## Decision
 
 Persist one Svit as an immutable base plus an append-only tail of uniform
-transaction events:
+process transactions:
 
 ```text
-Svit(address) = Base(address, covered_through) + Events(covered_through + 1 ... head)
+Svit(address) = Base(address, covered_through) + Transactions(covered_through + 1 ... head)
 ```
 
 The first durable adapter uses one local Turso database, partitioned by Svit
-address. It stores indexed event envelopes, immutable bases, snapshots,
+address. It stores indexed transaction envelopes, immutable bases, snapshots,
 content-addressed payload blobs, and fork references. It does not write a
 complete process snapshot on every commit. Materialized receipt state remains
 under implementation.
@@ -54,7 +81,7 @@ under implementation.
 A deterministic reducer reconstructs the current process root and process
 version. Receipt reconstruction remains under implementation. Replay never
 reruns guest Lisp, model calls, HTTP, built-ins, or other external effects.
-Events describe the validated result of a committed transaction, not a command
+Transactions describe the validated result of a committed transition, not a command
 that might behave differently when repeated.
 
 The logical store contract is:
@@ -62,8 +89,8 @@ The logical store contract is:
 ```text
 create(address, base)                                      -> empty tail
 load_base(address)                                        -> base
-read_events(address, after_position, query)               -> ordered events
-append(address, expected_head, event)                      -> new head | conflict
+read_transactions(address, after_position, query)         -> ordered transactions
+append(address, expected_head, transaction)                -> new head | conflict
 install_base(address, expected_head, new_base)             -> same state, new epoch
 ```
 
@@ -73,8 +100,8 @@ compare-and-swap operations for one address.
 
 A head is `(position: Option<u64>, hash)`. With an empty tail its position is
 null and its hash is the active immutable base hash. Otherwise it names the
-last event position and hash. This makes an initial Svit and a newly forked Svit
-valid CAS sources before either has emitted an event.
+last transaction position and hash. This makes an initial Svit and a newly
+forked Svit valid CAS sources before either has emitted a transaction.
 
 The expanded requirements make a transactional database the better local
 adapter. Resume needs ordered range reads; query needs indexes; fork needs
@@ -99,18 +126,22 @@ placing a live database file in object storage.
 
 The public Rust boundary is adapter-neutral: `ProcessStore` creates a
 version-zero process, imports an existing current-state boundary, or resumes an
-associated `DurableProcessHandle`; event and snapshot results implement
-`PersistedEventRecord` and `PersistenceSnapshotRecord`. Import preserves the
-process version and root hash but starts a new retained-history tail. The
-concrete local types are exported only with the enabled-by-default
-`persistence-turso` Cargo feature. `DefaultProcessStore` is then an alias for
-`TursoProcessStore`. Disabling default features leaves the traits, event query,
-mutations, and core process runtime available without the Turso dependency.
+associated `DurableProcessHandle`. Every adapter returns the same concrete
+`ProcessTransaction` envelope from `transactions`; `TransactionHead` supplies
+the address-local CAS identity, and `TransactionQuery` supplies bounded reads.
+`ProcessTransaction::new`, `to_bytes`, `from_bytes`, `validate`, and `replay`
+centralize envelope construction, integrity checking, and reduction so an S3
+adapter cannot silently invent different replay semantics. Snapshot results
+implement `PersistenceSnapshotRecord`. Import preserves the process version
+and root hash but starts a new retained-history tail. The concrete local handle
+and snapshot types are exported only with the enabled-by-default
+`persistence-turso` Cargo feature. Disabling it leaves the persistence contract
+and core runtime available without Turso.
 The independent `turso-mount` feature controls Turso query snapshot imports.
 
 ## Base
 
-A base establishes the state before its event tail. It contains:
+A base establishes the state before its transaction tail. It contains:
 
 ```text
 base_format                 "svit-base@1"
@@ -130,8 +161,8 @@ Origins have exact meanings:
   mount providers are host runtime state and are never persisted;
 - `imported` contains one validated current process snapshot at its existing
   version. It establishes a new history boundary and makes no claim about the
-  source store's discarded event tail or fork references (`L-046`);
-- `fork` references an exact parent address, position, event hash, and root
+  source store's discarded transaction tail or fork references (`L-046`);
+- `fork` references an exact parent address, position, transaction hash, and root
   hash, then applies child identity, lineage, and empty Lisp-outbox rules;
 - `snapshot` references a validated store snapshot produced for replay
   acceleration, fork detachment, migration, or a cut.
@@ -140,16 +171,17 @@ Base payloads use the same content-addressed envelope storage as events. A base
 hash is integrity metadata, not writer authentication. Receipt state in bases
 remains under implementation.
 
-## One uniform transaction event
+## One process transaction stream
 
 There are no separate memory, activation, inbox, thread, or agent event kinds.
-Every tail record is a `svit-transaction@1` envelope:
+Every tail record is one `ProcessTransaction`, encoded as a
+`svit-transaction@1` envelope:
 
 ```text
 event_format             "svit-transaction@1"
 address                  exact ProcessId string
 position                 stable zero-based position in this address stream
-previous_hash            active base hash for the first tail event, otherwise prior event hash
+previous_hash            active base hash for the first tail transaction, otherwise prior transaction hash
 process_version_before   committed process version before the transaction
 process_version_after    resulting process version
 mutations                ordered process-tree mutations
@@ -240,8 +272,9 @@ catalog-refresh transaction.
 
 Prior conversation state is never rewritten into later records. Query metadata
 may say `source: reasoning`, but the reducer sees the same `append` operations
-used for any other process array. Svit therefore persists one event stream, not
-an agent event stream beside a memory event stream.
+used for any other process array. Svit therefore persists one process
+transaction stream. The agent sequence inside `/thread/events` is nested data,
+not a second storage stream.
 
 Agent event commits and Lisp activations remain separate process transactions
 around external model and built-in calls. Uniform persistence does not make a
@@ -308,7 +341,7 @@ Fork creates a child base referencing an exact committed parent view:
 ```text
 parent_address
 parent_position       null when the parent tail is empty
-parent_head_hash      parent base hash when empty, otherwise last event hash
+parent_head_hash      parent base hash when empty, otherwise last transaction hash
 parent_root_hash
 ```
 
@@ -344,7 +377,7 @@ live observers, executing stacks, or uncommitted work.
 
 Snapshots serve four concrete purposes:
 
-1. bound replay work for a long event tail;
+1. bound replay work for a long transaction tail;
 2. detach a fork from parent history;
 3. package one Svit for migration or backup;
 4. establish the new base for a history cut.
@@ -367,12 +400,12 @@ process-version range
 touched path or path prefix
 source metadata or application tag
 receipt client/request key
-event hash
+transaction hash
 include or omit mutation payloads
 ```
 
 The implemented API supports position range, process-version range, exact
-event hash, exact source, canonical path prefix, and a bounded result limit.
+transaction hash, exact source, canonical path prefix, and a bounded result limit.
 Receipt predicates and metadata-only payload omission are under implementation.
 
 `touched_paths` is derived canonically from `mutations` and checked during
@@ -380,8 +413,8 @@ replay, so it cannot drift from the actual change. Queries can inspect envelope
 metadata without resolving large blobs. Including payloads resolves and
 validates them under explicit query byte limits.
 
-The Turso adapter uses ordinary indexes over event position, process version,
-source, event hash, and the normalized `event_paths` projection. Envelope and
+The Turso adapter uses ordinary indexes over transaction position, process version,
+source, transaction hash, and the normalized `event_paths` projection. Envelope and
 mutation bytes remain the authoritative history; `event_paths` is derived from
 each validated envelope. Queries decode and validate returned event BLOBs
 rather than exposing arbitrary SQL over guest values.
@@ -406,7 +439,7 @@ is quiescent. One Turso transaction:
 6. Resume at the old head position plus one with `previous_hash` set to the new
    base hash. Unreachable blobs are reclaimed only by later verified GC.
 
-Cut does not change process version, root hash, or event positions. The new
+Cut does not change process version, root hash, or transaction positions. The new
 base records the prior anchor event, and the next event binds to that base hash.
 Cut changes retention, so it is a storage lifecycle operation rather than a
 process transaction event.
@@ -432,7 +465,7 @@ The initial normalized schema is:
 | `blobs` | Authoritative payload storage | Content-addressed canonical bytes keyed by SHA-256 |
 | `snapshots` | Authoritative when selected as a base | On-demand process images at exact event boundaries |
 | `fork_refs` | Authoritative lifecycle metadata | Child-to-parent boundary references that prevent unsafe cuts |
-| `event_paths` | Rebuildable query projection | Canonical touched paths for each event position |
+| `event_paths` | Rebuildable query projection | Canonical touched paths for each transaction position |
 
 Canonical event, base, mutation, and snapshot encodings are stored as
 bounded BLOBs. Fields required for validation, CAS, and query are duplicated in
@@ -469,20 +502,22 @@ capability.
 
 ## S3 evolution
 
-The logical contract exposes immutable bases, blobs, ordered event reads, head
-CAS, and base installation rather than Turso connections. A future
-S3 adapter can map bases, blobs, and events to immutable objects and use one
+The logical contract exposes immutable bases, blobs, ordered transaction reads,
+head CAS, and base installation rather than Turso connections. A future S3
+adapter can map bases, blobs, and transactions to immutable objects and use one
 small head object as the serialization point:
 
 ```text
 svits/<address-hash>/bases/<base-hash>.json
-svits/<address-hash>/events/<position>-<event-hash>.json
+svits/<address-hash>/transactions/<position>-<transaction-hash>.json
 svits/<address-hash>/blobs/<sha256>
 svits/<address-hash>/head.json
 ```
 
 It writes immutable objects first, then conditionally updates `head.json`
-against its observed entity tag. S3 documents
+against its observed entity tag. `ProcessTransaction` supplies the portable
+encoding and reducer; object layout, conditional write execution, retry
+classification, and fencing remain adapter responsibilities. S3 documents
 [`If-Match` and `If-None-Match` conditional writes](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes.html)
 and [strong read-after-write consistency](https://docs.aws.amazon.com/AmazonS3/latest/userguide/Welcome.html#ConsistencyModel),
 but the adapter still needs conflict, timeout, orphan-object, deletion, and

@@ -290,14 +290,17 @@ invariants, and reconstructs a committed process. Snapshot integrity is not
 authorization or authenticity.
 
 The adopted durable-storage design reconstructs this same committed state from
-an immutable base plus one address-keyed tail of uniform transaction events.
-Event position is separate from process version because future receipt-only
-event metadata need not change process state. On-demand snapshots support bounded
-replay, detached forks, migration, and safe history cuts; they are not written
-on every commit. The local `DurableProcess` adapter implements the process and
-runnable reasoning transition slices; durable control receipts remain under
-implementation. See
-[Single-Svit Event Persistence](persistence.md).
+an immutable base plus one address-keyed tail of uniform `ProcessTransaction`
+records. Transaction position is separate from process version because future
+receipt-only metadata need not change process state. Both are separate from the
+Everruns sequence stored inside values under `/thread/events`: transaction
+position orders durable envelopes, process version orders committed roots, and
+agent sequence orders canonical reasoning events within the root. On-demand
+snapshots support bounded replay, detached forks, migration, and safe history
+cuts; they are not written on every commit. The local `DurableProcess` adapter
+implements the process and runnable reasoning transition slices; durable
+control receipts remain under implementation. See
+[Single-Svit Process Transaction Persistence](persistence.md).
 
 ## Fork
 

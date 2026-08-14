@@ -9,7 +9,7 @@ use svit::{
     SimToolCall, SimTurn, Svit, SvitError, SvitEvent, Value, llm_sim_provider, value,
 };
 #[cfg(feature = "persistence-turso")]
-use svit::{EventQuery, Mutation, TursoProcessStore};
+use svit::{Mutation, TransactionQuery, TursoProcessStore};
 
 struct FixtureHttp;
 
@@ -238,7 +238,7 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
         .resume("svit://local/persisted-reasoning")
         .await
         .unwrap();
-    let events = durable.query(EventQuery::new()).await.unwrap();
+    let events = durable.transactions(TransactionQuery::new()).await.unwrap();
     let sources = events
         .iter()
         .map(|event| event.source().to_owned())

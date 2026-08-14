@@ -62,9 +62,19 @@ authority, freshness, cost, and consistency explicitly. This lets the agent
 work through one coherent interface while the runtime preserves the real
 semantics of external state.
 
-The initial implementation keeps processes in memory and lets callers persist
-them through deterministic snapshots. Durable storage adapters and live
-projections remain part of the research direction.
+The current implementation supports both in-memory processes and a local Turso
+adapter that durably stores one address-keyed stream of process transactions.
+Each transaction can mutate any committed process state, including memory,
+scripts, inbox/outbox, canonical reasoning events, and their derived message
+projection. Agent events live under `/thread/events` inside that stream; they
+are not a second event log. Deterministic snapshots, restore, forks, bounded
+queries, and safe history cuts use the same state model.
+
+The storage contract is designed so an object store such as S3 can store
+immutable transaction objects and use a conditional head write as the commit
+point. That mapping still needs an implemented adapter, single-owner fencing,
+ambiguous-write recovery, durable control receipts, and executable distributed
+evidence before Svit can claim Durable Object semantics.
 
 ## Scriptable and self-reflective
 
@@ -120,13 +130,13 @@ The current implementation tests the smallest useful part of the idea:
 - named, self-authored Svit Lisp scripts;
 - bounded transactional activations;
 - atomic state, script, and outbox changes;
-- deterministic snapshots and isolated forks;
+- deterministic snapshots, local durable replay, and isolated forks;
 - reflection over memory and the script library;
 - no ambient filesystem, network, process, environment, clock, or randomness.
 
 The broader direction adds durable message delivery, schedules, globally
 resolved process addresses, authenticated identity, capability-controlled
-projections, durable storage, migration, structural sharing, and stronger
+projections, object-store adapters, migration, structural sharing, and stronger
 verification. Each addition must preserve a space the agent can inspect,
 script, and evolve through explicit semantics.
 
