@@ -51,8 +51,12 @@ Required for the initial vertical slice.
 - `TM-DOS-008`: the common built-in dispatcher rejects oversized extension
   output; `search` rejects oversized patterns and `jq` rejects
   recursive or generator constructs before evaluation.
+- `TM-DOS-011`: build-time recursive macro expansion fails under the compiler
+  execution or call-stack limit.
 - `TM-ESC-003`: data built-ins accept only a committed process path or
   explicit JSON; no shell, filesystem, executable, or environment input exists.
+- `TM-ESC-004`: build-time script compilation rejects module loading while
+  evaluating guest macros and constants under null I/O.
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
   mounted data remains read-only through host and guest path operations.
 - `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an

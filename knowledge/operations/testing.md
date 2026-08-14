@@ -28,6 +28,13 @@ Applies to the initial vertical slice as it is implemented.
 8. Cargo feature-matrix checks for the adapter-neutral core, Turso persistence,
    and Turso query mounts independently.
 
+Package-relative `.svit-script` files should enter Rust through
+`svit_script!(file ...)`, which catches Lisp compiler errors during
+`cargo check`. `svit_script_test!` supplies a fresh real process with the
+subject installed at `/lib/subject`; its assertion body must execute the
+activation and verify the relevant output, committed state, or rollback.
+Compile-time checking alone is not an execution test.
+
 ## Examples as acceptance tests
 
 The following scenarios execute with assertions and deterministic output under

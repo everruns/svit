@@ -5725,11 +5725,20 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
+ "svit-macros",
  "tempfile",
  "thiserror 2.0.19",
  "tokio",
  "turso",
  "url",
+]
+
+[[package]]
+name = "svit-macros"
+version = "0.1.0"
+dependencies = [
+ "ketos",
+ "syn 2.0.119",
 ]
 
 [[package]]

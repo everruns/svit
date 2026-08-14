@@ -22,18 +22,18 @@ durable_counter count=9 version=4
 The same lifecycle through the Rust API:
 
 ```rust
-use svit::{Process, Script, Value, value};
+use svit::{Process, Value, svit_script, value};
 
 fn main() -> svit::Result<()> {
     let mut process = Process::builder("svit://local/demo/counter")?
         .memory("count", value!(0))
-        .library("counter", Script::new(r#"
+        .library("counter", svit_script! {
             (define (main input)
               (let ((count (+ (read "/memory/count") (value-get input "/by"))))
                 (do
                   (write "/memory/count" count)
                   (value-map "count" count))))
-        "#))
+        })
         .build()?;
 
     let activation = process.exec("/lib/counter", value!({"by": 3}))?;
@@ -50,6 +50,62 @@ fn main() -> svit::Result<()> {
     Ok(())
 }
 ```
+
+For scripts stored outside Rust source, `svit_script!` resolves paths from the
+consuming package and reports Lisp compiler errors during `cargo check`:
+
+```rust,ignore
+let script = svit::svit_script!(file "scripts/counter.svit-script");
+```
+
+Inline programs may also use a Rust string literal when the source is generated
+or needs escaping. `svit_script_test!` defines a Rust test with a fresh process
+and installs the subject at `/lib/subject`. The test body executes real
+activations, so it can assert both output and committed state:
+
+```rust
+svit::svit_script_test!(identity_script, svit::svit_script! {
+    (define (main input) input)
+}, |process, script| {
+    let activation = process.exec(script, svit::value!({"ok": true}))?;
+    assert_eq!(activation.output, svit::value!({"ok": true}));
+});
+```
+
+Compile-time checking does not run an activation or execute ordinary top-level
+forms. The compiler may evaluate Lisp macros and constants, so it runs with
+null I/O, no module loader, and the standard Svit limits. Process construction
+still enforces configured limits, and activation tests enforce `main(input)`,
+runtime behavior, and transaction semantics.
+
+Direct source supports immutable bindings and conditional forms. There are no
+mutable `while` or `for` loops; bounded iteration uses tail recursion:
+
+```rust
+let script = svit::svit_script! {
+    (define (sum-to n acc)
+      (if (<= n 0)
+        acc
+        (sum-to (- n 1) (+ acc n))))
+
+    (define (main input)
+      (let ((n (value-get input "/n")))
+        (cond
+          ((< n 0) (value-map "error" "negative input"))
+          (else
+            (let ((total (sum-to n 0)))
+              (do
+                (write "/memory/total" total)
+                (value-map "total" total)))))))
+};
+```
+
+Function parameters and `let` bindings are activation-local. Top-level
+definitions are loaded into each fresh activation interpreter and do not carry
+state forward. Durable variables belong under `/memory` and change through
+`write` or `remove`. `if`, `cond`, `case`, `and`, and `or` provide conditional
+control; `do` sequences effects. Every recursive computation remains subject
+to the configured execution, call-stack, value-stack, and memory limits.
 
 Persist process transitions as Turso-backed events when resume, queries,
 fork references, snapshots, and cuts must survive beyond one `Process` value:

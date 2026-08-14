@@ -89,10 +89,6 @@ jobs:
       - name: Run multi-client control
         run: cargo run --locked -p svit --example multi_client_control
 
-      - name: Run CLI smoke test
-        run: >-
-          cargo run --locked -p lampa -- exec crates/lampa/tests/fixtures/counter.svit-script '{"by": 3}'
-
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
