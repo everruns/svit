@@ -12,6 +12,14 @@
 * **Build-time compiler boundary**: Compile checking uses a fresh restricted
   Ketos interpreter with null I/O, a null module loader, and bounded resources;
   added `TM-ESC-004` and `TM-DOS-011` with focused evidence.
+* **Complete commit observation**: Moved transient commit publication into the
+  shared process-state transition boundary. Host operations, reasoning tools,
+  inbox transitions, Lisp activations, thread events and metadata, and built-in
+  catalog refresh now publish after the owned read projection is current.
+* **Stable batched navigation**: Lampa retains the first selected path across
+  all commit notifications drained before a frame. Temporary ancestor rows
+  produced during invalidation can no longer replace operator selection or
+  collapse the perceived navigation context.
 * **Per-instance Lampa stores**: Each lowercase filesystem-safe instance ID now
   maps to `instances/{instance-id}/svit.db` below `LAMPA_DATA_DIR`; existing
   databases fail closed when their root address does not match.

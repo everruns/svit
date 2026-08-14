@@ -203,10 +203,14 @@ external effects cannot be rolled back with process state.
 A running Svit publishes host-only operational events. A commit event is a
 notification that state changed; it does not expose the process root. The host
 may then obtain an owned value and its version atomically through the Svit
-contract. A failure event contains only a sanitized diagnostic. These transient
-notifications do not replace the durable process event log or outbox. Each
-`events` or `outbox` call creates an independent observer behind the Svit
-contract; consumers do not receive the underlying channel implementation.
+contract. The shared process-state transition boundary publishes exactly once
+after refreshing its read projection, so host writes, reasoning-tool writes,
+inbox transitions, Lisp activations, reasoning events, metadata, and built-in
+catalog changes follow the same observer contract. A failure event contains
+only a sanitized diagnostic. These transient notifications do not replace the
+durable process event log or outbox. Each `events` or `outbox` call creates an
+independent observer behind the Svit contract; consumers do not receive the
+underlying channel implementation.
 
 `Svit::persisted` accepts any `DurableProcessHandle`. One serialized owner
 routes host writes, removals, Lisp activations, inbox transitions, reasoning

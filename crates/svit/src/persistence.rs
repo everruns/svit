@@ -258,17 +258,17 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     /// Attaches one host-selected runtime mount and durably records its descriptor.
     async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<Change>;
     /// Durably initializes Svit-owned conversation and reasoning state.
-    async fn initialize_thread_state(&mut self, value: Value) -> Result<()>;
+    async fn initialize_thread_state(&mut self, value: Value) -> Result<Change>;
     /// Durably updates thread metadata without rewriting retained history.
     async fn update_thread_metadata(
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> Result<()>;
+    ) -> Result<Change>;
     /// Durably appends one canonical reasoning event and newly derived messages.
-    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()>;
+    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<Change>;
     /// Durably refreshes the descriptive built-in catalog from current host grants.
-    async fn replace_builtins(&mut self, value: Value) -> Result<()>;
+    async fn replace_builtins(&mut self, value: Value) -> Result<Change>;
     /// Queries retained transaction events.
     async fn query(&self, query: EventQuery) -> Result<Vec<Self::Event>>;
     /// Persists an on-demand process snapshot at the current event boundary.

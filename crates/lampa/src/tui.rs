@@ -453,7 +453,12 @@ impl App {
     /// change did not name stay resolved — including mount nodes, which no
     /// event can report an external change for.
     fn refresh_process(&mut self, change: &Change) {
-        self.pending_selection = Some(self.selected().path.clone());
+        // Several commits can arrive between frames. After the first
+        // invalidation, the selected row may only be a temporary ancestor, so
+        // retain the original path until resolution restores it.
+        if self.pending_selection.is_none() {
+            self.pending_selection = Some(self.selected().path.clone());
+        }
         if change.paths().is_empty() {
             self.nodes.clear();
         } else {
@@ -2366,6 +2371,30 @@ mod tests {
 
         assert_eq!(app.selected().path, "/memory/profile");
         assert_eq!(app.version, 2);
+    }
+
+    #[test]
+    fn batched_commit_refreshes_preserve_the_original_selection() {
+        let mut app = test_app(
+            value!({
+                "inbox": [],
+                "memory": {"profile": {"name": "Ada"}},
+                "thread": {"events": []}
+            }),
+            1,
+        );
+        expand_paths(&mut app, &["/memory", "/memory/profile"]);
+        app.select("/memory/profile/name");
+
+        app.app
+            .refresh_process(&Change::notification(2, vec!["/inbox".to_owned()]));
+        app.app
+            .refresh_process(&Change::notification(3, vec!["/thread/events".to_owned()]));
+        app.app.resolve(&app.view);
+
+        assert_eq!(app.selected().path, "/memory/profile/name");
+        assert!(app.expanded.contains("/memory"));
+        assert!(app.expanded.contains("/memory/profile"));
     }
 
     #[test]

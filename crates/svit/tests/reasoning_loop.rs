@@ -354,6 +354,42 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
 }
 
 #[tokio::test]
+async fn reasoning_tool_commits_are_observed_through_the_contract() {
+    let mut svit = Svit::builder("svit://local/reasoning-tool-events")
+        .unwrap()
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call(
+                "write",
+                json!({"path": "/memory/research", "value": "complete"}),
+            ),
+            SimTurn::text("done"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+    let inbox = svit.inbox();
+    let mut outbox = svit.outbox();
+    let mut events = svit.events();
+
+    svit.start().unwrap();
+    inbox.send(Message::user("remember this")).await.unwrap();
+    outbox.recv().await.unwrap();
+    let changes = std::iter::from_fn(|| events.try_recv().ok())
+        .filter_map(|event| match event {
+            SvitEvent::Committed(change) => Some(change),
+            SvitEvent::Failed(_) => None,
+        })
+        .collect::<Vec<_>>();
+    svit.block().await.unwrap();
+
+    assert!(
+        changes
+            .iter()
+            .any(|change| change.paths() == ["/memory/research"])
+    );
+}
+
+#[tokio::test]
 async fn started_svit_processes_inbox_messages_in_commit_order() {
     let mut svit = Svit::builder("svit://local/ordered-inbox")
         .unwrap()

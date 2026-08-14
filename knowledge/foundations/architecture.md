@@ -80,8 +80,11 @@ remain an implementation detail behind those ports.
 Tree expansion and selection remain local UI state, so the TUI does not become
 another process-state owner or poll the runtime. Raw durable agent events
 remain part of the process tree; the timeline does not duplicate message
-events already rendered as chat. Svit binds the provider-visible model ID and
-host-owned provider into a credential-free `ModelSpec`. Svit is an
+events already rendered as chat. When several commits arrive before one frame,
+Lampa retains the original selected path until the refreshed ancestors resolve;
+an intermediate partial tree never replaces operator navigation state. Svit
+binds the provider-visible model ID and host-owned provider into a
+credential-free `ModelSpec`. Svit is an
 advanced Everruns host: it composes the compact single-session host builder and
 `HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
 history from that canonical log. A persisted Svit serializes every mutation

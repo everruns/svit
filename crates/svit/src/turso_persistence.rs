@@ -1248,12 +1248,11 @@ impl DurableProcess {
     }
 
     /// Durably initializes the host-managed Svit thread projection.
-    pub async fn initialize_thread_state(&mut self, value: Value) -> Result<()> {
+    pub async fn initialize_thread_state(&mut self, value: Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.initialize_thread_state(value)?;
         self.commit_change(candidate, change, "reasoning.initialize")
             .await
-            .map(|_| ())
     }
 
     /// Durably updates thread metadata without rewriting retained history.
@@ -1261,30 +1260,30 @@ impl DurableProcess {
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> Result<()> {
+    ) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.update_thread_metadata(instructions, system_prompt)?;
         self.commit_change(candidate, change, "reasoning.metadata")
             .await
-            .map(|_| ())
     }
 
     /// Durably appends one canonical reasoning event and newly derived messages.
-    pub async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()> {
+    pub async fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.append_thread_event(event, messages)?;
-        self.commit_change(candidate, change, "reasoning")
-            .await
-            .map(|_| ())
+        self.commit_change(candidate, change, "reasoning").await
     }
 
     /// Durably refreshes the descriptive built-in catalog.
-    pub async fn replace_builtins(&mut self, value: Value) -> Result<()> {
+    pub async fn replace_builtins(&mut self, value: Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
         let change = candidate.replace_builtins(value)?;
         self.commit_change(candidate, change, "builtins.refresh")
             .await
-            .map(|_| ())
     }
 
     /// Executes guest Lisp and durably publishes its exact committed write set.
@@ -1423,7 +1422,7 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::attach_mount(self, name, mount)
     }
 
-    async fn initialize_thread_state(&mut self, value: Value) -> Result<()> {
+    async fn initialize_thread_state(&mut self, value: Value) -> Result<crate::Change> {
         DurableProcess::initialize_thread_state(self, value).await
     }
 
@@ -1431,15 +1430,19 @@ impl DurableProcessHandle for DurableProcess {
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> Result<()> {
+    ) -> Result<crate::Change> {
         DurableProcess::update_thread_metadata(self, instructions, system_prompt).await
     }
 
-    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<()> {
+    async fn append_thread_event(
+        &mut self,
+        event: Value,
+        messages: Vec<Value>,
+    ) -> Result<crate::Change> {
         DurableProcess::append_thread_event(self, event, messages).await
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> Result<()> {
+    async fn replace_builtins(&mut self, value: Value) -> Result<crate::Change> {
         DurableProcess::replace_builtins(self, value).await
     }
 

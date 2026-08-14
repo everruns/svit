@@ -76,6 +76,9 @@ The following scenarios execute with assertions and deterministic output under
   completed-turn transitions. Multiple `Events` observers independently see
   the same notifications, and empty `Events` and `Outbox` observations return
   the contract's typed observer error rather than a channel-specific error.
+- model-driven writes appear in the same `Events` stream as host and inbox
+  transitions, and batched commit notifications preserve Lampa's original
+  selected path and expanded branches until the tree resolves again.
 - Lampa's render loop depends only on the Svit contract, events, inbox, and
   outbox after construction; it reads after commit notifications rather than
   polling or assembling built-in state.

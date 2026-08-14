@@ -144,7 +144,6 @@ pub struct Inbox {
     process: ProcessState,
     state: Arc<AsyncMutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
-    event_sender: broadcast::Sender<SvitEvent>,
 }
 
 /// Observer for completed messages emitted by one Svit instance.
@@ -171,6 +170,7 @@ enum RuntimeCommand {
 struct ProcessState {
     view: Arc<Mutex<Process>>,
     owner: Arc<AsyncMutex<Box<dyn ProcessOwner>>>,
+    event_sender: broadcast::Sender<SvitEvent>,
     durable: bool,
     #[cfg(test)]
     append_barrier: Option<Arc<tokio::sync::Barrier>>,
@@ -179,9 +179,11 @@ struct ProcessState {
 impl ProcessState {
     fn volatile(process: Process) -> Self {
         let view = Arc::new(Mutex::new(process.clone()));
+        let (event_sender, _) = broadcast::channel(64);
         Self {
             view,
             owner: Arc::new(AsyncMutex::new(Box::new(VolatileProcess { process }))),
+            event_sender,
             durable: false,
             #[cfg(test)]
             append_barrier: None,
@@ -190,9 +192,11 @@ impl ProcessState {
 
     fn persisted(handle: impl DurableProcessHandle + 'static) -> crate::Result<Self> {
         let process = handle.process_projection();
+        let (event_sender, _) = broadcast::channel(64);
         Ok(Self {
             view: Arc::new(Mutex::new(process)),
             owner: Arc::new(AsyncMutex::new(Box::new(PersistedProcess { handle }))),
+            event_sender,
             durable: true,
             #[cfg(test)]
             append_barrier: None,
@@ -209,10 +213,15 @@ impl ProcessState {
         self.view.clone()
     }
 
+    fn event_sender(&self) -> broadcast::Sender<SvitEvent> {
+        self.event_sender.clone()
+    }
+
     async fn write(&self, path: &str, value: Value) -> crate::Result<Change> {
         let mut owner = self.owner.lock().await;
         let change = owner.write(path, value).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
@@ -220,6 +229,7 @@ impl ProcessState {
         let mut owner = self.owner.lock().await;
         let change = owner.remove(path).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
@@ -227,6 +237,7 @@ impl ProcessState {
         let mut owner = self.owner.lock().await;
         let activation = owner.exec(path, input).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &activation_change(&activation));
         Ok(activation)
     }
 
@@ -234,6 +245,7 @@ impl ProcessState {
         let mut owner = self.owner.lock().await;
         let change = owner.enqueue_inbox(value).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
@@ -241,6 +253,7 @@ impl ProcessState {
         let mut owner = self.owner.lock().await;
         let change = owner.acknowledge_inbox(expected).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
@@ -248,13 +261,16 @@ impl ProcessState {
         let mut owner = self.owner.lock().await;
         let change = owner.attach_mount(name, mount).await?;
         self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
         Ok(change)
     }
 
     async fn initialize_thread_state(&self, value: Value) -> crate::Result<()> {
         let mut owner = self.owner.lock().await;
-        owner.initialize_thread_state(value).await?;
-        self.refresh_view(owner.as_ref())
+        let change = owner.initialize_thread_state(value).await?;
+        self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
+        Ok(())
     }
 
     async fn update_thread_metadata(
@@ -263,10 +279,12 @@ impl ProcessState {
         system_prompt: Value,
     ) -> crate::Result<()> {
         let mut owner = self.owner.lock().await;
-        owner
+        let change = owner
             .update_thread_metadata(instructions, system_prompt)
             .await?;
-        self.refresh_view(owner.as_ref())
+        self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
+        Ok(())
     }
 
     async fn append_reasoning_event(&self, request: EventRequest) -> Result<Event, EventLogError> {
@@ -312,19 +330,22 @@ impl ProcessState {
                     .and_then(|value| Value::from_json(value).map_err(event_log_append))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        owner
+        let change = owner
             .append_thread_event(event_value, message_values)
             .await
             .map_err(event_log_append)?;
         self.refresh_view(owner.as_ref())
             .map_err(event_log_append)?;
+        publish_committed(&self.event_sender, &change);
         Ok(event)
     }
 
     async fn replace_builtins(&self, value: Value) -> crate::Result<()> {
         let mut owner = self.owner.lock().await;
-        owner.replace_builtins(value).await?;
-        self.refresh_view(owner.as_ref())
+        let change = owner.replace_builtins(value).await?;
+        self.refresh_view(owner.as_ref())?;
+        publish_committed(&self.event_sender, &change);
+        Ok(())
     }
 
     fn refresh_view(&self, owner: &dyn ProcessOwner) -> crate::Result<()> {
@@ -346,18 +367,18 @@ trait ProcessOwner: Send + Sync {
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change>;
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change>;
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change>;
-    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()>;
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change>;
     async fn update_thread_metadata(
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> crate::Result<()>;
+    ) -> crate::Result<Change>;
     async fn append_thread_event(
         &mut self,
         event: Value,
         messages: Vec<Value>,
-    ) -> crate::Result<()>;
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()>;
+    ) -> crate::Result<Change>;
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change>;
 }
 
 struct VolatileProcess {
@@ -394,32 +415,29 @@ impl ProcessOwner for VolatileProcess {
         self.process.attach_mount(name, mount)
     }
 
-    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()> {
-        self.process.initialize_thread_state(value).map(|_| ())
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change> {
+        self.process.initialize_thread_state(value)
     }
 
     async fn update_thread_metadata(
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Change> {
         self.process
             .update_thread_metadata(instructions, system_prompt)
-            .map(|_| ())
     }
 
     async fn append_thread_event(
         &mut self,
         event: Value,
         messages: Vec<Value>,
-    ) -> crate::Result<()> {
-        self.process
-            .append_thread_event(event, messages)
-            .map(|_| ())
+    ) -> crate::Result<Change> {
+        self.process.append_thread_event(event, messages)
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()> {
-        self.process.replace_builtins(value).map(|_| ())
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
+        self.process.replace_builtins(value)
     }
 }
 
@@ -460,7 +478,7 @@ where
         self.handle.attach_mount(name, mount).await
     }
 
-    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<()> {
+    async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change> {
         self.handle.initialize_thread_state(value).await
     }
 
@@ -468,7 +486,7 @@ where
         &mut self,
         instructions: Value,
         system_prompt: Value,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Change> {
         self.handle
             .update_thread_metadata(instructions, system_prompt)
             .await
@@ -478,11 +496,11 @@ where
         &mut self,
         event: Value,
         messages: Vec<Value>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<Change> {
         self.handle.append_thread_event(event, messages).await
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<()> {
+    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
         self.handle.replace_builtins(value).await
     }
 }
@@ -515,7 +533,7 @@ impl Svit {
         let builtins = reasoning.builtins.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
-        let (event_sender, _) = broadcast::channel(64);
+        let event_sender = process.event_sender();
         Self {
             reasoning: Some(reasoning),
             process,
@@ -535,7 +553,6 @@ impl Svit {
             process: self.process.clone(),
             state: self.inbox_state.clone(),
             command_sender: self.command_sender.clone(),
-            event_sender: self.event_sender.clone(),
         }
     }
 
@@ -567,7 +584,7 @@ impl Svit {
         let events = self.event_sender.clone();
         let inbox_state = self.inbox_state.clone();
         self.task = Some(tokio::spawn(async move {
-            let result = run_process_loop(reasoning, receiver, outbox, events.clone()).await;
+            let result = run_process_loop(reasoning, receiver, outbox).await;
             inbox_state.lock().await.accepting = false;
             if let Err(error) = &result {
                 // THREAT[TM-INF-001]: Operational subscribers receive the same
@@ -668,9 +685,7 @@ impl Svit {
         name: impl Into<String>,
         mount: Mount,
     ) -> SvitResult<Change> {
-        let change = self.process.attach_mount(name.into(), mount).await?;
-        publish_committed(&self.event_sender, &change);
-        Ok(change)
+        Ok(self.process.attach_mount(name.into(), mount).await?)
     }
 
     /// Reads one owned value and its committed process version atomically.
@@ -685,23 +700,17 @@ impl Svit {
 
     /// Commits a host write through the process path contract.
     pub async fn write(&mut self, path: &str, value: Value) -> SvitResult<Change> {
-        let change = self.process.write(path, value).await?;
-        publish_committed(&self.event_sender, &change);
-        Ok(change)
+        Ok(self.process.write(path, value).await?)
     }
 
     /// Commits a host removal through the process path contract.
     pub async fn remove(&mut self, path: &str) -> SvitResult<Change> {
-        let change = self.process.remove(path).await?;
-        publish_committed(&self.event_sender, &change);
-        Ok(change)
+        Ok(self.process.remove(path).await?)
     }
 
     /// Executes one transactional process script by its absolute `/lib` path.
     pub async fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
-        let activation = self.process.exec(path, input).await?;
-        publish_committed(&self.event_sender, &activation_change(&activation));
-        Ok(activation)
+        Ok(self.process.exec(path, input).await?)
     }
 
     /// Returns committed Lisp message intents from process state.
@@ -816,8 +825,7 @@ impl Inbox {
         let json = serde_json::to_value(message)
             .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
         let value = Value::from_json(json)?;
-        let change = self.process.enqueue_inbox(value).await?;
-        publish_committed(&self.event_sender, &change);
+        self.process.enqueue_inbox(value).await?;
         self.command_sender
             .send(RuntimeCommand::Wake)
             .map_err(|_| SvitError::TaskFailed)?;
@@ -830,7 +838,6 @@ async fn run_process_loop(
     mut reasoning: ReasoningLoop,
     mut commands: mpsc::UnboundedReceiver<RuntimeCommand>,
     outbox: broadcast::Sender<Message>,
-    events: broadcast::Sender<SvitEvent>,
 ) -> SvitResult<ReasoningLoop> {
     loop {
         let next = {
@@ -851,8 +858,7 @@ async fn run_process_loop(
                 .filter(|message| message.role == MessageRole::Agent)
                 .cloned()
                 .ok_or(SvitError::MissingOutboxMessage)?;
-            let change = reasoning.process().acknowledge_inbox(&value).await?;
-            publish_committed(&events, &change);
+            reasoning.process().acknowledge_inbox(&value).await?;
             let _ = outbox.send(response);
             continue;
         }

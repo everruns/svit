@@ -302,12 +302,13 @@ let snapshot = svit.snapshot()?;
 Everruns `Message`, including its ordered `ContentPart` values, before waking
 the loop. `Svit::outbox` returns an `Outbox` observer that emits the durable
 assistant `Message` for each completed turn. `Svit::events` returns an `Events`
-observer for commit notifications and sanitized terminal failures. Calling
-either method again creates another observer. A host observes an owned value/version pair through
+observer for every successful process transition—including reasoning-tool
+writes—and sanitized terminal failures. Calling either method again creates
+another observer. A host observes an owned value/version pair through
 `read_versioned`; it never receives a shared mutable process-tree handle. These
-notifications do not replace the durable `/thread/events` log. `block` seals the inbox, drains committed
-messages, and joins the loop. A subagent is another `Svit` built around a fork returned by
-`svit.fork_process(child_address)`.
+notifications do not replace the durable `/thread/events` log. `block` seals
+the inbox, drains committed messages, and joins the loop. A subagent is another
+`Svit` built around a fork returned by `svit.fork_process(child_address)`.
 
 ### Built-ins
 
