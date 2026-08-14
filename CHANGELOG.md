@@ -34,8 +34,9 @@ All notable changes to Svit will be documented here.
   the current process version and root while beginning a new retained-history
   tail at the imported boundary.
 
-- Track Everruns `main` and compose the process-owned loop through the
-  `everruns-host` backend, canonical event-log, and provider/model contracts.
+- Track Everruns `main` and compose the process-owned loop through an explicit
+  `everruns-host` `HostComposition`, the canonical event-log backend, and
+  provider/model contracts.
 - Configure each reasoning loop atomically through one `Reasoner` containing
   its provider-visible model ID and Everruns provider. One-shot model calls use
   the Everruns facade internally.

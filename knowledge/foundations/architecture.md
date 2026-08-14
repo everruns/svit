@@ -87,8 +87,12 @@ an intermediate partial tree never replaces operator navigation state. Svit
 binds the provider-visible model ID and host-owned provider into a
 credential-free `ModelSpec`. Svit is an
 advanced Everruns host: it composes the compact single-session host builder and
-`HostBackends` with a process-backed `EventLog`, while Everruns rebuilds runtime
-history from that canonical log. A persisted Svit serializes every mutation
+an explicit `HostComposition` containing only the Svit capability and selected
+provider driver. The separate `HostBackends` store bundle installs Svit's
+process-backed `EventLog`, while Everruns rebuilds runtime history from that
+canonical log. `InProcessRuntime` remains Everruns' current execution mechanism
+for advanced embedders; it is kept behind the Svit contract rather than exposed
+as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
 read projection only after storage accepts the process transaction. Agent
 events are appended values within those transactions, never a second

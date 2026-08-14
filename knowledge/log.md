@@ -14,6 +14,14 @@
 * **Durability claim boundary**: Documented the S3 conditional-head mapping and
   kept distributed Durable Object guarantees, durable control receipts, and
   formal/model-checked evidence explicitly under implementation.
+* **Everruns host composition**: Advanced the pinned Everruns `main` revision
+  and made Svit's embedding boundary explicit. Svit now supplies a narrow
+  `HostComposition` containing its process capability and selected provider
+  driver; `HostBackends` remains the separate process-backed event-store
+  bundle. Everruns' still-current `InProcessRuntime` stays private behind the
+  `Svit` contract. The updated graph no longer includes the unused fetch, Bash,
+  and A2A dependency trees, so `L-039` and their stale audit and license
+  exceptions are retired.
 * **Compile-checked script embedding**: Added `svit_script!` for direct Lisp
   forms, source string literals, and package-relative files. It catches Lisp
   parser/compiler failures during the Rust build while leaving configured

@@ -671,7 +671,11 @@ maps these names one-to-one to the process API and records the resulting process
 version in the Everruns event stream. Svit supplies a process-backed Everruns
 `EventLog` through `HostBackends`: canonical events and their derived message
 projection commit under `/thread`, and Everruns rebuilds model history from the
-same log. Forking is allowed only at compatible committed boundaries.
+same log. The execution surface is a separate explicit `HostComposition`
+containing only Svit's capability and its selected provider driver. Everruns'
+current `InProcessRuntime` executes that composition behind the Svit contract;
+it is an implementation mechanism, not Svit's public runtime abstraction.
+Forking is allowed only at compatible committed boundaries.
 
 Domain agents may receive an attenuated view of the same vocabulary. The
 support workflow exposes discovery, reads, and `exec` for a host-selected

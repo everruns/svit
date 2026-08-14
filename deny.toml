@@ -17,15 +17,9 @@ exceptions = [
     { allow = ["BSD-2-Clause"], crate = "arrayref@0.3.9" },
     { allow = ["CC0-1.0"], crate = "constant_time_eq@0.1.5" },
     { allow = ["WTFPL"], crate = "terminfo@0.8.0" },
-    # The current Everruns main graph declares fetch, HTML, and Bash support from its core
-    # graph even though Svit registers none of those capabilities. Keep the
-    # additional OSI-approved licenses scoped to the exact transitive crates.
+    # Everruns' validation graph reaches this MIT-0 crate through jsonschema.
+    # Keep the additional OSI-approved license scoped to the exact dependency.
     { allow = ["MIT-0"], crate = "borrow-or-share@0.2.4" },
-    { allow = ["MPL-2.0"], crate = "cssparser@0.37.0" },
-    { allow = ["MPL-2.0"], crate = "cssparser-macros@0.7.0" },
-    { allow = ["MPL-2.0"], crate = "dtoa-short@0.3.5" },
-    { allow = ["bzip2-1.0.6"], crate = "libbz2-rs-sys@0.2.5" },
-    { allow = ["MPL-2.0"], crate = "selectors@0.38.0" },
 ]
 
 [advisories]
@@ -35,12 +29,6 @@ ignore = [
     # exceptions when Ketos is forked, replaced, or republishes its manifest.
     { id = "RUSTSEC-2026-0214", reason = "unused Ketos REPL dependency; no fixed Ketos release" },
     { id = "RUSTSEC-2026-0215", reason = "transitive unused Ketos REPL dependency; no fixed Ketos release" },
-    # Everruns core unconditionally declares fetch/A2A support. Svit does not
-    # register either capability, but the crates remain in the locked graph.
-    # Track this as L-039 and remove the exceptions when upstream makes these
-    # modules optional or replaces the dependencies.
-    { id = "RUSTSEC-2023-0051", reason = "unused Everruns fetch dependency; no fixed Everruns release" },
-    { id = "RUSTSEC-2025-0134", reason = "unused Everruns A2A dependency; no fixed Everruns release" },
 ]
 
 [bans]

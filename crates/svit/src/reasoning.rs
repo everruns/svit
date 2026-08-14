@@ -11,10 +11,13 @@ use everruns::core::events::{Event, EventData, EventRequest, ToolCompletedData};
 use everruns::core::message_retriever::InputMessage;
 use everruns::core::tools::{Tool, ToolExecutionResult, ToolResultImage};
 use everruns::core::typed_id::{EventId, MessageId, SessionId};
-use everruns::core::{AgentCapabilityConfig, AgentLoopError, ContentPart, Message, MessageRole};
+use everruns::core::{
+    AgentCapabilityConfig, AgentLoopError, ContentPart, DriverRegistry, Message, MessageRole,
+};
 use everruns_host::{
     EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest,
-    EventReader, HostBackends, InProcessRuntime, InProcessRuntimeBuilder, TurnResult,
+    EventReader, HostBackends, HostComposition, InProcessRuntime, InProcessRuntimeBuilder,
+    TurnResult,
 };
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
@@ -1174,10 +1177,18 @@ impl ReasoningLoopBuilder {
         let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
         let event_log = Arc::new(ProcessEventLog::new(process.clone()));
         let backends = HostBackends::in_memory().with_event_log(event_log);
-        // Svit is an advanced Everruns host because the application facade owns
-        // its event log. This host builder is the boundary that installs Svit's
-        // process-backed EventLog while retaining Everruns' compact session model.
+        let mut drivers = DriverRegistry::new();
+        drivers.register_provider(provider)?;
+        // Svit is an advanced Everruns host because it owns both the execution
+        // surface and canonical event log. HostComposition selects the only
+        // capability and provider driver exposed to this loop; HostBackends
+        // separately installs the process-backed EventLog used for replay.
+        let host_composition = HostComposition::builder()
+            .capability(capability)
+            .driver_registry(drivers)
+            .build();
         let runtime = InProcessRuntimeBuilder::new()
+            .host_composition(host_composition)
             .single_session(|session| {
                 session
                     .harness(process_id.as_str(), &system_prompt)
@@ -1189,10 +1200,8 @@ impl ReasoningLoopBuilder {
                     .agent_max_iterations(self.max_iterations)
                     .session_max_iterations(self.max_iterations)
             })
-            .capability(capability)
             .backends(backends)
             .model_spec(model)
-            .provider(provider)
             .build()
             .await?;
         let messages = runtime.messages(session_id).await?;
