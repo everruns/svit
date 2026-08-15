@@ -1,16 +1,20 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
 use std::time::Duration;
 
 use crossterm::event;
-use ratatui::{Terminal, TerminalOptions, Viewport};
+use ratatui::{Terminal, TerminalOptions, Viewport, buffer::Buffer};
 use svit::{
     Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value,
 };
+use tuika::components::{TreeList, TreeRow, TreeState};
+use tuika::mouse::{SelectionState, paint_selection, selected_text};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
-use tuika::term::hyperlink::HyperlinkBackend;
+use tuika::term::{clipboard, hyperlink::HyperlinkBackend};
 use tuika_codeformatters::TreeSitterHighlighter;
+
+type MemoryTreeRow = TreeRow<'static, String>;
 
 const MEMORY_WIDTH: u16 = 30;
 const FRAME_TIME: Duration = Duration::from_millis(50);
@@ -19,6 +23,7 @@ const MAX_PREVIEW_ITEMS: usize = 200;
 const MAX_PREVIEW_DEPTH: usize = 2;
 const MAX_INLINE_VALUE_BYTES: usize = 160;
 const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
+const RECENT_MESSAGES_LIMIT: usize = 500;
 /// Children shown under one directory row.
 const MAX_TREE_CHILDREN: usize = 200;
 
@@ -92,6 +97,7 @@ impl PanelBounds {
 #[derive(Clone, Debug, Default)]
 struct UiProbes {
     conversation: RectProbe,
+    transcript: RectProbe,
     memory: RectProbe,
     preview: RectProbe,
     composer: RectProbe,
@@ -111,13 +117,6 @@ fn panel_body(rect: Rect) -> Rect {
         rect.width.saturating_sub(2),
         rect.height.saturating_sub(2),
     )
-}
-
-#[derive(Clone, Debug, PartialEq)]
-struct TreeRow {
-    label: String,
-    path: String,
-    expandable: bool,
 }
 
 /// The process operations the console browses one memory tree with.
@@ -338,21 +337,26 @@ struct PreviewCache {
 
 struct App {
     focus: Focus,
-    tree: SelectState,
+    tree: TreeState<String>,
     nodes: MemoryTree,
-    expanded: BTreeSet<String>,
     memory_viewport_height: usize,
-    memory_window_start: usize,
+    memory_window: VirtualWindow,
     panel_bounds: PanelBounds,
+    selection_area: Rect,
+    selection: SelectionState,
+    pending_copy: bool,
     composer: TextInputState,
     transcript_scroll: ScrollState,
     preview_scroll: ScrollState,
     preview_content_height: usize,
     preview_cache: Option<PreviewCache>,
-    rows: Vec<TreeRow>,
+    rows: Vec<MemoryTreeRow>,
     /// A row path to reselect once the tree resolves it again.
     pending_selection: Option<String>,
     timeline: Vec<TimelineEntry>,
+    seen_message_ids: BTreeSet<String>,
+    /// Local input IDs awaiting Everruns' canonical replacement message.
+    pending_user_ids: VecDeque<String>,
     working: bool,
     failure: Option<String>,
     version: u64,
@@ -363,17 +367,23 @@ impl App {
     fn new(version: u64, model: String) -> Self {
         let mut preview_scroll = ScrollState::new();
         preview_scroll.jump_to_top();
-        let expanded = BTreeSet::from(["/".into()]);
         let nodes = MemoryTree::default();
-        let rows = tree_rows(&expanded, &nodes);
+        let mut tree = TreeState::with_selected("/".into());
+        tree.expand("/".into());
+        let rows = tree_rows(&nodes);
         Self {
             focus: Focus::Composer,
-            tree: SelectState::new(),
+            tree,
             nodes,
-            expanded,
-            memory_viewport_height: 1,
-            memory_window_start: 0,
+            // The first paint has no captured panel bounds. TreeList clamps
+            // this window to the actual allocation, then later frames retain
+            // the viewport resolved from those bounds.
+            memory_viewport_height: usize::MAX,
+            memory_window: VirtualWindow::new(1, 1, 0),
             panel_bounds: PanelBounds::default(),
+            selection_area: Rect::default(),
+            selection: SelectionState::new(),
+            pending_copy: false,
             composer: TextInputState::new(),
             transcript_scroll: ScrollState::new(),
             preview_scroll,
@@ -382,6 +392,8 @@ impl App {
             rows,
             pending_selection: None,
             timeline: Vec::new(),
+            seen_message_ids: BTreeSet::new(),
+            pending_user_ids: VecDeque::new(),
             working: false,
             failure: None,
             version,
@@ -389,14 +401,16 @@ impl App {
         }
     }
 
-    fn selected(&self) -> &TreeRow {
-        let index = self.tree.selected().unwrap_or(0).min(self.rows.len() - 1);
-        &self.rows[index]
+    fn selected(&self) -> &MemoryTreeRow {
+        self.tree
+            .selected()
+            .and_then(|path| self.rows.iter().find(|row| &row.id == path))
+            .unwrap_or_else(|| self.rows.first().expect("the memory tree has a root"))
     }
 
     fn selected_value(&self) -> &Value {
         self.nodes
-            .value(&self.selected().path)
+            .value(&self.selected().id)
             .unwrap_or(&PENDING_VALUE)
     }
 
@@ -410,16 +424,14 @@ impl App {
         self.nodes.resolve_node(view, "/");
         // Expanded paths iterate parent before child, so a directory's kind is
         // known by the time its own listing is requested.
-        for path in self.expanded.clone() {
+        for path in self.tree.expanded().cloned().collect::<Vec<_>>() {
             self.nodes.resolve_children(view, &path);
         }
-        self.rows = tree_rows(&self.expanded, &self.nodes);
+        self.rows = tree_rows(&self.nodes);
         // A commit discards every resolved node, so the row the operator was
         // reading is restored once its ancestors are listed again.
         if let Some(path) = self.pending_selection.take() {
-            self.tree
-                .select(Some(self.visible_index_or_ancestor(&path)));
-            self.keep_tree_selection_visible();
+            self.tree.select(Some(path));
         }
 
         // A row needs a value only to summarize an array item; the selected
@@ -429,25 +441,23 @@ impl App {
             .rows
             .iter()
             .filter(|row| {
-                self.nodes
-                    .node(&row.path)
-                    .is_some_and(|node| node.resident())
+                self.nodes.node(&row.id).is_some_and(|node| node.resident())
                     && self
                         .nodes
-                        .node(&parent_path(&row.path))
+                        .node(&parent_path(&row.id))
                         .is_some_and(Node::array)
             })
-            .map(|row| row.path.clone())
+            .map(|row| row.id.clone())
             .collect::<Vec<_>>();
         for path in summarized {
             self.nodes.resolve_value(view, &path);
         }
-        let selected = self.selected().path.clone();
+        let selected = self.selected().id.clone();
         self.nodes.resolve_value(view, &selected);
 
         if before != self.nodes.resolved() {
             self.preview_cache = None;
-            self.rebuild_tree(&selected);
+            self.reconcile_tree();
         }
     }
 
@@ -462,129 +472,84 @@ impl App {
         // invalidation, the selected row may only be a temporary ancestor, so
         // retain the original path until resolution restores it.
         if self.pending_selection.is_none() {
-            self.pending_selection = Some(self.selected().path.clone());
+            self.pending_selection = Some(self.selected().id.clone());
         }
         if change.paths().is_empty() {
             self.nodes.clear();
         } else {
             self.nodes.invalidate(change);
         }
-        self.rows = tree_rows(&self.expanded, &self.nodes);
+        self.rows = tree_rows(&self.nodes);
         self.preview_cache = None;
         self.version = change.version();
     }
 
     /// Drops every resolved node so the next frame reads the tree again.
     fn reload(&mut self) {
-        self.pending_selection = Some(self.selected().path.clone());
+        self.pending_selection = Some(self.selected().id.clone());
         self.nodes.clear();
-        self.rows = tree_rows(&self.expanded, &self.nodes);
+        self.rows = tree_rows(&self.nodes);
         self.preview_cache = None;
     }
 
-    fn visible_index_or_ancestor(&self, path: &str) -> usize {
-        let mut candidate = path;
-        loop {
-            if let Some(index) = self.rows.iter().position(|row| row.path == candidate) {
-                return index;
-            }
-            candidate = candidate
-                .rsplit_once('/')
-                .map(|(parent, _)| if parent.is_empty() { "/" } else { parent })
-                .unwrap_or("/");
-        }
+    fn reconcile_tree(&mut self) {
+        self.memory_window = self.tree.resolve(&self.rows, self.memory_viewport_height);
     }
 
-    fn rebuild_tree(&mut self, selected_path: &str) {
-        self.rows = tree_rows(&self.expanded, &self.nodes);
-        self.tree
-            .select(Some(self.visible_index_or_ancestor(selected_path)));
-        self.keep_tree_selection_visible();
-    }
-
-    fn toggle_selected(&mut self) {
-        let row = self.selected();
-        if !row.expandable {
-            return;
+    fn push_user(&mut self, message: Message) {
+        let id = message.id.to_string();
+        if self.push_message(message) {
+            self.pending_user_ids.push_back(id);
         }
-        let path = row.path.clone();
-        if !self.expanded.remove(&path) {
-            self.expanded.insert(path.clone());
-        }
-        self.rebuild_tree(&path);
-    }
-
-    fn collapse_or_select_parent(&mut self) {
-        let path = self.selected().path.clone();
-        if self.expanded.remove(&path) {
-            self.rebuild_tree(&path);
-            return;
-        }
-        if path == "/" {
-            return;
-        }
-        let parent = parent_path(&path);
-        if let Some(index) = self.rows.iter().position(|row| row.path == parent) {
-            self.tree.select(Some(index));
-            self.keep_tree_selection_visible();
-        }
-    }
-
-    fn expand_selected(&mut self) {
-        let row = self.selected();
-        if row.expandable && !self.expanded.contains(&row.path) {
-            let path = row.path.clone();
-            self.expanded.insert(path.clone());
-            self.rebuild_tree(&path);
-        }
-    }
-
-    fn move_tree(&mut self, distance: usize, down: bool) {
-        let selected = self.tree.selected().unwrap_or(0);
-        let next = if down {
-            selected.saturating_add(distance).min(self.rows.len() - 1)
-        } else {
-            selected.saturating_sub(distance)
-        };
-        self.tree.select(Some(next));
-        self.keep_tree_selection_visible();
-    }
-
-    fn memory_window(&self) -> VirtualWindow {
-        VirtualWindow::new(
-            self.rows.len(),
-            self.memory_viewport_height,
-            self.memory_window_start,
-        )
-    }
-
-    fn keep_tree_selection_visible(&mut self) {
-        let visible = self.memory_viewport_height.max(1).min(self.rows.len());
-        let selected = self
-            .tree
-            .selected()
-            .unwrap_or(0)
-            .min(self.rows.len().saturating_sub(1));
-        let mut start = self
-            .memory_window_start
-            .min(VirtualWindow::max_start_for(self.rows.len(), visible));
-        if selected < start {
-            start = selected;
-        } else if selected >= start.saturating_add(visible) {
-            start = selected.saturating_add(1).saturating_sub(visible);
-        }
-        self.memory_window_start = start;
-    }
-
-    fn push_user(&mut self, text: String) {
-        self.timeline
-            .push(TimelineEntry::Message(Box::new(Message::user(text))));
         self.working = true;
     }
 
-    fn push_assistant(&mut self, message: Message) {
-        self.timeline
-            .push(TimelineEntry::Message(Box::new(message)));
+    fn push_message(&mut self, message: Message) -> bool {
+        if self.reconcile_pending_user(&message) {
+            return false;
+        }
+        if self.seen_message_ids.insert(message.id.to_string()) {
+            self.clear_selection();
+            self.timeline
+                .push(TimelineEntry::Message(Box::new(message)));
+            return true;
+        }
+        false
+    }
+
+    fn reconcile_pending_user(&mut self, canonical: &Message) -> bool {
+        if canonical.role != MessageRole::User {
+            return false;
+        }
+        let Some(pending_id) = self.pending_user_ids.front() else {
+            return false;
+        };
+        let Some(TimelineEntry::Message(pending)) = self.timeline.iter_mut().find(|entry| {
+            matches!(
+                entry,
+                TimelineEntry::Message(message) if message.id.to_string() == *pending_id
+            )
+        }) else {
+            return false;
+        };
+        if pending.content != canonical.content
+            || pending.controls != canonical.controls
+            || pending.metadata != canonical.metadata
+        {
+            return false;
+        }
+
+        let pending_id = self
+            .pending_user_ids
+            .pop_front()
+            .expect("the pending user message was just resolved");
+        self.seen_message_ids.remove(&pending_id);
+        self.seen_message_ids.insert(canonical.id.to_string());
+        **pending = canonical.clone();
+        true
+    }
+
+    fn finish_turn(&mut self) {
         self.working = false;
     }
 
@@ -603,12 +568,92 @@ impl App {
             memory: probes.memory.rect(),
             preview: probes.preview.rect(),
         };
+        self.selection_area = probes.transcript.rect();
+    }
+
+    /// Routes mouse capture through Tuika's text selection before panel clicks.
+    ///
+    /// A drag must begin in the transcript. Subsequent drag and release cells
+    /// are clamped to its visible rect, while a press elsewhere clears the
+    /// highlight and remains available to the memory tree or preview.
+    fn route_selection_mouse(&mut self, mouse: &Mouse) -> bool {
+        if !mouse.plain() {
+            return false;
+        }
+        match mouse.kind {
+            MouseKind::Down(MouseButton::Left) => {
+                if !contains(self.selection_area, mouse) {
+                    self.clear_selection();
+                    return false;
+                }
+                self.focus = Focus::Composer;
+                self.pending_copy = false;
+                let _ = self.selection.handle(mouse);
+                true
+            }
+            MouseKind::Drag(MouseButton::Left) | MouseKind::Up(MouseButton::Left) => {
+                if self.selection_area.width == 0 || self.selection_area.height == 0 {
+                    return false;
+                }
+                let mut bounded = *mouse;
+                bounded.column = bounded.column.clamp(
+                    self.selection_area.x,
+                    self.selection_area.right().saturating_sub(1),
+                );
+                bounded.row = bounded.row.clamp(
+                    self.selection_area.y,
+                    self.selection_area.bottom().saturating_sub(1),
+                );
+                let changed = self.selection.handle(&bounded);
+                if changed
+                    && matches!(mouse.kind, MouseKind::Up(MouseButton::Left))
+                    && self.selection.range().is_some()
+                {
+                    self.pending_copy = true;
+                }
+                changed
+            }
+            _ => false,
+        }
+    }
+
+    fn clear_selection(&mut self) {
+        self.selection.clear();
+        self.pending_copy = false;
+    }
+
+    /// Resolves double-click selection, extracts deferred clipboard text, and
+    /// paints the active range over the finished transcript frame.
+    fn finish_selection_frame(&mut self, buffer: &mut Buffer, theme: &Theme) -> Option<String> {
+        if self.selection.resolve(buffer, self.selection_area) {
+            self.pending_copy = true;
+        }
+        let Some(range) = self.selection.range() else {
+            self.pending_copy = false;
+            return None;
+        };
+        let copied = self
+            .pending_copy
+            .then(|| selected_text(buffer, self.selection_area, range));
+        self.pending_copy = false;
+        paint_selection(
+            buffer,
+            self.selection_area,
+            range,
+            Style::default()
+                .fg(theme.selection_fg)
+                .bg(theme.selection_bg),
+        );
+        copied
     }
 
     fn route_mouse(&mut self, event: &Event) -> bool {
         let Event::Mouse(mouse) = event else {
             return false;
         };
+        if self.route_selection_mouse(mouse) {
+            return true;
+        }
         let Some(target) = self.panel_bounds.focus_at(mouse) else {
             return false;
         };
@@ -616,31 +661,39 @@ impl App {
             MouseKind::Down(MouseButton::Left) if mouse.plain() => {
                 self.focus = target;
                 if target == Focus::Memory {
-                    let selected = self.tree.selected();
-                    let first_visible = self.memory_window().start();
+                    let selected = self.tree.selected().cloned();
                     let _ = self.tree.handle_mouse(
                         event,
-                        self.rows.len(),
+                        &self.rows,
                         panel_body(self.panel_bounds.memory),
-                        first_visible,
+                        self.memory_window,
                     );
-                    if self.tree.selected() != selected {
+                    if self.tree.selected() != selected.as_ref() {
                         self.preview_scroll.jump_to_top();
                     }
-                    self.keep_tree_selection_visible();
+                    self.reconcile_tree();
                 }
                 true
             }
             MouseKind::ScrollUp | MouseKind::ScrollDown if mouse.plain() => {
+                self.clear_selection();
                 self.focus = target;
                 let down = mouse.kind == MouseKind::ScrollDown;
                 match target {
                     Focus::Memory => {
-                        let selected = self.tree.selected();
-                        self.move_tree(3, down);
-                        if self.tree.selected() != selected {
+                        let selected = self.tree.selected().cloned();
+                        let key = if down { KeyCode::Down } else { KeyCode::Up };
+                        for _ in 0..3 {
+                            let _ = self.tree.handle(
+                                &Event::Key(Key::new(key)),
+                                &self.rows,
+                                self.memory_viewport_height,
+                            );
+                        }
+                        if self.tree.selected() != selected.as_ref() {
                             self.preview_scroll.jump_to_top();
                         }
+                        self.reconcile_tree();
                     }
                     Focus::Composer => {
                         let _ = self.transcript_scroll.handle(
@@ -683,7 +736,15 @@ impl App {
                 ..
             })
         ) {
+            if self.selection.is_active() {
+                self.pending_copy = true;
+                return AppAction::Continue;
+            }
             return AppAction::Quit;
+        }
+
+        if matches!(event, Event::Key(_) | Event::Resize { .. }) {
+            self.clear_selection();
         }
 
         if matches!(
@@ -724,12 +785,8 @@ impl App {
 
         match self.focus {
             Focus::Memory => {
-                let selected = self.tree.selected();
+                let selected = self.tree.selected().cloned();
                 match event {
-                    Event::Key(Key {
-                        code: KeyCode::Enter,
-                        ..
-                    }) => self.toggle_selected(),
                     // Nothing reports an external change to a mounted source,
                     // so re-reading the tree stays a deliberate action.
                     Event::Key(Key {
@@ -737,48 +794,63 @@ impl App {
                         ..
                     }) => self.reload(),
                     Event::Key(Key {
-                        code: KeyCode::Left,
-                        ..
-                    }) => self.collapse_or_select_parent(),
-                    Event::Key(Key {
-                        code: KeyCode::Right,
-                        ..
-                    }) => self.expand_selected(),
-                    Event::Key(Key {
                         code: KeyCode::PageUp,
                         ..
                     }) => {
-                        self.move_tree(self.memory_viewport_height.saturating_sub(1).max(1), false)
+                        for _ in 0..self.memory_viewport_height.saturating_sub(1).max(1) {
+                            let _ = self.tree.handle(
+                                &Event::Key(Key::new(KeyCode::Up)),
+                                &self.rows,
+                                self.memory_viewport_height,
+                            );
+                        }
                     }
                     Event::Key(Key {
                         code: KeyCode::PageDown,
                         ..
                     }) => {
-                        self.move_tree(self.memory_viewport_height.saturating_sub(1).max(1), true)
+                        for _ in 0..self.memory_viewport_height.saturating_sub(1).max(1) {
+                            let _ = self.tree.handle(
+                                &Event::Key(Key::new(KeyCode::Down)),
+                                &self.rows,
+                                self.memory_viewport_height,
+                            );
+                        }
                     }
                     Event::Mouse(Mouse {
                         kind: MouseKind::ScrollUp,
                         ..
-                    }) => self.move_tree(3, false),
+                    }) => {
+                        for _ in 0..3 {
+                            let _ = self.tree.handle(
+                                &Event::Key(Key::new(KeyCode::Up)),
+                                &self.rows,
+                                self.memory_viewport_height,
+                            );
+                        }
+                    }
                     Event::Mouse(Mouse {
                         kind: MouseKind::ScrollDown,
                         ..
-                    }) => self.move_tree(3, true),
+                    }) => {
+                        for _ in 0..3 {
+                            let _ = self.tree.handle(
+                                &Event::Key(Key::new(KeyCode::Down)),
+                                &self.rows,
+                                self.memory_viewport_height,
+                            );
+                        }
+                    }
                     _ => {
-                        let _ = self.tree.handle_with(
-                            event,
-                            self.rows.len(),
-                            SelectNavigation {
-                                vim: true,
-                                ..SelectNavigation::default()
-                            },
-                        );
+                        let _ = self
+                            .tree
+                            .handle(event, &self.rows, self.memory_viewport_height);
                     }
                 }
-                if self.tree.selected() != selected {
+                if self.tree.selected() != selected.as_ref() {
                     self.preview_scroll.jump_to_top();
                 }
-                self.keep_tree_selection_visible();
+                self.reconcile_tree();
             }
             Focus::Composer => {
                 if matches!(
@@ -832,6 +904,13 @@ enum AppAction {
 
 pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
     let mut app = App::new(MemoryView::version(&svit), model);
+    for message in svit
+        .recent_messages(RECENT_MESSAGES_LIMIT)
+        .await
+        .map_err(|error| error.to_string())?
+    {
+        app.push_message(message);
+    }
     let inbox = svit.inbox();
     let mut events = svit.events();
     let mut outbox = svit.outbox();
@@ -865,27 +944,39 @@ async fn run_terminal(
             while let Ok(event) = events.try_recv() {
                 match event {
                     SvitEvent::Committed(change) => app.refresh_process(&change),
+                    SvitEvent::Message(message) => {
+                        app.push_message(*message);
+                    }
                     SvitEvent::Failed(error) => app.push_error(error),
                 }
             }
-            while let Ok(message) = outbox.try_recv() {
-                app.push_assistant(message);
+            let mut turn_completed = false;
+            while outbox.try_recv().is_ok() {
+                turn_completed = true;
+            }
+            if turn_completed {
+                app.finish_turn();
             }
             // The tree resolves here, once per frame, so the console fetches
             // only the nodes the visible tree and current selection need.
             app.resolve(svit);
 
+            let mut copied = None;
             terminal
                 .draw(|frame| {
                     let area = frame.area();
                     let root = build_view(app, area, &theme, &probes);
                     paint(frame.buffer_mut(), area, &theme, root.as_ref(), &[]);
+                    app.capture_panel_bounds(&probes);
+                    copied = app.finish_selection_frame(frame.buffer_mut(), &theme);
                     if let Some(position) = app.cursor(&probes) {
                         frame.set_cursor_position(position);
                     }
                 })
                 .map_err(|error| error.to_string())?;
-            app.capture_panel_bounds(&probes);
+            if let Some(text) = copied {
+                clipboard::write(&mut io::stdout(), &text).map_err(|error| error.to_string())?;
+            }
 
             if event::poll(FRAME_TIME).map_err(|error| error.to_string())?
                 && let Some(event) =
@@ -894,11 +985,12 @@ async fn run_terminal(
                 match app.handle(&event) {
                     AppAction::Continue => {}
                     AppAction::Submit(text) => {
+                        let message = Message::user(text);
                         inbox
-                            .send(Message::user(text.clone()))
+                            .send(message.clone())
                             .await
                             .map_err(|error| error.to_string())?;
-                        app.push_user(text);
+                        app.push_user(message);
                     }
                     AppAction::Quit => break,
                 }
@@ -911,21 +1003,9 @@ async fn run_terminal(
     result
 }
 
-fn tree_rows(expanded: &BTreeSet<String>, nodes: &MemoryTree) -> Vec<TreeRow> {
-    let expandable = nodes.is_directory("/");
-    let root_marker = match (expandable, expanded.contains("/")) {
-        (true, true) => "▾ ",
-        (true, false) => "▸ ",
-        (false, _) => "  ",
-    };
-    let mut rows = vec![TreeRow {
-        label: format!("{root_marker}/"),
-        path: "/".into(),
-        expandable,
-    }];
-    if expanded.contains("/") {
-        flatten_tree("/", "", true, expanded, nodes, &mut rows);
-    }
+fn tree_rows(nodes: &MemoryTree) -> Vec<MemoryTreeRow> {
+    let mut rows = vec![TreeRow::root("/".into(), "/", nodes.is_directory("/"))];
+    flatten_tree("/", 0, nodes, &mut rows);
     rows
 }
 
@@ -946,14 +1026,7 @@ fn tree_label(parent: &str, name: &str, path: &str, nodes: &MemoryTree) -> Strin
     }
 }
 
-fn flatten_tree(
-    path: &str,
-    indent: &str,
-    last_parent: bool,
-    expanded: &BTreeSet<String>,
-    nodes: &MemoryTree,
-    rows: &mut Vec<TreeRow>,
-) {
+fn flatten_tree(path: &str, depth: usize, nodes: &MemoryTree, rows: &mut Vec<MemoryTreeRow>) {
     let mut children = nodes
         .children(path)
         .iter()
@@ -972,24 +1045,15 @@ fn flatten_tree(
         ));
     }
 
-    let next_indent = format!("{indent}{}", if last_parent { "  " } else { "│ " });
-    let child_count = children.len();
-    for (index, (label, child, expandable)) in children.into_iter().enumerate() {
-        let last = index + 1 == child_count;
-        let branch = if last { "└─" } else { "├─" };
-        let marker = match (expandable, expanded.contains(&child)) {
-            (true, true) => "▾ ",
-            (true, false) => "▸ ",
-            (false, _) => "  ",
-        };
-        rows.push(TreeRow {
-            label: format!("{next_indent}{branch}{marker}{label}"),
-            path: child.clone(),
+    for (label, child, expandable) in children {
+        rows.push(TreeRow::new(
+            child.clone(),
+            Some(path.to_owned()),
+            depth + 1,
+            label,
             expandable,
-        });
-        if expanded.contains(&child) {
-            flatten_tree(&child, &next_indent, last, expanded, nodes, rows);
-        }
+        ));
+        flatten_tree(&child, depth + 1, nodes, rows);
     }
 }
 
@@ -1073,9 +1137,9 @@ fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> El
         .saturating_sub(preview_width);
     let conversation_content_width = conversation_width.saturating_sub(4).max(1);
     app.memory_viewport_height = usize::from(area.height.saturating_sub(3)).max(1);
-    app.keep_tree_selection_visible();
+    app.reconcile_tree();
     let preview_content_width = preview_width.saturating_sub(4).max(1);
-    let selected_path = app.selected().path.clone();
+    let selected_path = app.selected().id.clone();
     let cache_matches = app
         .preview_cache
         .as_ref()
@@ -1099,6 +1163,7 @@ fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> El
             probes.conversation.wrap(conversation_view(
                 app,
                 theme,
+                &probes.transcript,
                 &probes.composer,
                 conversation_content_width,
             )),
@@ -1120,22 +1185,40 @@ fn build_view(app: &mut App, area: Rect, theme: &Theme, probes: &UiProbes) -> El
     )
 }
 
+struct MemoryTreeView {
+    rows: Vec<MemoryTreeRow>,
+    state: TreeState<String>,
+    window: VirtualWindow,
+}
+
+impl View for MemoryTreeView {
+    fn measure(&self, available: Size, ctx: &RenderCtx) -> Size {
+        TreeList::new(&self.rows, &self.state)
+            .visible_window(self.window)
+            .scrollbar(true)
+            .measure(available, ctx)
+    }
+
+    fn render(&self, area: Rect, surface: &mut Surface, ctx: &RenderCtx) {
+        TreeList::new(&self.rows, &self.state)
+            .visible_window(self.window)
+            .scrollbar(true)
+            .render(area, surface, ctx);
+    }
+}
+
 fn tree_view(app: &App, theme: &Theme) -> Element {
-    let window = app.memory_window();
-    let lines = window
-        .range()
-        .map(|index| &app.rows[index])
-        .map(|row| Line::from(row.label.clone()))
-        .collect();
     let border = if app.focus == Focus::Memory {
         theme.border_focused
     } else {
         theme.border
     };
     element(
-        Boxed::new(element(
-            SelectList::windowed(lines, window, &app.tree).scrollbar(true),
-        ))
+        Boxed::new(element(MemoryTreeView {
+            rows: app.rows.clone(),
+            state: app.tree.clone(),
+            window: app.memory_window,
+        }))
         .title(" Memory ")
         .border_color(border)
         .padding(Padding::symmetric(0, 0)),
@@ -1145,13 +1228,16 @@ fn tree_view(app: &App, theme: &Theme) -> Element {
 fn conversation_view(
     app: &mut App,
     theme: &Theme,
-    probe: &RectProbe,
+    transcript_probe: &RectProbe,
+    composer_probe: &RectProbe,
     content_width: u16,
 ) -> Element {
     let lines = timeline_lines(&app.timeline, content_width, theme);
     let viewport_height = 20usize;
     app.transcript_scroll.clamp(lines.len(), viewport_height);
-    let transcript = element(Scroll::new(lines, &app.transcript_scroll).wrap(true));
+    let transcript = transcript_probe.wrap(element(
+        Scroll::new(lines, &app.transcript_scroll).wrap(true),
+    ));
 
     let input = element(
         TextInput::new(&app.composer)
@@ -1174,7 +1260,7 @@ fn conversation_view(
                     .style(Style::default().fg(theme.border)),
             ),
         )
-        .fixed(composer_height, probe.wrap(input));
+        .fixed(composer_height, composer_probe.wrap(input));
     element(
         Boxed::new(element(content))
             .border_color(border)
@@ -1564,8 +1650,31 @@ fn timeline_lines(
             theme.muted_style(),
         ))];
     }
+    // A result stores only its correlation ID. Resolve that ID against the
+    // durable call history so the UI can replace both records with one row.
+    let tool_calls = timeline_tool_calls(entries);
+    let completed_tool_calls = timeline_completed_tool_calls(entries);
     let mut lines = Vec::new();
+    let mut previous_was_tool = false;
     for entry in entries {
+        if let TimelineEntry::Message(message) = entry
+            && message_only_has_tools(message)
+        {
+            let before = lines.len();
+            append_compact_tools(
+                &mut lines,
+                message,
+                &tool_calls,
+                &completed_tool_calls,
+                theme,
+            );
+            previous_was_tool |= lines.len() != before;
+            continue;
+        }
+        if previous_was_tool {
+            lines.push(Line::default());
+            previous_was_tool = false;
+        }
         let (label, color) = match entry {
             TimelineEntry::Message(message) => match message.role {
                 MessageRole::User => ("YOU", theme.accent),
@@ -1596,13 +1705,27 @@ fn timeline_lines(
                             lines.push(Line::from("[image]"));
                         }
                         ContentPart::ToolCall(call) => {
-                            lines.push(Line::from(format!("[tool: {}]", call.name)));
+                            if !completed_tool_calls.contains(call.id.as_str()) {
+                                lines.push(compact_tool_line(
+                                    &call.name,
+                                    Some(&call.arguments),
+                                    None,
+                                    None,
+                                    false,
+                                    theme,
+                                ));
+                            }
                         }
                         ContentPart::ToolResult(result) => {
-                            lines.push(Line::from(format!(
-                                "[tool result: {}]",
-                                result.tool_call_id
-                            )));
+                            let call = tool_calls.get(result.tool_call_id.as_str()).copied();
+                            lines.push(compact_tool_line(
+                                call.map(|(name, _)| name).unwrap_or("tool"),
+                                call.map(|(_, arguments)| arguments),
+                                result.result.as_ref(),
+                                result.error.as_deref(),
+                                true,
+                                theme,
+                            ));
                         }
                     }
                 }
@@ -1614,6 +1737,308 @@ fn timeline_lines(
         lines.push(Line::default());
     }
     lines
+}
+
+type ToolCallIndex<'a> = BTreeMap<&'a str, (&'a str, &'a serde_json::Value)>;
+
+fn timeline_tool_calls(entries: &[TimelineEntry]) -> ToolCallIndex<'_> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            TimelineEntry::Message(message) => Some(message.as_ref()),
+            TimelineEntry::Event { .. } => None,
+        })
+        .flat_map(|message| message.content.iter())
+        .filter_map(|part| match part {
+            ContentPart::ToolCall(call) => {
+                Some((call.id.as_str(), (call.name.as_str(), &call.arguments)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn timeline_completed_tool_calls(entries: &[TimelineEntry]) -> BTreeSet<&str> {
+    entries
+        .iter()
+        .filter_map(|entry| match entry {
+            TimelineEntry::Message(message) => Some(message.as_ref()),
+            TimelineEntry::Event { .. } => None,
+        })
+        .flat_map(|message| message.content.iter())
+        .filter_map(|part| match part {
+            ContentPart::ToolResult(result) => Some(result.tool_call_id.as_str()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn message_only_has_tools(message: &Message) -> bool {
+    let mut has_tool = false;
+    for part in &message.content {
+        match part {
+            ContentPart::ToolCall(_) | ContentPart::ToolResult(_) => has_tool = true,
+            ContentPart::Text(part) if part.text.trim().is_empty() => {}
+            _ => return false,
+        }
+    }
+    has_tool
+}
+
+fn append_compact_tools(
+    lines: &mut Vec<Line<'static>>,
+    message: &Message,
+    tool_calls: &ToolCallIndex<'_>,
+    completed_tool_calls: &BTreeSet<&str>,
+    theme: &Theme,
+) {
+    for part in &message.content {
+        match part {
+            ContentPart::ToolCall(call) if !completed_tool_calls.contains(call.id.as_str()) => {
+                lines.push(compact_tool_line(
+                    &call.name,
+                    Some(&call.arguments),
+                    None,
+                    None,
+                    false,
+                    theme,
+                ));
+            }
+            ContentPart::ToolResult(result) => {
+                let call = tool_calls.get(result.tool_call_id.as_str()).copied();
+                lines.push(compact_tool_line(
+                    call.map(|(name, _)| name).unwrap_or("tool"),
+                    call.map(|(_, arguments)| arguments),
+                    result.result.as_ref(),
+                    result.error.as_deref(),
+                    true,
+                    theme,
+                ));
+            }
+            _ => {}
+        }
+    }
+}
+
+fn compact_tool_line(
+    name: &str,
+    arguments: Option<&serde_json::Value>,
+    result: Option<&serde_json::Value>,
+    error: Option<&str>,
+    completed: bool,
+    theme: &Theme,
+) -> Line<'static> {
+    let (marker, marker_color) = match (completed, error) {
+        (_, Some(_)) => ("✗", theme.accent_alt),
+        (true, None) => ("✓", theme.code.string),
+        (false, None) => ("…", theme.muted),
+    };
+    let mut spans = vec![
+        Span::styled("tool › ", theme.muted_style()),
+        Span::styled(marker, Style::default().fg(marker_color)),
+        Span::raw(" "),
+        Span::styled(
+            tool_display_name(name, arguments),
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ];
+    if let Some(target) = arguments.and_then(|arguments| tool_target(name, arguments)) {
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(target, theme.muted_style()));
+    }
+    let summary = match error {
+        Some(error) => Some(format!("error: {}", compact_text(error, 96))),
+        None => result.and_then(|result| tool_result_summary(name, result)),
+    };
+    if let Some(summary) = summary.filter(|summary| !summary.is_empty()) {
+        spans.push(Span::styled(" · ", theme.muted_style()));
+        spans.push(Span::styled(summary, theme.muted_style()));
+    }
+    Line::from(spans)
+}
+
+fn tool_display_name(name: &str, arguments: Option<&serde_json::Value>) -> String {
+    if name == "exec"
+        && let Some(path) = arguments
+            .and_then(|arguments| arguments.get("path"))
+            .and_then(serde_json::Value::as_str)
+        && let Some(builtin) = path.strip_prefix("/bin/")
+    {
+        return compact_text(builtin, 32);
+    }
+    compact_text(name, 32)
+}
+
+fn tool_target(name: &str, arguments: &serde_json::Value) -> Option<String> {
+    let fields = arguments.as_object()?;
+    let primary = ["path", "url", "query"]
+        .into_iter()
+        .find_map(|key| fields.get(key).and_then(serde_json::Value::as_str));
+    if name == "exec" {
+        let path = primary?;
+        let input = fields.get("input")?;
+        let input_path = input.get("path").and_then(serde_json::Value::as_str);
+        let detail = ["url", "query", "pattern", "filter", "prompt", "task"]
+            .into_iter()
+            .find_map(|key| input.get(key).and_then(serde_json::Value::as_str));
+        let method = input.get("method").and_then(serde_json::Value::as_str);
+        let mut parts = Vec::new();
+        if !path.starts_with("/bin/") {
+            parts.push(compact_text(path, 36));
+        }
+        if let Some(method) = method {
+            parts.push(compact_text(method, 8));
+        }
+        if let Some(input_path) = input_path {
+            parts.push(compact_text(input_path, 36));
+        }
+        if let Some(detail) = detail {
+            parts.push(compact_text(detail, 48));
+        }
+        return (!parts.is_empty()).then(|| compact_text(&parts.join(" "), 72));
+    }
+    if let Some(primary) = primary {
+        return Some(compact_text(primary, 72));
+    }
+    for key in ["pattern", "filter", "prompt"] {
+        if let Some(value) = fields.get(key).and_then(serde_json::Value::as_str) {
+            return Some(compact_text(value, 72));
+        }
+    }
+    None
+}
+
+fn tool_result_summary(name: &str, result: &serde_json::Value) -> Option<String> {
+    let fields = result.as_object();
+    match name {
+        "discover" => fields
+            .and_then(|fields| fields.get("entries"))
+            .and_then(serde_json::Value::as_array)
+            .map(|entries| plural(entries.len(), "entry", "entries")),
+        "read" => fields
+            .and_then(|fields| fields.get("value"))
+            .map(compact_json_summary),
+        "stat" => fields
+            .and_then(|fields| fields.get("value"))
+            .map(compact_stat_summary),
+        "write" | "remove" => fields
+            .and_then(|fields| fields.get("version"))
+            .and_then(serde_json::Value::as_u64)
+            .map(|version| format!("v{version}")),
+        "exec" => Some(compact_json_summary(result)),
+        _ => Some(compact_json_summary(result)),
+    }
+}
+
+fn compact_stat_summary(value: &serde_json::Value) -> String {
+    let Some(fields) = value.as_object() else {
+        return compact_json_summary(value);
+    };
+    let mut parts = ["kind", "locality"]
+        .into_iter()
+        .filter_map(|key| fields.get(key).and_then(serde_json::Value::as_str))
+        .map(|value| compact_text(value, 32))
+        .collect::<Vec<_>>();
+    if let Some(content) = fields
+        .get("facts")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|facts| facts.get("content"))
+        .and_then(serde_json::Value::as_str)
+    {
+        parts.push(compact_text(content, 32));
+    }
+    if parts.is_empty() {
+        compact_json_summary(value)
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn compact_json_summary(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "null".into(),
+        serde_json::Value::Bool(value) => value.to_string(),
+        serde_json::Value::Number(value) => value.to_string(),
+        serde_json::Value::String(value) => {
+            let trimmed = value.trim();
+            if matches!(trimmed.as_bytes().first(), Some(b'{') | Some(b'['))
+                && let Ok(parsed) = serde_json::from_str(trimmed)
+            {
+                return compact_json_summary(&parsed);
+            }
+            compact_text(value, 80)
+        }
+        serde_json::Value::Array(values) => plural(values.len(), "item", "items"),
+        serde_json::Value::Object(fields) => {
+            if fields.contains_key("body")
+                && let Some(status) = fields.get("status").and_then(serde_json::Value::as_u64)
+            {
+                return format!("HTTP {status}");
+            }
+            for (key, singular, plural_name) in [
+                ("entries", "entry", "entries"),
+                ("matches", "match", "matches"),
+                ("values", "value", "values"),
+                ("changed", "path", "paths"),
+            ] {
+                if let Some(values) = fields.get(key).and_then(serde_json::Value::as_array) {
+                    return plural(values.len(), singular, plural_name);
+                }
+            }
+            for key in ["output", "value", "result"] {
+                if let Some(value) = fields.get(key) {
+                    return compact_json_summary(value);
+                }
+            }
+            for key in ["id", "response"] {
+                if let Some(value) = fields.get(key).and_then(serde_json::Value::as_str) {
+                    return compact_text(value, 80);
+                }
+            }
+            if let Some(version) = fields.get("version").and_then(serde_json::Value::as_u64) {
+                return format!("v{version}");
+            }
+            if let Some(messages) = fields.get("messages").and_then(serde_json::Value::as_array) {
+                return plural(messages.len(), "message", "messages");
+            }
+            plural(fields.len(), "field", "fields")
+        }
+    }
+}
+
+fn plural(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
+fn compact_text(text: &str, max_chars: usize) -> String {
+    let mut compact = String::new();
+    let mut whitespace = false;
+    let mut truncated = false;
+    for character in text.chars() {
+        if character.is_whitespace() {
+            whitespace = !compact.is_empty();
+            continue;
+        }
+        if whitespace {
+            if compact.chars().count() >= max_chars.saturating_sub(1) {
+                truncated = true;
+                break;
+            }
+            compact.push(' ');
+            whitespace = false;
+        }
+        if compact.chars().count() >= max_chars.saturating_sub(1) {
+            truncated = true;
+            break;
+        }
+        compact.push(character);
+    }
+    if truncated {
+        compact.push('…');
+    }
+    compact
 }
 
 fn status_view(app: &App, theme: &Theme) -> Element {
@@ -1705,24 +2130,28 @@ mod tests {
             let Some(value) = self.at(path) else {
                 return Ok(None);
             };
-            let (kind, content) = match value {
-                Value::Map(_) => ("directory", "object"),
-                Value::Array(_) => ("directory", "array"),
-                Value::String(_) => ("leaf", "text/plain"),
-                Value::Script(_) => ("leaf", "svit-script"),
-                _ => ("leaf", "scalar"),
+            let (kind, content, entries) = match value {
+                Value::Map(values) => ("directory", "object", Some(values.len())),
+                Value::Array(values) => ("directory", "array", Some(values.len())),
+                Value::String(_) => ("leaf", "text/plain", None),
+                Value::Script(_) => ("leaf", "svit-script", None),
+                _ => ("leaf", "scalar", None),
             };
             let locality = self
                 .localities
                 .get(path)
                 .cloned()
                 .unwrap_or_else(|| "cache".into());
-            Ok(Some(value!({
-                "kind": kind,
-                "facts": {"content": content},
-                "locality": locality,
-                "path": path
-            })))
+            let mut facts = BTreeMap::from([("content".into(), Value::from(content))]);
+            if let Some(entries) = entries {
+                facts.insert("entries".into(), Value::Integer(entries as i64));
+            }
+            Ok(Some(Value::Map(BTreeMap::from([
+                ("kind".into(), Value::from(kind)),
+                ("facts".into(), Value::Map(facts)),
+                ("locality".into(), Value::from(locality)),
+                ("path".into(), Value::from(path)),
+            ]))))
         }
 
         fn read(&self, path: &str) -> Result<Option<Value>, String> {
@@ -1764,13 +2193,11 @@ mod tests {
         /// Selects one row and resolves what the new selection needs, the way
         /// the frame loop does.
         fn select(&mut self, path: &str) {
-            let index = self
-                .app
-                .rows
-                .iter()
-                .position(|row| row.path == path)
-                .unwrap_or_else(|| panic!("no row for {path}"));
-            self.app.tree.select(Some(index));
+            assert!(
+                self.app.rows.iter().any(|row| row.id == path),
+                "no row for {path}"
+            );
+            self.app.tree.select(Some(path.into()));
             self.app.resolve(&self.view);
         }
 
@@ -1818,11 +2245,17 @@ mod tests {
     }
 
     fn expand_paths(app: &mut TestApp, paths: &[&str]) {
-        let selected_path = app.selected().path.clone();
-        app.expanded
-            .extend(paths.iter().map(|path| (*path).to_owned()));
-        app.app.rebuild_tree(&selected_path);
+        for path in paths {
+            app.tree.expand((*path).into());
+        }
         app.app.resolve(&app.view);
+    }
+
+    fn line_text(line: &Line<'_>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect()
     }
 
     /// Drives the console against a real process, not the in-memory double.
@@ -1853,26 +2286,29 @@ mod tests {
         let paths = app
             .rows
             .iter()
-            .map(|row| row.path.as_str())
+            .map(|row| row.id.as_str())
             .collect::<Vec<_>>();
         assert!(paths.contains(&"/memory"));
         assert!(paths.contains(&"/mounts"));
         assert!(paths.contains(&"/system"));
 
-        app.expanded.insert("/thread".into());
-        app.expanded.insert("/thread/events".into());
+        app.tree.expand("/thread".into());
         app.resolve(&svit);
-        let event_label = &app
+        let process_id_label = &app
             .rows
             .iter()
-            .find(|row| row.path == "/thread/events/0")
-            .expect("Svit initialization projects a session event")
+            .find(|row| row.id == "/thread/process_id")
+            .expect("Svit initialization exposes bounded thread metadata")
             .label;
-        assert!(event_label.contains("session.started"), "{event_label}");
+        assert!(
+            line_text(process_id_label).contains("process_id"),
+            "{}",
+            line_text(process_id_label)
+        );
 
-        app.expanded.insert("/mounts".into());
-        app.expanded.insert("/mounts/files".into());
-        app.expanded.insert("/mounts/files/notes".into());
+        app.tree.expand("/mounts".into());
+        app.tree.expand("/mounts/files".into());
+        app.tree.expand("/mounts/files/notes".into());
         app.resolve(&svit);
 
         // A real directory listed from disk, one node at a time.
@@ -1887,18 +2323,22 @@ mod tests {
         let label = app
             .rows
             .iter()
-            .find(|row| row.path == "/mounts/files/greeting.txt")
+            .find(|row| row.id == "/mounts/files/greeting.txt")
             .unwrap()
             .label
             .clone();
-        assert!(label.contains("greeting.txt (local)"), "{label}");
+        assert!(
+            line_text(&label).contains("greeting.txt (local)"),
+            "{label:?}"
+        );
         assert_eq!(app.nodes.value("/mounts/files/greeting.txt"), None);
 
         // Selecting it reads the real file.
         let index = app
             .rows
             .iter()
-            .position(|row| row.path == "/mounts/files/greeting.txt")
+            .find(|row| row.id == "/mounts/files/greeting.txt")
+            .map(|row| row.id.clone())
             .unwrap();
         app.tree.select(Some(index));
         app.resolve(&svit);
@@ -1935,8 +2375,8 @@ mod tests {
         let mut events = svit.events();
 
         let mut app = App::new(MemoryView::version(&svit), "test".into());
-        app.expanded.insert("/mounts".into());
-        app.expanded.insert("/mounts/files".into());
+        app.tree.expand("/mounts".into());
+        app.tree.expand("/mounts/files".into());
         app.resolve(&svit);
         assert_eq!(app.nodes.children("/mounts/files").len(), 2);
 
@@ -1972,7 +2412,7 @@ mod tests {
         assert_eq!(
             app.rows
                 .iter()
-                .map(|row| row.path.as_str())
+                .map(|row| row.id.as_str())
                 .collect::<Vec<_>>(),
             ["/"]
         );
@@ -1983,19 +2423,19 @@ mod tests {
         let paths = app
             .rows
             .iter()
-            .map(|row| row.path.as_str())
+            .map(|row| row.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(paths, ["/", "/memory", "/mounts"]);
 
-        app.expanded.insert("/mounts".into());
-        app.expanded.insert("/mounts/cwd".into());
+        app.tree.expand("/mounts".into());
+        app.tree.expand("/mounts/cwd".into());
         app.resolve(&view);
 
         // A mount is opened through the same discover/stat path as memory.
         let paths = app
             .rows
             .iter()
-            .map(|row| row.path.as_str())
+            .map(|row| row.id.as_str())
             .collect::<Vec<_>>();
         assert_eq!(
             paths,
@@ -2022,16 +2462,16 @@ mod tests {
         let label = |path: &str| {
             app.rows
                 .iter()
-                .find(|row| row.path == path)
+                .find(|row| row.id == path)
                 .unwrap()
                 .label
                 .clone()
         };
 
-        assert!(label("/mounts/cwd").contains("cwd (local)"));
-        assert!(label("/mounts/cwd/README.md").contains("README.md (local)"));
+        assert!(line_text(&label("/mounts/cwd")).contains("cwd (local)"));
+        assert!(line_text(&label("/mounts/cwd/README.md")).contains("README.md (local)"));
         // Resident committed state carries no cost annotation.
-        assert!(!label("/mounts").contains('('));
+        assert!(!line_text(&label("/mounts")).contains('('));
         // A non-resident leaf is not read just to render its row.
         assert_eq!(app.nodes.value("/mounts/cwd/README.md"), None);
     }
@@ -2053,7 +2493,7 @@ mod tests {
         );
 
         assert_eq!(app.version, 2);
-        assert_eq!(app.selected().path, "/mounts/cwd/a.txt");
+        assert_eq!(app.selected().id, "/mounts/cwd/a.txt");
         assert_eq!(app.selected_value(), &Value::from("two"));
     }
 
@@ -2129,7 +2569,7 @@ mod tests {
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Char('r'))));
 
         assert_eq!(app.selected_value(), &Value::from("changed on disk"));
-        assert_eq!(app.selected().path, "/mounts/cwd/a.txt");
+        assert_eq!(app.selected().id, "/mounts/cwd/a.txt");
     }
 
     #[test]
@@ -2148,14 +2588,14 @@ mod tests {
         assert_eq!(
             app.rows
                 .iter()
-                .filter(|row| row.path.starts_with("/memory/file-"))
+                .filter(|row| row.id.starts_with("/memory/file-"))
                 .count(),
             MAX_TREE_CHILDREN
         );
         assert!(
             app.rows
                 .iter()
-                .any(|row| row.label.contains("first 200 entries"))
+                .any(|row| line_text(&row.label).contains("first 200 entries"))
         );
     }
 
@@ -2169,9 +2609,9 @@ mod tests {
             0,
         );
 
-        assert_eq!(app.expanded, BTreeSet::from(["/".into()]));
-        assert!(app.rows.iter().any(|row| row.path == "/memory"));
-        assert!(!app.rows.iter().any(|row| row.path == "/memory/profile"));
+        assert_eq!(app.tree.expanded().collect::<Vec<_>>(), [&"/".to_owned()]);
+        assert!(app.rows.iter().any(|row| row.id == "/memory"));
+        assert!(!app.rows.iter().any(|row| row.id == "/memory/profile"));
     }
 
     #[test]
@@ -2194,7 +2634,7 @@ mod tests {
         let all = app
             .rows
             .iter()
-            .map(|row| row.path.clone())
+            .map(|row| row.id.clone())
             .collect::<Vec<_>>();
         expand_paths(
             &mut app,
@@ -2204,46 +2644,50 @@ mod tests {
         let label = |path: &str| {
             app.rows
                 .iter()
-                .find(|row| row.path == path)
+                .find(|row| row.id == path)
                 .unwrap()
                 .label
-                .as_str()
+                .clone()
         };
 
-        assert!(label("/items/0").ends_with("[0] - plain text"));
-        assert!(label("/items/1").ends_with("[1] - 7"));
-        assert!(label("/items/2").ends_with("[2] - name: Ada"));
-        assert!(label("/items/3").ends_with("[3] - count: 2"));
-        assert!(label("/items/4").ends_with("[4] - object · 1 item"));
-        assert!(label("/items/5").contains("[5] - start "));
-        assert!(label("/items/5").ends_with('…'));
-        assert!(!label("/items/5").contains('\n'));
-        assert!(!label("/items/5").contains('\u{1b}'));
+        assert!(line_text(&label("/items/0")).ends_with("[0] - plain text"));
+        assert!(line_text(&label("/items/1")).ends_with("[1] - 7"));
+        assert!(line_text(&label("/items/2")).ends_with("[2] - name: Ada"));
+        assert!(line_text(&label("/items/3")).ends_with("[3] - count: 2"));
+        assert!(line_text(&label("/items/4")).ends_with("[4] - object · 1 item"));
+        assert!(line_text(&label("/items/5")).contains("[5] - start "));
+        assert!(line_text(&label("/items/5")).ends_with('…'));
+        assert!(!line_text(&label("/items/5")).contains('\n'));
+        assert!(!line_text(&label("/items/5")).contains('\u{1b}'));
     }
 
     #[test]
     fn tree_flattens_complete_process_memory_and_preview_tracks_selection() {
         let mut app = test_app_with(
             ValueView::new(value!({
-                "thread": {"messages": [], "events": []},
+                "thread": {"format": "svit-thread@8"},
                 "memory": {"profile": {"name": "Ada"}, "scores": [3, 5]}
             })),
             7,
             "test-model",
         );
 
-        assert_eq!(app.rows[0].label, "▾ /");
-        assert!(app.rows.iter().any(|row| row.path == "/memory"));
-        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert_eq!(line_text(&app.rows[0].label), "/");
+        assert!(app.rows.iter().any(|row| row.id == "/memory"));
+        assert!(!app.rows.iter().any(|row| row.id == "/thread/format"));
         expand_paths(
             &mut app,
             &["/thread", "/memory", "/memory/profile", "/memory/scores"],
         );
-        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
-        assert!(app.rows.iter().any(|row| row.label.ends_with("name")));
+        assert!(app.rows.iter().any(|row| row.id == "/thread/format"));
+        assert!(
+            app.rows
+                .iter()
+                .any(|row| line_text(&row.label).ends_with("name"))
+        );
         app.select("/memory/profile/name");
 
-        assert_eq!(app.selected().path, "/memory/profile/name");
+        assert_eq!(app.selected().id, "/memory/profile/name");
         assert!(matches!(
             app.selected_value(),
             Value::String(value) if value == "Ada"
@@ -2298,6 +2742,139 @@ mod tests {
         assert!(emphasized.style.add_modifier.contains(Modifier::BOLD));
         assert_eq!(url.style.fg, Some(theme.code.link));
         assert!(url.style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn timeline_projects_llm_commentary_and_tool_calls_from_svit_events() {
+        let optimistic_user = Message::user("Inspect memory.");
+        let canonical_user = Message::user("Inspect memory.");
+        assert_ne!(optimistic_user.id, canonical_user.id);
+        let mut commentary = serde_json::to_value(Message::assistant(
+            "I’ll inspect the memory tree before continuing.",
+        ))
+        .unwrap();
+        commentary["phase"] = serde_json::Value::String("commentary".into());
+
+        let mut tool_call = Message::assistant("");
+        tool_call.content = vec![ContentPart::tool_call(
+            "call_1",
+            "discover",
+            serde_json::json!({"path": "/memory"}),
+        )];
+        let mut app = App::new(0, "test".into());
+        app.push_user(optimistic_user);
+        app.push_message(canonical_user);
+        app.push_message(serde_json::from_value(commentary).unwrap());
+        app.push_message(tool_call);
+
+        let lines = timeline_lines(&app.timeline, 80, &lampa_theme());
+        let rendered = lines
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(rendered.contains("inspect the memory tree"));
+        assert!(rendered.contains("tool › … discover /memory"));
+        assert_eq!(
+            app.timeline.len(),
+            3,
+            "projection and optimistic inbox display must not duplicate messages"
+        );
+    }
+
+    #[test]
+    fn completed_tool_call_is_one_helpful_row_without_its_internal_id() {
+        let mut call = Message::assistant("");
+        call.content = vec![ContentPart::tool_call(
+            "call_internal_123",
+            "discover",
+            serde_json::json!({"path": "/memory"}),
+        )];
+        let entries = vec![
+            TimelineEntry::Message(Box::new(call)),
+            TimelineEntry::Message(Box::new(Message::tool_result(
+                "call_internal_123",
+                Some(serde_json::json!({
+                    "path": "/memory",
+                    "entries": ["profile", "research"]
+                })),
+                None,
+            ))),
+        ];
+
+        let lines = timeline_lines(&entries, 80, &lampa_theme());
+        let nonempty = lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+
+        assert_eq!(nonempty, ["tool › ✓ discover /memory · 2 entries"]);
+        assert!(!nonempty.join(" ").contains("call_internal_123"));
+    }
+
+    #[test]
+    fn compact_exec_row_identifies_the_builtin_target_and_outcome() {
+        let mut call = Message::assistant("");
+        call.content = vec![ContentPart::tool_call(
+            "call_http",
+            "exec",
+            serde_json::json!({
+                "path": "/bin/http",
+                "input": {"method": "GET", "url": "https://everruns.com/"}
+            }),
+        )];
+        let entries = vec![
+            TimelineEntry::Message(Box::new(call)),
+            TimelineEntry::Message(Box::new(Message::tool_result(
+                "call_http",
+                Some(serde_json::json!(
+                    r#"{"status":200,"headers":{},"body":"ok"}"#
+                )),
+                None,
+            ))),
+        ];
+
+        let rendered = timeline_lines(&entries, 100, &lampa_theme())
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("tool › ✓ http GET https://everruns.com/ · HTTP 200"));
+        assert!(!rendered.contains("call_http"));
+    }
+
+    #[test]
+    fn compact_tool_failure_shows_the_error_instead_of_the_call_id() {
+        let mut call = Message::assistant("");
+        call.content = vec![ContentPart::tool_call(
+            "call_failed",
+            "read",
+            serde_json::json!({"path": "/memory/missing"}),
+        )];
+        let entries = vec![
+            TimelineEntry::Message(Box::new(call)),
+            TimelineEntry::Message(Box::new(Message::tool_result(
+                "call_failed",
+                None,
+                Some("path not found".into()),
+            ))),
+        ];
+
+        let rendered = timeline_lines(&entries, 80, &lampa_theme())
+            .iter()
+            .flat_map(|line| line.spans.iter())
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+
+        assert!(rendered.contains("tool › ✗ read /memory/missing · error: path not found"));
+        assert!(!rendered.contains("call_failed"));
     }
 
     #[test]
@@ -2371,7 +2948,7 @@ mod tests {
             "ts": "2026-08-11T12:34:56Z",
             "type": "response.completed"
         });
-        let rendered = preview_lines("/thread/events/0", &event, 80, &theme)
+        let rendered = preview_lines("/memory/event", &event, 80, &theme)
             .iter()
             .flat_map(|line| &line.spans)
             .map(|span| span.content.as_ref())
@@ -2423,12 +3000,7 @@ mod tests {
             1,
         );
         expand_paths(&mut app, &["/memory"]);
-        let selected = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/profile")
-            .unwrap();
-        app.tree.select(Some(selected));
+        app.tree.select(Some("/memory/profile".into()));
 
         app.refresh_process(
             value!({
@@ -2438,7 +3010,7 @@ mod tests {
             2,
         );
 
-        assert_eq!(app.selected().path, "/memory/profile");
+        assert_eq!(app.selected().id, "/memory/profile");
         assert_eq!(app.version, 2);
     }
 
@@ -2448,7 +3020,7 @@ mod tests {
             value!({
                 "inbox": [],
                 "memory": {"profile": {"name": "Ada"}},
-                "thread": {"events": []}
+                "thread": {"format": "svit-thread@8"}
             }),
             1,
         );
@@ -2458,12 +3030,12 @@ mod tests {
         app.app
             .refresh_process(&Change::notification(2, vec!["/inbox".to_owned()]));
         app.app
-            .refresh_process(&Change::notification(3, vec!["/thread/events".to_owned()]));
+            .refresh_process(&Change::notification(3, vec!["/thread".to_owned()]));
         app.app.resolve(&app.view);
 
-        assert_eq!(app.selected().path, "/memory/profile/name");
-        assert!(app.expanded.contains("/memory"));
-        assert!(app.expanded.contains("/memory/profile"));
+        assert_eq!(app.selected().id, "/memory/profile/name");
+        assert!(app.tree.is_expanded(&"/memory".into()));
+        assert!(app.tree.is_expanded(&"/memory/profile".into()));
     }
 
     #[test]
@@ -2520,51 +3092,44 @@ mod tests {
         let mut app = test_app(value!({"thread": {}, "memory": {}}), 0);
         app.focus = Focus::Memory;
         app.preview_scroll.set_offset(10);
-        let memory = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory")
-            .unwrap();
-        app.tree.select(Some(memory));
+        app.tree.select(Some("/memory".into()));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Down)));
 
-        assert_eq!(app.selected().path, "/thread");
+        assert_eq!(app.selected().id, "/thread");
         assert_eq!(app.preview_scroll.offset(), 0);
     }
 
     #[test]
     fn memory_nodes_collapse_expand_and_stay_collapsed_after_refresh() {
-        let mut app = test_app(value!({"thread": {"messages": ["hello"]}, "memory": {}}), 0);
+        let mut app = test_app(
+            value!({"thread": {"format": "svit-thread@8"}, "memory": {}}),
+            0,
+        );
         app.focus = Focus::Memory;
-        let thread = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/thread")
-            .unwrap();
-        app.tree.select(Some(thread));
+        app.tree.select(Some("/thread".into()));
 
-        assert!(app.selected().label.contains("▸ thread"));
-        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert!(!app.tree.is_expanded(&"/thread".into()));
+        assert!(!app.rows.iter().any(|row| row.id == "/thread/format"));
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Enter)));
 
-        assert!(app.selected().label.contains("▾ thread"));
-        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert!(app.tree.is_expanded(&"/thread".into()));
+        assert!(app.rows.iter().any(|row| row.id == "/thread/format"));
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Enter)));
 
-        assert!(app.selected().label.contains("▸ thread"));
-        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert!(!app.tree.is_expanded(&"/thread".into()));
+        assert!(app.rows.iter().any(|row| row.id == "/thread/format"));
         app.refresh_process(
-            value!({"thread": {"messages": ["hello", "again"]}, "memory": {}}),
+            value!({"thread": {"format": "svit-thread@8"}, "memory": {}}),
             1,
         );
-        assert!(!app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert!(!app.tree.is_expanded(&"/thread".into()));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Right)));
 
-        assert_eq!(app.selected().path, "/thread");
-        assert!(app.selected().label.contains("▾ thread"));
-        assert!(app.rows.iter().any(|row| row.path == "/thread/messages"));
+        assert_eq!(app.selected().id, "/thread");
+        assert!(app.tree.is_expanded(&"/thread".into()));
+        assert!(app.rows.iter().any(|row| row.id == "/thread/format"));
     }
 
     #[test]
@@ -2572,19 +3137,14 @@ mod tests {
         let mut app = test_app(value!({"memory": {"profile": {"name": "Ada"}}}), 0);
         app.focus = Focus::Memory;
         expand_paths(&mut app, &["/memory", "/memory/profile"]);
-        let profile = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/profile")
-            .unwrap();
-        app.tree.select(Some(profile));
+        app.tree.select(Some("/memory/profile".into()));
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Left)));
-        assert_eq!(app.selected().path, "/memory/profile");
-        assert!(!app.expanded.contains("/memory/profile"));
+        assert_eq!(app.selected().id, "/memory/profile");
+        assert!(!app.tree.is_expanded(&"/memory/profile".into()));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::Left)));
 
-        assert_eq!(app.selected().path, "/memory");
+        assert_eq!(app.selected().id, "/memory");
     }
 
     #[test]
@@ -2595,13 +3155,13 @@ mod tests {
         expand_paths(&mut app, &["/memory"]);
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::PageDown)));
-        assert_eq!(app.tree.selected(), Some(3));
+        assert_eq!(app.tree.selected().map(String::as_str), Some("/memory/1"));
 
         let _ = app.handle(&Event::Mouse(Mouse::at(MouseKind::ScrollDown, 0, 0)));
-        assert_eq!(app.tree.selected(), Some(6));
+        assert_eq!(app.tree.selected().map(String::as_str), Some("/memory/4"));
 
         let _ = app.handle(&Event::Key(Key::new(KeyCode::PageUp)));
-        assert_eq!(app.tree.selected(), Some(3));
+        assert_eq!(app.tree.selected().map(String::as_str), Some("/memory/1"));
     }
 
     #[test]
@@ -2614,7 +3174,7 @@ mod tests {
         let _ = app.handle(&panel_mouse(MouseKind::ScrollDown, probes.memory.rect()));
 
         assert_eq!(app.focus, Focus::Memory);
-        assert_eq!(app.tree.selected(), Some(3));
+        assert_eq!(app.tree.selected().map(String::as_str), Some("/memory/1"));
     }
 
     #[test]
@@ -2636,6 +3196,76 @@ mod tests {
     }
 
     #[test]
+    fn dragging_transcript_text_is_consumed_without_changing_the_memory_tree() {
+        let mut app = test_app(value!({"memory": {"alpha": 1}}), 0);
+        app.app
+            .push_message(Message::assistant("hello selectable world"));
+        let probes = layout(&mut app, 90, 24);
+        let transcript = probes.transcript.rect();
+        let selected = app.app.tree.selected().cloned();
+
+        let down = Event::Mouse(Mouse::at(
+            MouseKind::Down(MouseButton::Left),
+            transcript.x,
+            transcript.y + 1,
+        ));
+        let drag = Event::Mouse(Mouse::at(
+            MouseKind::Drag(MouseButton::Left),
+            transcript.x + 4,
+            transcript.y + 1,
+        ));
+        let up = Event::Mouse(Mouse::at(
+            MouseKind::Up(MouseButton::Left),
+            transcript.x + 4,
+            transcript.y + 1,
+        ));
+
+        assert!(app.app.route_mouse(&down));
+        assert!(app.app.route_mouse(&drag));
+        assert!(app.app.route_mouse(&up));
+        assert_eq!(app.app.tree.selected(), selected.as_ref());
+
+        let theme = lampa_theme();
+        let root = build_view(&mut app.app, Rect::new(0, 0, 90, 24), &theme, &probes);
+        let mut buffer = render(root.as_ref(), 90, 24, &theme);
+        app.app.capture_panel_bounds(&probes);
+        assert_eq!(
+            app.app.finish_selection_frame(&mut buffer, &theme),
+            Some("hello".into())
+        );
+        for column in transcript.x..=transcript.x + 4 {
+            assert_eq!(buffer[(column, transcript.y + 1)].bg, theme.selection_bg);
+        }
+    }
+
+    #[test]
+    fn ctrl_c_copies_an_active_selection_instead_of_quitting() {
+        let mut app = test_app(value!({}), 0);
+        app.app.push_message(Message::assistant("select me"));
+        let probes = layout(&mut app, 90, 24);
+        let transcript = probes.transcript.rect();
+        for kind in [
+            MouseKind::Down(MouseButton::Left),
+            MouseKind::Drag(MouseButton::Left),
+            MouseKind::Up(MouseButton::Left),
+        ] {
+            let column = if matches!(kind, MouseKind::Down(_)) {
+                transcript.x
+            } else {
+                transcript.x + 5
+            };
+            let _ = app
+                .app
+                .route_mouse(&Event::Mouse(Mouse::at(kind, column, transcript.y + 1)));
+        }
+        let mut ctrl_c = Key::new(KeyCode::Char('c'));
+        ctrl_c.ctrl = true;
+
+        assert_eq!(app.app.handle(&Event::Key(ctrl_c)), AppAction::Continue);
+        assert!(app.app.pending_copy);
+    }
+
+    #[test]
     fn clicking_a_memory_row_selects_it() {
         let mut app = test_app(value!({"memory": {"alpha": 1, "beta": 2}}), 0);
         expand_paths(&mut app, &["/memory"]);
@@ -2649,22 +3279,17 @@ mod tests {
         )));
 
         assert_eq!(app.focus, Focus::Memory);
-        assert_eq!(app.selected().path, "/memory/alpha");
+        assert_eq!(app.selected().id, "/memory/alpha");
     }
 
     #[test]
     fn clicking_a_scrolled_memory_row_uses_the_visible_offset() {
         let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
-        let selected = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/8")
-            .unwrap();
-        app.tree.select(Some(selected));
+        app.tree.select(Some("/memory/8".into()));
         let probes = layout(&mut app, 90, 8);
-        let first_visible = app.memory_window().start();
-        let expected_path = app.rows[first_visible].path.clone();
+        let first_visible = app.memory_window.start();
+        let expected_path = app.rows[first_visible].id.clone();
         let bounds = probes.memory.rect();
 
         let _ = app.handle(&Event::Mouse(Mouse::at(
@@ -2673,21 +3298,16 @@ mod tests {
             bounds.y + 1,
         )));
 
-        assert_eq!(app.selected().path, expected_path);
+        assert_eq!(app.selected().id, expected_path);
     }
 
     #[test]
     fn clicking_the_bottom_row_keeps_the_memory_window_stable() {
         let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
-        let selected = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/5")
-            .unwrap();
-        app.tree.select(Some(selected));
+        app.tree.select(Some("/memory/5".into()));
         let probes = layout(&mut app, 90, 8);
-        let first_visible = app.memory_window().start();
+        let first_visible = app.memory_window.start();
         let body = panel_body(probes.memory.rect());
 
         let _ = app.handle(&Event::Mouse(Mouse::at(
@@ -2696,7 +3316,7 @@ mod tests {
             body.bottom() - 1,
         )));
 
-        assert_eq!(app.memory_window().start(), first_visible);
+        assert_eq!(app.memory_window.start(), first_visible);
     }
 
     #[test]
@@ -2704,13 +3324,8 @@ mod tests {
         let mut app = test_app(value!({"memory": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]}), 0);
         expand_paths(&mut app, &["/memory"]);
         app.memory_viewport_height = 4;
-        let selected = app
-            .rows
-            .iter()
-            .position(|row| row.path == "/memory/8")
-            .unwrap();
-        app.tree.select(Some(selected));
-        app.keep_tree_selection_visible();
+        app.tree.select(Some("/memory/8".into()));
+        app.reconcile_tree();
         let theme = lampa_theme();
 
         let frame = grid(&render(tree_view(&app, &theme).as_ref(), 30, 6, &theme));
@@ -2729,8 +3344,9 @@ mod tests {
             3,
             "sim",
         );
-        app.push_user("Remember the release color.".into());
-        app.push_assistant(Message::assistant("Stored in memory."));
+        app.push_user(Message::user("Remember the release color."));
+        app.push_message(Message::assistant("Stored in memory."));
+        app.finish_turn();
         let theme = lampa_theme();
         let probes = UiProbes::default();
         let root = build_view(&mut app, Rect::new(0, 0, 90, 24), &theme, &probes);

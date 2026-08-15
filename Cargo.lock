@@ -1030,7 +1030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -1068,6 +1068,23 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "everruns-builtins"
+version = "0.17.26"
+source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "everruns-capability",
+ "everruns-core",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3178,7 +3195,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3694,7 +3711,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3752,7 +3769,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4181,6 +4198,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "everruns",
+ "everruns-builtins",
  "everruns-host",
  "everruns-test-support",
  "jaq-core",
@@ -4303,7 +4321,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4892,9 +4910,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tuika"
-version = "0.7.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "342a82ee8016637ca1ac001a442e10cba08cd30230d9984f9a7d039b5c4d9c70"
+checksum = "60cab8af397e3adbb2ce6b8332f786aefde23a7772e102e603726be450f6fcee"
 dependencies = [
  "crossterm",
  "pulldown-cmark",
@@ -4907,9 +4925,9 @@ dependencies = [
 
 [[package]]
 name = "tuika-codeformatters"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "100174a0ba5b7ef8187403c4546682bfd16ddb70e3f0c458c73b10f2b386e730"
+checksum = "2ffda969ca27726ab0dc390492bd377abcf60db210a67e449100be15932da09f"
 dependencies = [
  "ratatui",
  "tree-sitter",
@@ -5130,7 +5148,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"
 dependencies = [
- "rand 0.9.5",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -5574,7 +5592,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
