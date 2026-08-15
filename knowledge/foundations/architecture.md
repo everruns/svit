@@ -36,7 +36,7 @@ Host application ----> Svit
                     Process ----> transaction working copy ----> commit or rollback
                         |                    |
                         |                    v
-                        |               restricted Lisp VM
+                        |              versioned guest runtime
                         |
                         +----> snapshot / restore / fork
                         +----> buffered message intents (not delivery)
@@ -46,8 +46,8 @@ Host application ----> Svit
 
 The trusted core owns validation, resource accounting, transaction boundaries,
 canonical serialization, process identity, and state isolation. The embedded
-Ketos interpreter is treated as a component inside that boundary, not as proof of
-the boundary.
+Ketos interpreter and experimental Deed compiler/runner are components inside
+that boundary, not proof of the boundary.
 
 ## Initial module responsibilities
 
@@ -60,6 +60,7 @@ the boundary.
 | Script library | Named source records stored with committed process state |
 | Mounts | Virtual external namespaces resolved lazily through host-attached providers, with committed descriptors, node facts, and granted access |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
+| Deed adapter | Compiles pinned Deed source and bridges synthetic scalar reads and buffered `/memory` intents behind an exact import allowlist |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 | Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, snapshots, forks, cuts, recovery, and fencing |

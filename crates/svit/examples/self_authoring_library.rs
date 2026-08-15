@@ -21,6 +21,7 @@ fn main() -> svit::Result<()> {
     assert_eq!(
         process.read("/lib/greeter")?.map(|value| value.to_json()),
         Some(value!({
+            "language": "svit-lisp@2",
             "source": "(define (main input) (value-map \"greeting\" (concat \"Hello, \" (value-get input \"/name\") \"!\") \"library\" (discover \"/lib\")))",
             "documentation": "Greets a person and reports its discoverable script library"
         }).to_json())

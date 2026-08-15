@@ -63,7 +63,7 @@ pub enum Error {
     #[error("activation cancelled by hook: {0}")]
     HookCancelled(String),
 
-    /// Lisp compilation or execution failed. Diagnostics are capped and do not
+    /// Guest compilation or execution failed. Diagnostics are capped and do not
     /// include Rust backtraces or host paths.
     #[error("script failed: {0}")]
     Script(String),

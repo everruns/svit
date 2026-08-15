@@ -28,7 +28,7 @@ The initial process exposes one conventional namespace:
 │   └── events              canonical Everruns event stream
 ├── bin/                    host-managed built-in manuals
 ├── memory/                 process-owned durable values
-├── lib/                    named scripts
+├── lib/                    named, language-tagged scripts
 ├── tasks/                  reserved; empty in this slice
 ├── inbox/                  host-managed durable input queue
 ├── children/               reserved; empty in this slice
@@ -125,8 +125,8 @@ The process builder assembles initial memory from separately named items into a
 text-keyed map and initial scripts through `library(name, script)` so both
 durable namespaces are explicit at the setup boundary. It attaches a `Mount`
 through `mount(name, mount)`.
-Rust callers, the Svit reasoning loop, and Svit Lisp use the same six generic
-process operations:
+Rust callers, the Svit reasoning loop, and the complete Svit Lisp adapter use
+the same six generic process operations:
 
 ```text
 discover(path)
@@ -344,7 +344,7 @@ inherits the committed thread and then appends independently as a distinct
 child process. Each started Svit owns an independent local Tokio task; no
 distributed scheduler, timer, or automatic process discovery is implied.
 
-Reasoning-event commits and Svit Lisp activations are individually atomic process
+Reasoning-event commits and guest-script activations are individually atomic process
 transitions. A complete model turn is not one Svit activation: model calls and
 other external actions occur between event commits and cannot join a process
 transaction.

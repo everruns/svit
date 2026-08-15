@@ -11,14 +11,46 @@ use crate::{Error, Limits, Result};
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Script {
+    language: ScriptLanguage,
     source: String,
     documentation: String,
 }
 
+/// Versioned guest language used by one named script.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScriptLanguage {
+    /// Restricted Svit Lisp 2 executed by Ketos.
+    #[serde(rename = "svit-lisp@2")]
+    SvitLisp2,
+    /// Deed 0.2.12 compiled to the bounded experimental runner.
+    #[serde(rename = "deed@0.2.12")]
+    Deed0212,
+}
+
+impl ScriptLanguage {
+    /// Returns the stable serialized language identifier.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::SvitLisp2 => "svit-lisp@2",
+            Self::Deed0212 => "deed@0.2.12",
+        }
+    }
+}
+
 impl Script {
-    /// Creates a script record.
+    /// Creates a Svit Lisp 2 script record.
     pub fn new(source: impl Into<String>) -> Self {
         Self {
+            language: ScriptLanguage::SvitLisp2,
+            source: source.into(),
+            documentation: String::new(),
+        }
+    }
+
+    /// Creates a Deed 0.2.12 script record.
+    pub fn deed(source: impl Into<String>) -> Self {
+        Self {
+            language: ScriptLanguage::Deed0212,
             source: source.into(),
             documentation: String::new(),
         }
@@ -38,6 +70,11 @@ impl Script {
     /// Returns the discoverable documentation.
     pub fn documentation(&self) -> &str {
         &self.documentation
+    }
+
+    /// Returns the versioned guest language for this script.
+    pub fn language(&self) -> ScriptLanguage {
+        self.language
     }
 }
 
@@ -120,6 +157,7 @@ impl Value {
                 .map(|(key, value)| (key.clone(), value.to_json()))
                 .collect(),
             Self::Script(script) => serde_json::json!({
+                "language": script.language().as_str(),
                 "source": script.source(),
                 "documentation": script.documentation(),
             }),
