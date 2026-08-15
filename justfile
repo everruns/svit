@@ -15,6 +15,8 @@ test:
 
 # Run every deterministic acceptance example.
 examples:
+    cargo run --locked -p svit --example deed_memory
+    cargo run --locked -p svit --example deed_rollback
     cargo run --locked -p svit --example durable_counter
     cargo run --locked -p svit --example transaction_persistence
     cargo run --locked -p svit --example self_authoring_library
@@ -29,6 +31,10 @@ examples:
 # Run the live process-owned support agent with OPENAI_API_KEY configured.
 support-agent-svit:
     cargo run --locked -p svit-support-agent-svit
+
+# Run the live Deed-backed support agent with OPENAI_API_KEY configured.
+support-agent-svit-deed:
+    cargo run --locked -p svit-support-agent-svit-deed
 
 # Validate the OKF v0.2 knowledge bundle.
 check-okf:

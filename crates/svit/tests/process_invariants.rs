@@ -45,7 +45,7 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     );
     assert_eq!(
         process.read("/system/runtime/language").unwrap(),
-        Some(Value::String("svit-lisp@2".into()))
+        Some(Value::String("svit-guests@1".into()))
     );
     assert_eq!(
         process.read("/system/identity/address").unwrap(),

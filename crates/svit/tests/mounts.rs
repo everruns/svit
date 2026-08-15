@@ -219,7 +219,7 @@ fn stat_describes_committed_nodes_with_the_same_facts_vocabulary() {
     assert_eq!(memory["locality"], "cache");
     assert_eq!(memory["access"], "read-write");
     assert_eq!(script["kind"], "leaf");
-    assert_eq!(script["facts"]["content"], "svit-script");
+    assert_eq!(script["facts"]["content"], "svit-lisp@2");
     assert_eq!(process.stat("/memory/absent").unwrap(), None);
 }
 

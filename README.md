@@ -137,7 +137,7 @@ the `/memory` node:
 /
 ├── thread/      durable prompt, messages, and canonical reasoning events
 ├── memory/      durable application values
-├── lib/         named Svit Lisp scripts
+├── lib/         named, language-tagged guest scripts
 ├── bin/         manuals for host-attached built-ins
 ├── inbox/       durable input queue
 ├── mounts/      virtual host resources under explicit grants
@@ -160,6 +160,31 @@ exec(path, input)     run a named script or host-attached built-in
 Model-facing `exec` resolves `/lib` scripts and installed `/bin` built-ins.
 Bare `Process::exec` and nested Svit Lisp execution resolve only `/lib`, because
 serializable process state never owns native host authority.
+
+### Experimental Deed scripts
+
+The off-main Deed spike stores scripts with `language: "deed@0.2.12"`. It can
+read scalar activation input and `/memory` values through synthetic grants,
+emit buffered integer/text/remove mutations, and return an integer. It is not
+yet feature-equivalent to Svit Lisp and uses Deed's native compiled-code test
+runner rather than a production isolation boundary.
+
+Run the deterministic commit/snapshot and rollback demos:
+
+```console
+cargo run --locked -p svit --example deed_memory
+cargo run --locked -p svit --example deed_rollback
+```
+
+See [Experimental Deed Runtime](knowledge/runtimes/deed-runtime.md) for the
+exact scripting contract and current gaps.
+
+With `OPENAI_API_KEY` configured, the live support-agent variant exercises the
+same Deed commit path through a real process-owned reason/act loop:
+
+```console
+just support-agent-svit-deed
+```
 
 ## Persistence and forks
 

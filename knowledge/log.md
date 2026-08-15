@@ -16,6 +16,21 @@
 * **One operation vocabulary**: Restated the complete process contract as
   `discover`, `read`, `stat`, `write`, `remove`, and `exec` across host calls,
   model tools, and Svit Lisp.
+* **Off-main Deed runtime spike**: Added an explicit per-script language tag
+  and pinned Deed 0.2.12 compiler/runner adapter while retaining Svit Lisp.
+  Deed receives only a synthetic scalar activation snapshot and captured
+  mutation-intent output; contract or validation failure rolls back the same
+  process working copy.
+* **Deed authority boundary**: Restricted compiled imports to environment read,
+  captured output, and console narrowing, with focused denial evidence for a
+  clock request (`TM-ESC-005`). The native runner and incomplete value/effect
+  surface remain experimental (`L-047`).
+* **Snapshot language identity**: Advanced the process snapshot to format 8 so
+  every committed script serializes its versioned language instead of relying
+  on source-shape inference.
+* **Deed support-agent consumer**: Added the credentialed
+  `support-agent-svit-deed` executable. It mirrors the process-owned support
+  inbox/outbox flow and commits the model's answer through a named Deed script.
 
 ## 2026-08-13
 

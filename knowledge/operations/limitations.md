@@ -62,6 +62,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-044` | Mount authority is not serialized | A restored process reads mount descriptors but resolves nothing below them until the host calls `attach_mount` again; forks share the parent's attached providers by default |
 | `L-045` | Change reporting covers committed transitions only | A mounted source edited outside the process emits no event, so a client caching mount content stays stale until it reloads; mount change notification would need an opt-in provider watcher |
 | `L-046` | Process import preserves current state but not source history topology | Import starts a new transaction tail at the existing version; prior transaction envelopes, snapshots, and fork references remain only in the source store |
+| `L-047` | Deed support is an experimental scalar adapter over Deed 0.2.12's native compiled-code test runner | It supports a synthetic scalar input and `/memory` snapshot plus integer/text/remove intents, but not the complete Svit guest surface; compiler work lacks deterministic fuel, the runner's growth ceiling is not Svit's allocator cap, and production use still requires Wasm or OS containment |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

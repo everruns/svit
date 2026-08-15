@@ -16,6 +16,10 @@ turso-mount = ["dep:turso"]
 
 [dependencies]
 async-trait.workspace = true
+deed-codegen.workspace = true
+deed-diagnostics.workspace = true
+deed-driver.workspace = true
+deed-mir.workspace = true
 everruns.workspace = true
 everruns-host.workspace = true
 jaq-core.workspace = true

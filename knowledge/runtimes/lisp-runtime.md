@@ -111,7 +111,8 @@ closed.
 
 `write` and `remove` mutate `/memory` values, one typed `/lib/<name>` entry, or
 a leaf below a mount whose descriptor grants writes; `/system` and reserved
-nodes are read-only. A library write is a map with required text `source` and
+nodes are read-only. A library write is a map with required text `source`,
+optional text `language` (`svit-lisp@2` by default or `deed@0.2.12`), and
 optional text `documentation`. Mount writes are buffered for the activation and
 applied at the commit point, so a failed activation applies none of them.
 
@@ -154,6 +155,6 @@ limitation and research requirement.
 
 ## Snapshot compatibility
 
-Snapshot format 3 stores Lisp scripts, the Ketos-oriented limit schema, and the
-conventional process namespace with validated system metadata. Restore rejects
-formats 1 and 2 rather than translating old roots or runtime semantics.
+Snapshot format 8 stores the explicit language tag for every script alongside
+the source and documentation. Restore rejects older formats rather than
+guessing which guest contract untagged source used.

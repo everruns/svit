@@ -124,9 +124,11 @@ remains outside the deterministic suite.
 Agent-loop integration tests snapshot and restore a conversation, continue a
 fork in a child process, assert parent isolation, and enforce script
 allowlisting through the Svit-owned builder.
-The credentialed `support-agent-svit` consumer exercises one process-owned Svit
-with `gpt-5.6-terra`. It remains outside the deterministic suite; lifecycle,
-snapshot, and fork behavior stays covered by integration tests.
+The credentialed `support-agent-svit` and `support-agent-svit-deed` consumers
+exercise one process-owned Svit with `gpt-5.6-terra`. The Deed variant commits
+the answer through a named `deed@0.2.12` script. Both remain outside the
+deterministic suite; lifecycle, snapshot, fork, and Deed transaction behavior
+stay covered by integration tests.
 
 ## Transaction matrix
 

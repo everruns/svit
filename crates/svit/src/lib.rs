@@ -34,6 +34,7 @@
 
 mod builtins;
 pub mod control;
+mod deed_runtime;
 mod error;
 pub mod hooks;
 mod limits;
@@ -87,7 +88,7 @@ pub use turso_persistence::{DurableProcess, PersistenceSnapshot, TursoProcessSto
 /// Enabled-by-default local persistence adapter.
 #[cfg(feature = "persistence-turso")]
 pub type DefaultProcessStore = TursoProcessStore;
-pub use value::{Script, Value};
+pub use value::{Script, ScriptLanguage, Value};
 
 /// Compile-checks Svit Lisp source and constructs a [`Script`].
 ///

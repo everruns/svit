@@ -1,4 +1,4 @@
-// The process root is the only durable guest state. Activations work on Lisp
+// The process root is the only durable guest state. Activations work on private
 // copies and replace the Arc root only after every value and staged script has
 // validated, providing rollback without a mutable undo log.
 
@@ -26,10 +26,10 @@ use crate::hooks::{
 };
 use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView};
 use crate::persistence::Mutation;
-use crate::{Error, Limits, Result, Script, Value};
+use crate::{Error, Limits, Result, Script, ScriptLanguage, Value};
 
-const SNAPSHOT_FORMAT: u32 = 7;
-const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
+const SNAPSHOT_FORMAT: u32 = 8;
+const RUNTIME_LANGUAGE: &str = "svit-guests@1";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 
 /// Stable logical address of one Svit process.
@@ -941,7 +941,7 @@ impl Process {
                 self.limits.max_exec_depth,
             )
         }))
-        .map_err(|_| Error::Script("Lisp interpreter failed".into()))??;
+        .map_err(|_| Error::Script("guest runtime failed".into()))??;
 
         let new_memory = lock(&state.memory)?.clone();
         output.validate(&self.limits, false)?;
@@ -954,7 +954,7 @@ impl Process {
         {
             validate_script_name(name)?;
             script_value(script).validate(&self.limits, true)?;
-            validate_script_source(name, script.source(), &self.limits)?;
+            validate_script_source(name, script, &self.limits)?;
         }
 
         let version = next_process_version(self.version)?;
@@ -1166,7 +1166,7 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
             )));
         };
         script_value(script).validate(limits, true)?;
-        validate_script_source(name, script.source(), limits)?;
+        validate_script_source(name, script, limits)?;
     }
 
     let system = root_map(
@@ -1424,7 +1424,7 @@ fn committed_stat_value(path: &str, value: &Value) -> Value {
             "leaf",
             BTreeMap::from([
                 ("bytes".into(), Value::Integer(script.source().len() as i64)),
-                ("content".into(), Value::from("svit-script")),
+                ("content".into(), Value::from(script.language().as_str())),
             ]),
         ),
         _ => (
@@ -1469,6 +1469,23 @@ fn script_from_write_value(value: Value) -> Result<Script> {
                     ));
                 }
             };
+            let language = match fields.remove("language") {
+                Some(Value::String(language)) if language == "svit-lisp@2" => {
+                    ScriptLanguage::SvitLisp2
+                }
+                Some(Value::String(language)) if language == "deed@0.2.12" => {
+                    ScriptLanguage::Deed0212
+                }
+                None => ScriptLanguage::SvitLisp2,
+                Some(Value::String(language)) => {
+                    return Err(Error::InvalidValue(format!(
+                        "unsupported script language: {language}"
+                    )));
+                }
+                Some(_) => {
+                    return Err(Error::InvalidValue("library language must be text".into()));
+                }
+            };
             let documentation = match fields.remove("documentation") {
                 Some(Value::String(documentation)) => documentation,
                 None => String::new(),
@@ -1480,10 +1497,14 @@ fn script_from_write_value(value: Value) -> Result<Script> {
             };
             if !fields.is_empty() {
                 return Err(Error::InvalidValue(
-                    "library writes accept only source and documentation".into(),
+                    "library writes accept only language, source, and documentation".into(),
                 ));
             }
-            Ok(Script::new(source).with_documentation(documentation))
+            let script = match language {
+                ScriptLanguage::SvitLisp2 => Script::new(source),
+                ScriptLanguage::Deed0212 => Script::deed(source),
+            };
+            Ok(script.with_documentation(documentation))
         }
         _ => Err(Error::InvalidValue(
             "library writes require a script record".into(),
@@ -1516,9 +1537,12 @@ pub(crate) fn validate_script_name(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<()> {
-    if source.len() > limits.max_script_bytes {
+fn validate_script_source(name: &str, script: &Script, limits: &Limits) -> Result<()> {
+    if script.source().len() > limits.max_script_bytes {
         return Err(Error::ResourceLimitExceeded("script source"));
+    }
+    if script.language() == ScriptLanguage::Deed0212 {
+        return crate::deed_runtime::validate(name, script.source());
     }
     let validation_id = ProcessId::new("svit://local/validation")?;
     let root = initial_root(
@@ -1537,7 +1561,7 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
     );
     let interpreter = secure_lisp(&state, &Value::Null, limits, limits.max_exec_depth)?;
     interpreter
-        .compile_exprs(source)
+        .compile_exprs(script.source())
         .map(|_| ())
         .map_err(|error| map_ketos_error(&interpreter, error))
         .map_err(|error| match error {
@@ -1549,7 +1573,7 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
 }
 
 #[derive(Clone)]
-struct RuntimeState {
+pub(crate) struct RuntimeState {
     committed_root: Arc<Value>,
     memory: Arc<Mutex<Value>>,
     mutations: Arc<Mutex<Vec<Mutation>>>,
@@ -1621,11 +1645,31 @@ impl RuntimeState {
         Ok(())
     }
 
-    fn remaining_time(&self) -> Result<Duration> {
+    pub(crate) fn remaining_time(&self) -> Result<Duration> {
         self.deadline
             .checked_duration_since(Instant::now())
             .filter(|remaining| !remaining.is_zero())
             .ok_or(Error::ExecutionLimitExceeded)
+    }
+
+    pub(crate) fn read_memory(&self, path: &str) -> Result<Option<Value>> {
+        let memory_path = memory_path(path)?.ok_or_else(|| Error::InvalidPath(path.into()))?;
+        let memory = lock(&self.memory)?;
+        Ok(read_value_path(&memory, memory_path)?.cloned())
+    }
+
+    pub(crate) fn write_memory(&self, path: &str, value: Value) -> Result<()> {
+        if memory_path(path)?.is_none() {
+            return Err(Error::InvalidPath(path.into()));
+        }
+        self.write(path, value, &self.limits)
+    }
+
+    pub(crate) fn remove_memory(&self, path: &str) -> Result<()> {
+        if memory_path(path)?.is_none() {
+            return Err(Error::InvalidPath(path.into()));
+        }
+        self.remove(path, &self.limits)
     }
 
     fn script(&self, name: &str) -> Result<Option<Script>> {
@@ -1827,6 +1871,9 @@ fn run_guest_script(
     let script = state
         .script(name)?
         .ok_or_else(|| Error::ScriptNotFound(name.into()))?;
+    if script.language() == ScriptLanguage::Deed0212 {
+        return crate::deed_runtime::run(state, name, script.source(), input, limits);
+    }
     let interpreter = secure_lisp(state, input, limits, remaining_exec_depth)?;
     // Svit owns the language contract and virtual source identity; Ketos is
     // an interpreter implementation detail.
@@ -2491,6 +2538,10 @@ fn script_metadata(script: &Script) -> Value {
         (
             "documentation".into(),
             Value::String(script.documentation().into()),
+        ),
+        (
+            "language".into(),
+            Value::String(script.language().as_str().into()),
         ),
         ("source".into(), Value::String(script.source().into())),
     ]))

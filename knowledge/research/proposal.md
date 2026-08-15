@@ -332,7 +332,7 @@ A script record under `/lib/<name>` should contain:
 
 ```text
 {
-  language: "svit-lisp@2",
+  language: "svit-lisp@2" | "deed@0.2.12",
   source: "...",
   source_hash: "...",
   entrypoints: ["main"],

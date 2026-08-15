@@ -32,7 +32,7 @@ UNTRUSTED                         TRUSTED RUST CORE
 script / input / snapshot  --->  validation + limits + transaction
                                          |
                                          v
-                                  restricted Lisp VM
+                                  restricted guest runtime
                                          |
                                          v
                                 staged values and intents
@@ -95,6 +95,7 @@ The same ID appears in at least one focused test before status changes to
 | `TM-ESC-002` | Malformed guest value exploits interpreter/Rust conversion | Immutable typed containers, total conversion over supported types, checked sizes, and fuzzing | PARTIAL — unsupported-function and boundary tests pass; fuzzing remains |
 | `TM-ESC-003` | A model-authored built-in request reaches the host filesystem, executable search path, or inherited environment | Built-ins accept only committed process values or explicit JSON and expose no shell, filesystem, process, or environment interface | PARTIAL — focused tests pass; the surrounding agent runtime remains native in-process code |
 | `TM-ESC-004` | Build-time script compilation evaluates a guest macro or constant with ambient host I/O or module authority | Fresh compiler interpreter with null I/O and a null module loader | MITIGATED for `svit_script!` compilation |
+| `TM-ESC-005` | A Deed script obtains host authority by naming a standard or custom import | Exact compiled-import allowlist plus synthetic activation-local environment and captured-output grants | MITIGATED for the experimental Deed adapter; the native runner still requires outer containment |
 | `TM-INF-001` | Diagnostics reveal host paths, backtraces, pointers, or dependency internals | Domain errors, source-level sanitization, and diagnostic byte cap | PARTIAL — focused test passes; broader fuzzing remains |
 | `TM-ISO-001` | State or globals leak between processes or activations | Fresh VM and process-owned committed root; cross-process invariant tests | MITIGATED for the in-memory process API |
 | `TM-EFF-001` | Failed activation or host write/remove leaves process state partially committed | One validation and commit point per transition; rollback tests for every failure class | PARTIAL — activation and host mutation rollback cases pass; interpreter-panic containment remains required |

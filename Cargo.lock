@@ -824,6 +824,130 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
 
 [[package]]
+name = "deed-ast"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6d0c1450516e2a3af3361ef93e0b989d440942b70682be7c8a65faf0f44f627a"
+dependencies = [
+ "deed-diagnostics",
+]
+
+[[package]]
+name = "deed-codegen"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9696f71535239eb1dbf8bfdf24a8c9bddb74d99a2d27901fc92a117f38e0224c"
+dependencies = [
+ "deed-diagnostics",
+ "deed-mir",
+ "deed-rt",
+]
+
+[[package]]
+name = "deed-diagnostics"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48dea85baba7eb7fd14cf1575fef0a80742c1122c6372b9c9cf0d8dae19ba24c"
+
+[[package]]
+name = "deed-driver"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2738dc4d0836e27dc9ea57b20d50ecd3196bb2052db512f9dba1498aa729dfee"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-effects",
+ "deed-interp",
+ "deed-lexer",
+ "deed-parser",
+ "deed-resolve",
+ "deed-typeck",
+]
+
+[[package]]
+name = "deed-effects"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3044239636470fe3f562b1313ea254e77d4c994c169cd37a8d768e86c816a6f"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-resolve",
+]
+
+[[package]]
+name = "deed-interp"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e94e65e0cbdbd63e706e51003e35c2cddb66c84970faae4b3add6587f0c3592"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-resolve",
+ "deed-rt",
+]
+
+[[package]]
+name = "deed-lexer"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c31ced4941252f8adcf2bc5be293fc9db89ccd7d3c0338910458acd7697ac860"
+dependencies = [
+ "deed-diagnostics",
+]
+
+[[package]]
+name = "deed-mir"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "331a914715ad0d92bc6fb81740bf9fdcb415185b72ab3cdf8cd0c53ad1a5d4c3"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-resolve",
+ "deed-typeck",
+]
+
+[[package]]
+name = "deed-parser"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "055d0d10b7556ac2680a4a4a404b34d645d7b07b2a72d8cf2243e1ed8f63159f"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-lexer",
+]
+
+[[package]]
+name = "deed-resolve"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e99f6bef7a282442e67585d716b7efd93ac63075fdec1a3fd0b4a72ab08d94ef"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+]
+
+[[package]]
+name = "deed-rt"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac59a931c2ad3041eb0168f40b2180ba139ee69f935a2d9c902ab7d06d04b1cd"
+
+[[package]]
+name = "deed-typeck"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb7cd3673371eb8449f78b58d258e7044200d82d93444c184859faa225285fd1"
+dependencies = [
+ "deed-ast",
+ "deed-diagnostics",
+ "deed-resolve",
+]
+
+[[package]]
 name = "defmt"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1030,7 +1154,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2628,7 +2752,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3107,7 +3231,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b570b25f7617e43d59005d0990ccb79e950a423952cea19671b7a876da390adf"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -3178,7 +3302,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3694,7 +3818,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3752,7 +3876,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4180,6 +4304,10 @@ name = "svit"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "deed-codegen",
+ "deed-diagnostics",
+ "deed-driver",
+ "deed-mir",
  "everruns",
  "everruns-host",
  "everruns-test-support",
@@ -4222,6 +4350,14 @@ dependencies = [
 
 [[package]]
 name = "svit-support-agent-svit"
+version = "0.1.0"
+dependencies = [
+ "svit",
+ "tokio",
+]
+
+[[package]]
+name = "svit-support-agent-svit-deed"
 version = "0.1.0"
 dependencies = [
  "svit",
@@ -4303,7 +4439,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5130,7 +5266,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"
 dependencies = [
- "rand 0.9.5",
+ "rand 0.10.2",
 ]
 
 [[package]]
@@ -5574,7 +5710,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

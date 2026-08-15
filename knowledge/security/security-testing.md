@@ -57,6 +57,8 @@ Required for the initial vertical slice.
   explicit JSON; no shell, filesystem, executable, or environment input exists.
 - `TM-ESC-004`: build-time script compilation rejects module loading while
   evaluating guest macros and constants under null I/O.
+- `TM-ESC-005`: a Deed script asking for clock or any import outside Svit's
+  three synthetic grants is rejected before entering the script library.
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
   mounted data remains read-only through host and guest path operations.
 - `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an
