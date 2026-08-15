@@ -1,10 +1,15 @@
 //! Adapter-neutral contracts for durable process persistence.
 
 use async_trait::async_trait;
+use everruns::core::CompactionCheckpointStore;
+use everruns::core::events::Event;
+use everruns::core::typed_id::SessionId;
+use everruns_host::EventLog;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
-use crate::{Activation, Change, Mount, Process, ProcessId, Result, Value};
+use crate::{Activation, Builtins, Change, Mount, Process, ProcessId, Result, Value};
 
 const TRANSACTION_FORMAT: &str = "svit-transaction@1";
 const MAX_TRANSACTION_METADATA_BYTES: usize = 4096;
@@ -115,8 +120,8 @@ impl TransactionHead {
 
 /// One canonical transition in the sole durable stream for a process.
 ///
-/// Reasoning events and derived messages occur inside this envelope as mutations
-/// of `/thread/events` and `/thread/messages`.
+/// Process-state changes occur inside this envelope as typed memory-tree
+/// mutations. Canonical reasoning events use the separate paged `EventLog`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessTransaction {
@@ -238,6 +243,23 @@ impl ProcessTransaction {
         }
         *process = candidate;
         Ok(())
+    }
+
+    /// Applies one event to a reconstruction that cannot be observed until
+    /// the store has validated its requested recovery boundary.
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn replay_unpublished(&self, process: &mut Process) -> Result<()> {
+        self.validate()?;
+        if process.id() != &self.address {
+            return Err(crate::Error::InvalidPersistence(
+                "transaction address does not match process".into(),
+            ));
+        }
+        process.apply_persisted_mutations_for_recovery(
+            self.process_version_before,
+            self.process_version_after,
+            &self.mutations,
+        )
     }
 
     /// Verifies that this transaction is the unique next record after `head`.
@@ -518,12 +540,39 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     fn root_hash(&self) -> String;
     /// Returns an owned committed read projection with current runtime mounts.
     fn process_projection(&self) -> Process;
+    /// Returns the paged canonical reasoning event log paired with this process.
+    ///
+    /// The log is durable process infrastructure, not a node in the memory
+    /// tree. Implementations must partition it by the same process identity.
+    fn event_log(&self) -> Arc<dyn EventLog>;
+    /// Returns the durable context checkpoint store paired with this process.
+    ///
+    /// Checkpoints compact model context only; the canonical event history
+    /// remains readable through [`Self::event_log`].
+    fn compaction_checkpoint_store(&self) -> Arc<dyn CompactionCheckpointStore>;
+    /// Returns whether this process inherited the supplied session's immutable
+    /// event-history prefix through a durable fork boundary.
+    async fn continues_thread_history(&self, session_id: SessionId) -> Result<bool>;
+    /// Idempotently imports canonical events from the former materialized
+    /// `/thread/events` representation during bounded-state migration.
+    async fn import_thread_events(&self, events: &[Event]) -> Result<()>;
+    /// Reads a bounded newest-first window for host presentation without
+    /// replaying the complete event log.
+    async fn recent_thread_events(&self, session_id: SessionId, limit: usize)
+    -> Result<Vec<Event>>;
     /// Durably commits one host write.
     async fn write(&mut self, path: &str, value: Value) -> Result<Change>;
     /// Durably commits one host removal.
     async fn remove(&mut self, path: &str) -> Result<Change>;
     /// Executes guest Lisp and durably commits its successful transition.
     async fn exec(&mut self, path: &str, input: Value) -> Result<Activation>;
+    /// Executes guest Lisp with this runtime's host-attached built-ins.
+    async fn exec_with_builtins(
+        &mut self,
+        path: &str,
+        input: Value,
+        builtins: &Builtins,
+    ) -> Result<Activation>;
     /// Durably appends one host-supplied inbox value.
     async fn enqueue_inbox(&mut self, value: Value) -> Result<Change>;
     /// Durably removes the exact expected inbox head.
@@ -532,14 +581,8 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<Change>;
     /// Durably initializes Svit-owned conversation and reasoning state.
     async fn initialize_thread_state(&mut self, value: Value) -> Result<Change>;
-    /// Durably updates thread metadata without rewriting retained history.
-    async fn update_thread_metadata(
-        &mut self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> Result<Change>;
-    /// Durably appends one canonical reasoning event and newly derived messages.
-    async fn append_thread_event(&mut self, event: Value, messages: Vec<Value>) -> Result<Change>;
+    /// Replaces legacy materialized thread history with bounded metadata.
+    async fn replace_thread_state(&mut self, value: Value) -> Result<Change>;
     /// Durably refreshes the descriptive built-in catalog from current host grants.
     async fn replace_builtins(&mut self, value: Value) -> Result<Change>;
     /// Queries retained process transactions.

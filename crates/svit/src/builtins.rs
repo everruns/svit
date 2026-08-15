@@ -153,16 +153,16 @@ impl BuiltinResult {
         Self::Error(message.into())
     }
 
-    fn into_tool_result(self) -> ToolExecutionResult {
+    fn into_value_result(self) -> Result<JsonValue, String> {
         match self {
             Self::Success(value) => {
                 if json_exceeds_limit(&value, MAX_TOOL_OUTPUT_BYTES) {
-                    ToolExecutionResult::tool_error("built-in output limit exceeded")
+                    Err("built-in output limit exceeded".into())
                 } else {
-                    ToolExecutionResult::success(value)
+                    Ok(value)
                 }
             }
-            Self::Error(message) => ToolExecutionResult::tool_error(sanitize_diagnostic(message)),
+            Self::Error(message) => Err(sanitize_diagnostic(message)),
         }
     }
 }
@@ -373,20 +373,32 @@ impl Builtins {
         input: JsonValue,
         process: Arc<Mutex<Process>>,
     ) -> ToolExecutionResult {
+        match self.execute_value(name, input, process).await {
+            Ok(value) => ToolExecutionResult::success(value),
+            Err(message) => ToolExecutionResult::tool_error(message),
+        }
+    }
+
+    pub(crate) async fn execute_value(
+        &self,
+        name: &str,
+        input: JsonValue,
+        process: Arc<Mutex<Process>>,
+    ) -> Result<JsonValue, String> {
         let Some(builtin) = self.entries.get(name).cloned() else {
-            return ToolExecutionResult::tool_error("built-in not found");
+            return Err("built-in not found".into());
         };
         // THREAT[TM-DOS-008]: Every built-in and host extension crosses the
         // same aggregate JSON input/output limits before and after execution.
         if json_exceeds_limit(&input, MAX_TOOL_INPUT_BYTES) {
-            return ToolExecutionResult::tool_error("built-in input limit exceeded");
+            return Err("built-in input limit exceeded".into());
         }
         // THREAT[TM-CAP-006]: Registration is host-only, and the public call
         // context grants committed reads without process mutation authority.
         builtin
             .execute(BuiltinContext::new(process), input)
             .await
-            .into_tool_result()
+            .into_value_result()
     }
 }
 

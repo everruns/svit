@@ -46,11 +46,16 @@ The initial process exposes one conventional namespace:
 Thread state, memory, scripts, mounts, system metadata, and outbox form
 one committed logical root. Building a `Svit` replaces the bare process's null
 `/thread` node with optional host instructions, the Svit-owned system prompt,
-projected messages, and canonical events. The process address is the Svit
+and its owning process address. The process address is the Svit
 identity; Svit does not accept a second runtime name. Instructions are wrapped in
 an `<instructions>` block. Restore retains them, while fork recomposes the base
 prompt for the child address. Construction also refreshes `/bin` from the
 attached built-in registry.
+Canonical events are stored in a paged host `EventLog` partitioned by process
+and session. `/thread` is bounded metadata, so snapshots and restore never
+decode conversation history. Everruns compaction checkpoints replace older
+model context with a compact payload plus a raw suffix while leaving canonical
+events queryable.
 Each `/bin/<name>` record contains a description, input schema, output contract,
 effect class, and limits. `/thread` and `/bin` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
@@ -144,12 +149,21 @@ depth. `read` returns a value. `stat` returns the facts record for one node.
 below a mount whose descriptor grants writes. The `/mounts` descriptor map
 itself and `/bin` are read-only. The model-facing `exec` resolves
 `/lib/<name>` to a transactional script activation or `/bin/<name>` to an
-attached built-in. `Process::exec` and Svit Lisp accept only `/lib` paths
-because a serializable process does not own host built-in authority.
-`/bin` entries are descriptive and never grant authority. Inside Svit Lisp,
-these operations use
-the activation's transactional view; nested `exec` shares its transaction,
-deadline, output limits, and independent nesting-depth limit.
+attached built-in. Svit-hosted Lisp resolves the same two namespaces; bare
+`Process::exec` accepts only `/lib` because a serializable process does not own
+host built-in authority. `/bin` entries are descriptive and never grant
+authority.
+
+When Lisp reaches `/bin`, Svit suspends the guest, executes the exact
+host-attached built-in once, and restarts the script with prior built-in results
+recorded for deterministic replay. Guest execution segments share one
+wall-time budget, while time awaiting the external built-in does not consume
+that VM budget. Successful completion commits the final transactional working
+copy once. A later script failure rolls back memory, scripts, mounts, messages,
+and version, but cannot roll back the already completed external effect.
+Nested `/lib` execution continues to share its transaction, deadline, output
+limits, and independent nesting-depth limit. Built-in calls share the same
+bounded call count.
 Builders, snapshot, restore, and fork are
 lifecycle operations outside this process contract. `svit::Svit` preserves
 these names and semantics rather than introducing another vocabulary. A host
@@ -198,8 +212,9 @@ reconstruct this registry after the Svit instance is built.
 
 Hosts choosing a smaller built-in set have no HTTP authority unless they add
 it explicitly with an allowlist and transport. `/bin/llm` uses one
-host-selected model and driver. Neither executable is a Svit activation, and
-external effects cannot be rolled back with process state.
+host-selected model and driver. A built-in remains a host dispatch rather than
+a nested activation, even when Lisp invokes it, and its external effects cannot
+be rolled back with process state.
 
 A running Svit publishes host-only operational events. A commit event is a
 notification that state changed; it does not expose the process root. The host
@@ -294,13 +309,17 @@ The adopted durable-storage design reconstructs this same committed state from
 an immutable base plus one address-keyed tail of uniform `ProcessTransaction`
 records. Transaction position is separate from process version because future
 receipt-only metadata need not change process state. Both are separate from the
-Everruns sequence stored inside values under `/thread/events`: transaction
-position orders durable envelopes, process version orders committed roots, and
-Everruns sequence orders canonical reasoning events within the root. On-demand
-snapshots support bounded replay, detached forks, migration, and safe history
-cuts; they are not written on every commit. The local `DurableProcess` adapter
-implements the process and runnable reasoning transition slices; durable
-control receipts remain under implementation. See
+Everruns sequence stored in the paired paged `EventLog`: transaction position
+orders durable envelopes, process version orders committed roots, and Everruns
+sequence orders canonical reasoning events. On-demand
+snapshots support detached forks, migration, and safe history cuts; they are
+not written on every commit. The local Turso adapter separately atomically
+replaces one internal recovery checkpoint every 32 transactions and after the
+first resume of an older tail. It validates that checkpoint and reduces only
+the newer tail during ordinary resume without deleting retained transactions.
+The local `DurableProcess` adapter implements the process and runnable
+reasoning transition slices; durable control receipts remain under
+implementation. See
 [Single-Svit Process Transaction Persistence](persistence.md).
 
 ## Fork
@@ -319,11 +338,9 @@ memory contents.
 
 `svit::Svit` binds one reason/act loop and one durable conversation thread to
 one process. Everruns implements the current loop behind the Svit API. Each
-durable Everruns event is validated and committed under `/thread`; callers do
-not construct an external Everruns runtime and attach Svit as a tool.
-`/thread/events` is the canonical replay source. `/thread/messages` is rebuilt
-from those events at the host-only commit boundary and checked against them on
-resume. `/bin` is refreshed from the currently attached built-in registry, so
+durable Everruns event is validated and committed through Svit's paired paged
+`EventLog`; callers do not construct an external Everruns runtime and attach
+Svit as a tool. `/thread` is session metadata only. `/bin` is refreshed from the currently attached built-in registry, so
 a restored process does not retain execution authority omitted by the new host.
 The model can inspect manuals through ordinary `discover` and `read` operations.
 
@@ -338,10 +355,10 @@ strings. Live outbox receivers may await completion before, during, or after
 any turn. `block` stops admission, drains the committed queue, and joins the
 loop.
 
-A completed process snapshot therefore carries conversation history as well as
-memory and scripts. Restore resumes the recorded thread. A process fork
-inherits the committed thread and then appends independently as a distinct
-child process. Each started Svit owns an independent local Tokio task; no
+A process snapshot carries memory, scripts, and thread metadata, not event
+history. A process-only fork starts a fresh session. A durable
+`DurableProcess::fork` shares the exact immutable event prefix and checkpoints
+whose source sequence lies in that prefix, then appends independently. Each started Svit owns an independent local Tokio task; no
 distributed scheduler, timer, or automatic process discovery is implied.
 
 Reasoning-event commits and Svit Lisp activations are individually atomic process

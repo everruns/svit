@@ -18,6 +18,7 @@ categories = ["development-tools", "virtualization"]
 [workspace.dependencies]
 async-trait = "0.1"
 everruns = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false, features = ["openai"] }
+everruns-builtins = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false }
 everruns-host = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false }
 everruns-test-support = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false, features = ["host", "sim"] }
 jaq-core = "3.1"

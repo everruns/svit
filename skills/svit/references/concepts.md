@@ -36,7 +36,10 @@ also supports virtual mounts over a real folder or a materialized host-selected
 Turso query, resolved one node at a time. Scheduling, remote message delivery,
 durable live projections, distributed identity, durable control receipts, and
 production isolation are deferred. Optional built-ins remain outside Svit Lisp
-and process transactions.
+state: a Svit-hosted script can invoke them by `/bin` path, but the attached
+implementation and authority remain host-owned. Svit suspends and replays pure
+guest execution around the async call, then commits guest state once. External
+effects are immediate and cannot be rolled back with that state.
 
 `/thread` contains host-managed, guest-readable loop and replay state. The
 namespace reserves `/tasks` and `/children`; `/inbox` is a host-managed durable

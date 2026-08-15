@@ -1,4 +1,6 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use everruns_test_support::{
@@ -6,14 +8,17 @@ use everruns_test_support::{
 };
 use serde_json::json;
 use svit::{
-    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins, ContentPart,
-    HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError, Limits, Message,
-    MessageRole, ObserveError, Process, Reasoner, Script, Svit, SvitError, SvitEvent, Value, value,
+    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins, Change,
+    ContentPart, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
+    Limits, Message, MessageRole, ObserveError, Process, Reasoner, Script, Svit, SvitError,
+    SvitEvent, Value, value,
 };
 #[cfg(feature = "persistence-turso")]
-use svit::{Mutation, TransactionQuery, TursoProcessStore};
+use svit::{TransactionQuery, TursoProcessStore};
 
 struct FixtureHttp;
+
+struct CountingFixtureHttp(Arc<AtomicUsize>);
 
 struct ReadValue;
 
@@ -122,6 +127,14 @@ impl HttpTransport for FixtureHttp {
     }
 }
 
+#[async_trait]
+impl HttpTransport for CountingFixtureHttp {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpTransportError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        FixtureHttp.send(request).await
+    }
+}
+
 #[tokio::test]
 async fn svit_builder_requires_a_reasoner() {
     let result = Svit::builder("svit://local/missing-provider")
@@ -151,6 +164,9 @@ async fn svit_owns_the_system_prompt_without_host_instructions() {
     };
     assert!(system_prompt.contains("svit://local/base-prompt"));
     assert!(system_prompt.contains("Use its memory tree for durable facts and working state."));
+    assert!(system_prompt.contains("(exec \"/bin/name\" input)"));
+    assert!(system_prompt.contains("(exec \"/lib/name\" input)"));
+    assert!(system_prompt.contains("immediate external effect"));
     assert!(!system_prompt.contains("<instructions>"));
 }
 
@@ -201,6 +217,56 @@ async fn svit_builder_combines_process_definition_and_blocking_inbox_loop() {
 }
 
 #[tokio::test]
+async fn svit_uses_the_everruns_iteration_default() {
+    let turns = (0..9)
+        .map(|_| SimTurn::tool_call("discover", json!({"path": "/memory"})))
+        .chain([SimTurn::text("finished after discovery")]);
+    let mut svit = Svit::builder("svit://local/default-turn-iterations")
+        .unwrap()
+        .reasoner(scripted_reasoner(turns))
+        .build()
+        .await
+        .unwrap();
+    let inbox = svit.inbox();
+    let mut outbox = svit.outbox();
+
+    svit.start().unwrap();
+    inbox.send(Message::user("finish the task")).await.unwrap();
+    svit.block().await.unwrap();
+
+    assert_eq!(
+        outbox.recv().await.unwrap().text(),
+        Some("finished after discovery")
+    );
+    assert_eq!(svit.read("/inbox").unwrap(), Some(value!([])));
+}
+
+#[tokio::test]
+async fn iteration_limit_does_not_publish_a_tool_call_as_a_completed_turn() {
+    let mut svit = Svit::builder("svit://local/limited-turn")
+        .unwrap()
+        .max_iterations(1)
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call("discover", json!({"path": "/memory"})),
+            SimTurn::text("unreached answer"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+    let inbox = svit.inbox();
+    let mut outbox = svit.outbox();
+
+    svit.start().unwrap();
+    inbox.send(Message::user("finish the task")).await.unwrap();
+    let error = svit.block().await.unwrap_err();
+
+    assert!(error.to_string().contains("maximum reason/act iterations"));
+    assert!(matches!(outbox.try_recv(), Err(ObserveError::Empty)));
+    let queued = svit.read("/inbox").unwrap().unwrap().to_json();
+    assert_eq!(queued.as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
 #[cfg(feature = "persistence-turso")]
 // THREAT[TM-AUD-001] THREAT[TM-MSG-002] THREAT[TM-PERS-002]
 async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reasoning() {
@@ -246,21 +312,9 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
         .map(|event| event.source().to_owned())
         .collect::<Vec<_>>();
     assert!(sources.iter().any(|source| source == "builtins.refresh"));
-    assert!(sources.iter().any(|source| source == "reasoning"));
     assert!(sources.iter().any(|source| source == "inbox.enqueue"));
     assert!(sources.iter().any(|source| source == "inbox.acknowledge"));
-    for event in events.iter().filter(|event| event.source() == "reasoning") {
-        assert!(matches!(
-            event.mutations().first(),
-            Some(Mutation::Append { path, values })
-                if path == "/thread/events" && values.len() == 1
-        ));
-        assert!(event.mutations().iter().all(|mutation| matches!(
-            mutation,
-            Mutation::Append { path, .. }
-                if path == "/thread/events" || path == "/thread/messages"
-        )));
-    }
+    assert!(!sources.iter().any(|source| source == "reasoning"));
     let resumed = Svit::persisted(durable)
         .unwrap()
         .reasoner(scripted_reasoner([]))
@@ -273,20 +327,93 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
         resumed.read("/memory/status").unwrap(),
         Some(value!("complete"))
     );
+    assert!(resumed.messages().unwrap().is_empty());
     assert_eq!(
-        serde_json::to_value(resumed.messages().unwrap()).unwrap(),
+        serde_json::to_value(resumed.recent_messages(128).await.unwrap()).unwrap(),
         expected_messages
     );
     assert_eq!(
-        resumed.messages().unwrap()[0].text(),
+        resumed.recent_messages(128).await.unwrap()[0].text(),
         Some("persist this turn")
     );
     assert_eq!(
-        resumed.messages().unwrap().last().unwrap().text(),
+        resumed
+            .recent_messages(128)
+            .await
+            .unwrap()
+            .last()
+            .unwrap()
+            .text(),
         Some("persisted answer")
     );
     assert_eq!(resumed.read("/inbox").unwrap(), Some(value!([])));
     assert_eq!(resumed.version().unwrap(), expected_version);
+}
+
+#[tokio::test]
+#[cfg(feature = "persistence-turso")]
+// THREAT[TM-AUD-001] THREAT[TM-FORK-001]
+async fn durable_fork_shares_an_immutable_event_prefix_and_diverges_afterward() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let parent = store
+        .create(Process::new("svit://local/persisted-thread-parent").unwrap())
+        .await
+        .unwrap();
+    let mut parent = Svit::persisted(parent)
+        .unwrap()
+        .reasoner(scripted_reasoner([SimTurn::text("parent answer")]))
+        .build()
+        .await
+        .unwrap();
+    let inbox = parent.inbox();
+    parent.start().unwrap();
+    inbox.send(Message::user("parent question")).await.unwrap();
+    parent.block().await.unwrap();
+    let parent_history = parent.recent_messages(32).await.unwrap();
+    drop(parent);
+
+    let parent = store
+        .resume("svit://local/persisted-thread-parent")
+        .await
+        .unwrap();
+    let child = parent
+        .fork("svit://local/persisted-thread-child")
+        .await
+        .unwrap();
+    let mut child = Svit::persisted(child)
+        .unwrap()
+        .reasoner(scripted_reasoner([SimTurn::text("child answer")]))
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(child.recent_messages(32).await.unwrap()).unwrap(),
+        serde_json::to_value(&parent_history).unwrap()
+    );
+
+    let inbox = child.inbox();
+    child.start().unwrap();
+    inbox.send(Message::user("child question")).await.unwrap();
+    child.block().await.unwrap();
+    let child_history = child.recent_messages(32).await.unwrap();
+    assert_eq!(child_history.len(), 4);
+    assert_eq!(child_history[2].text(), Some("child question"));
+    assert_eq!(child_history[3].text(), Some("child answer"));
+
+    let parent = store
+        .resume("svit://local/persisted-thread-parent")
+        .await
+        .unwrap();
+    let parent = Svit::persisted(parent)
+        .unwrap()
+        .reasoner(scripted_reasoner([]))
+        .build()
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(parent.recent_messages(32).await.unwrap()).unwrap(),
+        serde_json::to_value(parent_history).unwrap()
+    );
 }
 
 #[tokio::test]
@@ -320,6 +447,16 @@ async fn http_allowlist_layers_onto_a_custom_builtin_set() {
 
 #[tokio::test]
 async fn svit_commit_notifications_are_observed_through_the_contract() {
+    async fn next_commit(events: &mut svit::Events) -> Change {
+        loop {
+            match events.recv().await.unwrap() {
+                SvitEvent::Committed(change) => return change,
+                SvitEvent::Message(_) => {}
+                SvitEvent::Failed(error) => panic!("Svit failed: {error}"),
+            }
+        }
+    }
+
     let mut svit = Svit::builder("svit://local/state-events")
         .unwrap()
         .reasoner(scripted_reasoner([SimTurn::text("done")]))
@@ -330,26 +467,19 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
     let mut events = svit.events();
     let mut second_events = svit.events();
     let mut outbox = svit.outbox();
-    assert_eq!(events.try_recv(), Err(ObserveError::Empty));
+    assert!(matches!(events.try_recv(), Err(ObserveError::Empty)));
     assert!(matches!(outbox.try_recv(), Err(ObserveError::Empty)));
 
     svit.start().unwrap();
     inbox.send(Message::user("run")).await.unwrap();
-    let queued = events.recv().await.unwrap();
-    assert!(matches!(queued, SvitEvent::Committed { .. }));
-    assert!(matches!(
-        second_events.recv().await.unwrap(),
-        SvitEvent::Committed { .. }
-    ));
+    next_commit(&mut events).await;
+    next_commit(&mut second_events).await;
     outbox.recv().await.unwrap();
-    let completed = events.recv().await.unwrap();
-    assert!(matches!(
-        second_events.recv().await.unwrap(),
-        SvitEvent::Committed { .. }
-    ));
+    let completed = next_commit(&mut events).await;
+    next_commit(&mut second_events).await;
     svit.block().await.unwrap();
 
-    assert!(matches!(completed, SvitEvent::Committed { .. }));
+    assert!(completed.touches("/inbox"));
     let (root, version) = svit.read_versioned("/").unwrap();
     assert_eq!(root, svit.read("/").unwrap());
     assert_eq!(version, svit.version().unwrap());
@@ -379,7 +509,7 @@ async fn reasoning_tool_commits_are_observed_through_the_contract() {
     let changes = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {
             SvitEvent::Committed(change) => Some(change),
-            SvitEvent::Failed(_) => None,
+            SvitEvent::Message(_) | SvitEvent::Failed(_) => None,
         })
         .collect::<Vec<_>>();
     svit.block().await.unwrap();
@@ -420,7 +550,7 @@ async fn started_svit_processes_inbox_messages_in_commit_order() {
 }
 
 #[tokio::test]
-async fn reasoning_loop_projects_prompt_messages_and_events() {
+async fn reasoning_loop_exposes_bounded_thread_metadata_and_host_history() {
     // THREAT[TM-CAP-005]: The built-in catalog comes from the exact host
     // runtime attached to this process and remains read-only to guest code.
     let instructions = "Inspect your projected runtime state.";
@@ -430,8 +560,6 @@ async fn reasoning_loop_projects_prompt_messages_and_events() {
         .builtins(Builtins::new())
         .reasoner(scripted_reasoner([
             SimTurn::tool_call("read", json!({"path": "/thread/system_prompt"})),
-            SimTurn::tool_call("read", json!({"path": "/thread/messages"})),
-            SimTurn::tool_call("read", json!({"path": "/thread/events"})),
             SimTurn::tool_call("discover", json!({"path": "/bin"})),
             SimTurn::tool_call("read", json!({"path": "/bin/search"})),
             SimTurn::text("projection inspected"),
@@ -450,10 +578,10 @@ async fn reasoning_loop_projects_prompt_messages_and_events() {
         svit.read("/thread/instructions").unwrap(),
         Some(value!(instructions))
     );
-    assert_eq!(svit.read("/thread/messages").unwrap(), Some(value!([])));
-    let initial_events = svit.read("/thread/events").unwrap().unwrap().to_json();
-    assert_eq!(initial_events.as_array().unwrap().len(), 1);
-    assert_eq!(initial_events[0]["type"], "session.started");
+    let thread = svit.read("/thread").unwrap().unwrap().to_json();
+    assert_eq!(thread["format"], "svit-thread@8");
+    assert!(thread.get("messages").is_none());
+    assert!(thread.get("events").is_none());
     assert_eq!(svit.discover("/bin").unwrap(), vec!["jq", "search"]);
     let search_manual = svit.read("/bin/search").unwrap().unwrap().to_json();
     assert_eq!(search_manual["name"], "search");
@@ -472,10 +600,9 @@ async fn reasoning_loop_projects_prompt_messages_and_events() {
         .unwrap();
     svit.block().await.unwrap();
 
-    let projected_messages = svit.read("/thread/messages").unwrap().unwrap().to_json();
     let session_messages = serde_json::to_value(svit.messages().unwrap()).unwrap();
-    assert_eq!(projected_messages, session_messages);
-    assert!(!svit.discover("/thread/events").unwrap().is_empty());
+    let history = serde_json::to_value(svit.recent_messages(32).await.unwrap()).unwrap();
+    assert_eq!(history, session_messages);
     let tool_results = svit
         .messages()
         .unwrap()
@@ -483,12 +610,10 @@ async fn reasoning_loop_projects_prompt_messages_and_events() {
         .filter(|message| message.role == MessageRole::ToolResult)
         .map(message_text)
         .collect::<Vec<_>>();
-    assert_eq!(tool_results.len(), 5);
+    assert_eq!(tool_results.len(), 3);
     assert!(tool_results[0].contains(instructions));
-    assert!(tool_results[1].contains("inspect projection"));
-    assert!(tool_results[2].contains("session_id"));
-    assert!(tool_results[3].contains("search"));
-    assert!(tool_results[4].contains("input_schema"));
+    assert!(tool_results[1].contains("search"));
+    assert!(tool_results[2].contains("input_schema"));
 }
 
 #[tokio::test]
@@ -519,25 +644,20 @@ async fn resumed_svit_refreshes_builtin_discovery_to_current_host_grants() {
 }
 
 #[tokio::test]
-async fn reasoning_resume_rejects_a_divergent_message_projection() {
-    // THREAT[TM-AUD-001]: Events are canonical; a forged derived history must
-    // not become the conversation seen by a resumed agent.
-    let mut svit = Svit::builder("svit://local/projection-source")
+async fn reasoning_resume_rejects_materialized_thread_history() {
+    // THREAT[TM-AUD-001]: Canonical events are external, paged host storage.
+    // A process snapshot may not smuggle a second mutable history projection.
+    let svit = Svit::builder("svit://local/projection-source")
         .unwrap()
-        .reasoner(scripted_reasoner([SimTurn::text("recorded answer")]))
+        .reasoner(scripted_reasoner([]))
         .build()
         .await
         .unwrap();
-    let inbox = svit.inbox();
-    svit.start().unwrap();
-    inbox.send(Message::user("record this")).await.unwrap();
-    svit.block().await.unwrap();
-
     let mut process = svit
         .fork_process("svit://local/projection-tampered")
         .unwrap();
     let mut state = process.read("/thread").unwrap().unwrap().to_json();
-    state["messages"][0]["id"] = state["messages"][1]["id"].clone();
+    state["messages"] = json!([]);
     process
         .replace_thread_state(svit::Value::from_json(state).unwrap())
         .unwrap();
@@ -553,15 +673,13 @@ async fn reasoning_resume_rejects_a_divergent_message_projection() {
     assert!(
         error
             .to_string()
-            .contains("messages do not match the Everruns event projection"),
+            .contains("bounded /thread metadata contains materialized history"),
         "{error}"
     );
 }
 
 #[tokio::test]
-async fn reasoning_resume_rejects_an_invalid_canonical_event_sequence() {
-    // THREAT[TM-AUD-001]: The EventLog SPI requires a unique, increasing
-    // sequence. A snapshot cannot forge the replay order accepted on resume.
+async fn reasoning_resume_rejects_thread_metadata_without_its_owner() {
     let svit = Svit::builder("svit://local/event-sequence-source")
         .unwrap()
         .reasoner(scripted_reasoner([]))
@@ -572,7 +690,7 @@ async fn reasoning_resume_rejects_an_invalid_canonical_event_sequence() {
         .fork_process("svit://local/event-sequence-tampered")
         .unwrap();
     let mut state = process.read("/thread").unwrap().unwrap().to_json();
-    state["events"][0]["sequence"] = json!(2);
+    state.as_object_mut().unwrap().remove("process_id");
     process
         .replace_thread_state(svit::Value::from_json(state).unwrap())
         .unwrap();
@@ -586,13 +704,13 @@ async fn reasoning_resume_rejects_an_invalid_canonical_event_sequence() {
         Err(error) => error,
     };
     assert!(
-        error.to_string().contains("event sequence is invalid"),
+        error.to_string().contains("missing /thread process_id"),
         "{error}"
     );
 }
 
 #[tokio::test]
-async fn svit_resumes_its_thread_from_the_process_snapshot() {
+async fn process_snapshot_restores_thread_metadata_but_not_event_history() {
     let prompt = "Keep support answers concise.";
     let mut agent = Svit::builder("svit://local/durable-agent")
         .unwrap()
@@ -616,7 +734,8 @@ async fn svit_resumes_its_thread_from_the_process_snapshot() {
         .await
         .unwrap();
 
-    assert_eq!(resumed.messages().unwrap().len(), 2);
+    assert!(resumed.messages().unwrap().is_empty());
+    assert!(resumed.recent_messages(32).await.unwrap().is_empty());
     assert_eq!(
         resumed.read("/thread/instructions").unwrap(),
         Some(value!(prompt))
@@ -636,18 +755,18 @@ async fn svit_resumes_its_thread_from_the_process_snapshot() {
     resumed.start().unwrap();
     inbox.send(Message::user("second question")).await.unwrap();
     resumed.block().await.unwrap();
-    assert_eq!(resumed.messages().unwrap().len(), 4);
+    assert_eq!(resumed.messages().unwrap().len(), 2);
     assert_eq!(
         resumed.messages().unwrap()[0].text(),
-        Some("first question")
+        Some("second question")
     );
-    assert_eq!(resumed.messages().unwrap()[1].text(), Some("first answer"));
+    assert_eq!(resumed.messages().unwrap()[1].text(), Some("second answer"));
 }
 
 #[tokio::test]
 async fn child_process_owns_an_isolated_forked_process() {
-    // THREAT[TM-FORK-001]: A subagent inherits committed thread state but
-    // appends future events only to its own process.
+    // THREAT[TM-FORK-001]: A process-only fork copies process state but starts
+    // a new isolated event session.
     let mut parent = Svit::builder("svit://local/parent-agent")
         .unwrap()
         .instructions("Keep inherited context.")
@@ -695,7 +814,7 @@ async fn child_process_owns_an_isolated_forked_process() {
 
     assert_eq!(parent.root_hash().unwrap(), parent_hash);
     assert_eq!(parent.messages().unwrap().len(), 2);
-    assert_eq!(child.messages().unwrap().len(), 4);
+    assert_eq!(child.messages().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -1006,6 +1125,121 @@ async fn builtin_http_uses_the_host_allowlist_and_transport() {
 }
 
 #[tokio::test]
+#[cfg(feature = "persistence-turso")]
+// THREAT[TM-CAP-004] THREAT[TM-EFF-005] THREAT[TM-PERS-002]
+async fn persisted_model_authored_script_invokes_host_http_builtin() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let process = Process::new("svit://local/scripted-http").unwrap();
+    let durable = store.create(process).await.unwrap();
+    let requests = Arc::new(AtomicUsize::new(0));
+    let builtins = Builtins::new().http(
+        HttpAllowlist::new().allow("https://8.8.8.8/data"),
+        CountingFixtureHttp(requests.clone()),
+    );
+    let mut svit = Svit::persisted(durable)
+        .unwrap()
+        .builtins(builtins)
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call(
+                "write",
+                json!({
+                    "path": "/lib/fetch",
+                    "value": {
+                        "source": "(define (main input) ((lambda (response) (do (write \"/memory/http-response\" response) response)) (exec \"/bin/http\" input)))",
+                        "documentation": "Fetch one HTTP resource."
+                    }
+                }),
+            ),
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "path": "/lib/fetch",
+                    "input": {"method": "GET", "url": "https://8.8.8.8/data"}
+                }),
+            ),
+            SimTurn::text("fetched through the saved script"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox
+        .send(Message::user("create and invoke a reusable fetch script"))
+        .await
+        .unwrap();
+    svit.block().await.unwrap();
+
+    let tool_results = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .filter(|message| message.role == MessageRole::ToolResult)
+        .map(message_text)
+        .collect::<Vec<_>>();
+    assert_eq!(tool_results.len(), 2);
+    assert!(
+        tool_results[1].contains("\\\"status\\\":200"),
+        "{}",
+        tool_results[1]
+    );
+    assert!(
+        tool_results[1].contains("source") && tool_results[1].contains("fixture"),
+        "{}",
+        tool_results[1]
+    );
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert!(
+        svit.read("/memory/http-response")
+            .unwrap()
+            .unwrap()
+            .to_json()
+            .as_str()
+            .unwrap()
+            .contains("fixture")
+    );
+    assert_eq!(svit.read("/inbox").unwrap(), Some(value!([])));
+}
+
+#[tokio::test]
+// THREAT[TM-EFF-001] THREAT[TM-EFF-005]
+async fn failed_script_does_not_repeat_builtin_or_commit_guest_state() {
+    let requests = Arc::new(AtomicUsize::new(0));
+    let builtins = Builtins::new().http(
+        HttpAllowlist::new().allow("https://8.8.8.8/data"),
+        CountingFixtureHttp(requests.clone()),
+    );
+    let mut svit = Svit::builder("svit://local/failed-scripted-http")
+        .unwrap()
+        .library(
+            "fetch-then-fail",
+            Script::new(
+                "(define (main input) (do (write \"/memory/uncommitted\" true) (exec \"/bin/http\" input) (panic \"failed after HTTP\")))",
+            ),
+        )
+        .builtins(builtins)
+        .reasoner(scripted_reasoner([]))
+        .build()
+        .await
+        .unwrap();
+    let version = svit.version().unwrap();
+
+    let error = svit
+        .exec(
+            "/lib/fetch-then-fail",
+            value!({"method": "GET", "url": "https://8.8.8.8/data"}),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(error.to_string().contains("failed after HTTP"));
+    assert_eq!(requests.load(Ordering::SeqCst), 1);
+    assert_eq!(svit.version().unwrap(), version);
+    assert!(svit.read("/memory/uncommitted").unwrap().is_none());
+}
+
+#[tokio::test]
 async fn builtin_llm_uses_only_the_host_selected_nested_model() {
     // THREAT[TM-EFF-005]: Nested model execution requires a host-selected
     // driver and remains outside the process transaction.
@@ -1087,9 +1321,10 @@ async fn builtin_spawn_runs_and_retains_an_isolated_child_svit() {
         child.read("/system/lineage/parent").unwrap(),
         Some(value!("svit://local/native-parent"))
     );
-    let messages = child.read("/thread/messages").unwrap().unwrap().to_json();
-    assert!(messages.to_string().contains("analyze this"));
-    assert!(messages.to_string().contains("child answer"));
+    let thread = child.read("/thread").unwrap().unwrap().to_json();
+    assert_eq!(thread["process_id"], "svit://local/native-child");
+    assert!(thread.get("messages").is_none());
+    assert!(thread.get("events").is_none());
     let duplicate_rejected = parent
         .messages()
         .unwrap()

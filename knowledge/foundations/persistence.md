@@ -28,7 +28,7 @@ One persistence model must provide all of these properties:
 
 | Property | Contract |
 | --- | --- |
-| Resumable | Load one base, replay its ordered transaction tail, validate every version and root hash, then continue at the next position |
+| Resumable | Load one base and the newest validated recovery checkpoint at or before the target, reduce its ordered newer tail, validate complete state and roots at bounded boundaries, then continue at the next position |
 | Forkable | Create a child base from an exact committed parent position without copying the full parent state |
 | Snapshot-capable | Materialize an on-demand state image for replay acceleration, migration, fork detachment, or a history cut |
 | Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the process root and runnable reasoning, but not receipts |
@@ -74,9 +74,9 @@ Svit(address) = Base(address, covered_through) + Transactions(covered_through + 
 
 The first durable adapter uses one local Turso database, partitioned by Svit
 address. It stores indexed transaction envelopes, immutable bases, snapshots,
-content-addressed payload blobs, and fork references. It does not write a
-complete process snapshot on every commit. Materialized receipt state remains
-under implementation.
+one replaceable recovery checkpoint per process, content-addressed payload
+blobs, and fork references. It does not write a complete process snapshot on
+every commit. Materialized receipt state remains under implementation.
 
 A deterministic reducer reconstructs the current process root and process
 version. Receipt reconstruction remains under implementation. Replay never
@@ -257,25 +257,24 @@ Executable equivalence tests must prove for every mutator that reducing its
 emitted event produces the exact candidate root. This is the completeness
 criterion: a state change that cannot produce such an event cannot commit.
 
-## Reasoning events are ordinary mutations
+## Reasoning history is paged host infrastructure
 
 Status: **Implemented for persisted Svit instances.** `Svit::persisted` wraps
 an adapter-owned `DurableProcessHandle`. Its private serialized owner commits
 before refreshing Svit's cloned read projection, so tools and presentation
 hosts cannot observe a candidate that the store rejected.
 
-Everruns must not own a second durable event log. A successful
-process-backed `EventLog::append` must emit an ordinary Svit transaction whose
-mutations append the one canonical Everruns value to `/thread/events` and its
-new derived messages to `/thread/messages`. Initialization sets the thread
+Svit owns a process-partitioned durable `EventLog`; process transactions and
+reasoning history have distinct integrity boundaries. `/thread` stores only
+session metadata. A successful append writes one immutable canonical event,
+then observers derive any message presentation from it. Initialization sets the
 metadata once. Reattaching unchanged host grants is a no-op rather than a fake
 catalog-refresh transaction.
 
-Prior conversation state is never rewritten into later records. Query metadata
-may say `source: reasoning`, but the reducer sees the same `append` operations
-used for any other process array. Svit therefore persists one process
-transaction stream. The Everruns sequence inside `/thread/events` is nested data,
-not a second storage stream.
+Prior conversation state is never rewritten into later records. The Turso event
+table is indexed by process, session, and sequence. Everruns compaction
+checkpoints are stored separately with a monotonic source-sequence install;
+they bound model context without deleting canonical events.
 
 Reasoning-event commits and Lisp activations remain separate process transactions
 around external model and built-in calls. Uniform persistence does not make a
@@ -321,19 +320,25 @@ Resume is deterministic and streaming:
    selected immutable base.
 2. Validate the base hash and reconstruct its created, forked, or snapshotted
    process root.
-3. Stream retained events after `covered_through_position` in position order
-   without loading the log into memory.
-4. Validate address, position, content hash, hash chain, bounds, version
-   transition, touched paths, typed mutations, and resulting root hash for
-   every event.
-5. Attach current reasoning and built-in authority only after replay; rebuilding
+3. If the current internal recovery checkpoint falls after that base and at or
+   before the requested head, validate its content hash, metadata, complete
+   process snapshot, root hash, and matching canonical event boundary, then use
+   it as the unpublished reconstruction.
+4. Stream only retained events after that recovery boundary in position order
+   without loading the log into memory. Every envelope validates its address,
+   position, content hash, hash chain, bounds, version transition, touched paths,
+   and typed mutations. Complete root invariants and the claimed resulting root
+   are checked every 32 records and at the requested head.
+5. Attach current reasoning and built-in authority only after recovery; rebuilding
    a persisted Svit durably refreshes descriptive `/bin` state from those
    current grants before Everruns can run a turn.
 6. Continue at the next stable position and process version.
 
-Guest code and external effects are never executed during these steps. Replay
-has explicit event-count and lineage-depth budgets. A replay deadline remains
-under implementation.
+Guest code and external effects are never executed during these steps. The
+working reconstruction is private and discarded in full on any error, so it
+can apply mutations in place without cloning the growing process for each
+record. Replay has explicit event-count and lineage-depth budgets. A replay
+deadline remains under implementation.
 
 ## Fork
 
@@ -359,7 +364,7 @@ the parent prefix become collectible.
 
 ## Snapshots
 
-A store snapshot is created only on demand or by explicit host policy. It
+A public store snapshot is created only on demand or by explicit host policy. It
 contains enough information to resume without the covered prefix:
 
 ```text
@@ -389,6 +394,23 @@ authoritative. Snapshot size is therefore paid occasionally and deliberately,
 not on every commit. The current snapshot contains one complete validated
 `Process` snapshot; structural tree chunking and receipt inclusion remain
 under implementation.
+
+The Turso adapter's internal recovery checkpoint is separate from this public
+snapshot lifecycle. The event append at each 32-record boundary atomically
+replaces one checkpoint row together with the new canonical event and head.
+The first successful resume of an older uncheckpointed tail also writes its
+validated target as the current checkpoint. Replacement removes the prior
+checkpoint blob when no base, event, or public snapshot references it. These
+checkpoints accelerate recovery only: retained transaction queries and history
+cuts continue to operate over the authoritative event stream. The checkpoint's
+content-addressed blob is the process snapshot itself; it is not wrapped in a
+second store-snapshot envelope. Resume therefore decodes and validates the
+complete process image once. Legacy wrapped recovery blobs remain readable and
+are replaced with the direct form after a successful resume.
+
+Store snapshot format `svit-store-snapshot@2` embeds the process snapshot as
+structured JSON rather than encoding every byte as a JSON integer. Readers
+continue to accept `svit-store-snapshot@1`; new snapshots always use format 2.
 
 ## Query
 
@@ -465,6 +487,7 @@ The initial normalized schema is:
 | `events` | Authoritative | One canonical `svit-transaction@1` row per `(address, position)` |
 | `blobs` | Authoritative payload storage | Content-addressed canonical bytes keyed by SHA-256 |
 | `snapshots` | Authoritative when selected as a base | On-demand process images at exact event boundaries |
+| `recovery_checkpoints` | Replaceable recovery projection | One validated process image used to bound ordinary resume work without deleting events |
 | `fork_refs` | Authoritative lifecycle metadata | Child-to-parent boundary references that prevent unsafe cuts |
 | `event_paths` | Rebuildable query projection | Canonical touched paths for each transaction position |
 
@@ -494,7 +517,8 @@ address row's expected head, inserts the content BLOB, inserts the canonical
 event and path rows, and updates the head with
 an address-and-old-head predicate. Only a successful database commit permits
 the owner to publish memory, run committed hooks, wake the inbox, or return
-success.
+success. Every 32nd event transaction also replaces the process's internal
+recovery checkpoint before the same commit publishes either record.
 
 A transaction failure leaves all database tables unchanged. Ambiguous commit
 recovery and durable-owner poisoning remain under implementation. Turso's
@@ -538,8 +562,11 @@ Focused executable evidence currently proves:
 - forked roots remain isolated, a parent cut refuses a live child reference,
   and cutting the child detaches the reference;
 - resume after cut preserves parent and child state while retained queries are
-  empty; and
-- corrupt content-addressed event bytes fail closed on resume.
+  empty;
+- a recovery checkpoint bounds replay to its newer tail while keeping one
+  current checkpoint row; and
+- corrupt uncovered event bytes and corrupt recovery checkpoints fail closed on
+  resume.
 
 Required evidence still missing includes durable receipt integration, every
 mutator and rollback class, fork-cycle fault injection,
@@ -550,8 +577,8 @@ faults. Threats remain `PARTIAL` or `REQUIRED` where those tests do not exist.
 
 ## Deferred work
 
-This decision does not add discovery, automated snapshot cadence, archival
-queries across cut history, garbage collection, implemented schema migrations,
+This decision does not add discovery, automated public-snapshot policy,
+archival queries across cut history, general garbage collection, implemented schema migrations,
 signatures, encryption key management, Turso Sync, distributed leases, durable
 external-effect delivery, or an S3 adapter. History grows until an explicit
 snapshot and safe cut; configured quotas fail commits before storage or replay

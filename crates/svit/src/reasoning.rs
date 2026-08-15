@@ -10,14 +10,15 @@ use everruns::core::error::Result as EverrunsResult;
 use everruns::core::events::{Event, EventData, EventRequest, ToolCompletedData};
 use everruns::core::message_retriever::InputMessage;
 use everruns::core::tools::{Tool, ToolExecutionResult, ToolResultImage};
-use everruns::core::typed_id::{EventId, MessageId, SessionId};
+use everruns::core::typed_id::{MessageId, SessionId};
 use everruns::core::{
-    AgentCapabilityConfig, AgentLoopError, ContentPart, DriverRegistry, Message, MessageRole,
+    AgentCapabilityConfig, AgentLoopError, CompactionCheckpointStore, ContentPart, DriverRegistry,
+    Message, MessageRole,
 };
 use everruns_host::{
-    EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest,
-    EventReader, HostBackends, HostComposition, InProcessRuntime, InProcessRuntimeBuilder,
-    TurnResult,
+    EventDurability, EventLog, EventLogError, EventPage, EventReadLimit, EventReadRequest,
+    EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InMemoryEventLog,
+    InProcessRuntime, InProcessRuntimeBuilder, TurnResult, TurnStopReason,
 };
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
@@ -31,9 +32,11 @@ use crate::{
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
-const THREAD_STATE_FORMAT: &str = "svit-thread@6";
+const THREAD_STATE_FORMAT: &str = "svit-thread@8";
+const PREVIOUS_THREAD_STATE_FORMAT: &str = "svit-thread@7";
+const LEGACY_THREAD_STATE_FORMAT: &str = "svit-thread@6";
 const PROCESS_CAPABILITY_ID: &str = "svit";
-const SVIT_SYSTEM_PROMPT: &str = "You operate one Svit process. Use its memory tree for durable facts and working state. Svit owns the process state, conversation history, and execution environment. Use only the capabilities supplied by Svit, and treat committed process state as authoritative.";
+const SVIT_SYSTEM_PROMPT: &str = "You operate one Svit process. Use its memory tree for durable facts and working state. Svit owns the process state, conversation history, and execution environment. Use only the capabilities supplied by Svit, and treat committed process state as authoritative. The exec tool runs /bin built-ins and /lib scripts. Inside Svit Lisp, use (exec \"/bin/name\" input) or (exec \"/lib/name\" input), with the path first. A /bin call uses only the built-in authority attached by this Svit host and is an immediate external effect, even when invoked from a transactional script.";
 
 /// Failure to construct or run a Svit process.
 #[derive(Debug, Error)]
@@ -111,7 +114,7 @@ impl From<AgentLoopError> for SvitError {
 pub type SvitResult<T> = std::result::Result<T, SvitError>;
 
 /// Operational event published by a running Svit instance.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum SvitEvent {
     /// Process state changed through a committed host or reasoning transition.
     ///
@@ -124,6 +127,8 @@ pub enum SvitEvent {
     /// reports an external change to a mounted source, so a client caching
     /// mount content can still be stale (`L-045`).
     Committed(Change),
+    /// One message projected from a newly committed canonical reasoning event.
+    Message(Box<Message>),
     /// The independently running process loop stopped with a sanitized failure.
     Failed(String),
 }
@@ -132,6 +137,7 @@ pub enum SvitEvent {
 pub struct Svit {
     reasoning: Option<ReasoningLoop>,
     process: ProcessState,
+    session_id: SessionId,
     inbox_state: Arc<AsyncMutex<InboxState>>,
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
@@ -174,9 +180,22 @@ struct ProcessState {
     view: Arc<Mutex<Process>>,
     owner: Arc<AsyncMutex<Box<dyn ProcessOwner>>>,
     event_sender: broadcast::Sender<SvitEvent>,
+    event_log: Arc<dyn EventLog>,
+    compaction_checkpoints: Option<Arc<dyn CompactionCheckpointStore>>,
     durable: bool,
-    #[cfg(test)]
-    append_barrier: Option<Arc<tokio::sync::Barrier>>,
+}
+
+struct SvitEventSink {
+    sender: broadcast::Sender<SvitEvent>,
+}
+
+impl EventSink for SvitEventSink {
+    fn try_send(&self, event: Event) -> Result<(), EventSinkError> {
+        if let Some(message) = message_from_event(&event) {
+            let _ = self.sender.send(SvitEvent::Message(Box::new(message)));
+        }
+        Ok(())
+    }
 }
 
 impl ProcessState {
@@ -187,29 +206,25 @@ impl ProcessState {
             view,
             owner: Arc::new(AsyncMutex::new(Box::new(VolatileProcess { process }))),
             event_sender,
+            event_log: Arc::new(InMemoryEventLog::new()),
+            compaction_checkpoints: None,
             durable: false,
-            #[cfg(test)]
-            append_barrier: None,
         }
     }
 
     fn persisted(handle: impl DurableProcessHandle + 'static) -> crate::Result<Self> {
         let process = handle.process_projection();
+        let event_log = handle.event_log();
+        let compaction_checkpoints = handle.compaction_checkpoint_store();
         let (event_sender, _) = broadcast::channel(64);
         Ok(Self {
             view: Arc::new(Mutex::new(process)),
             owner: Arc::new(AsyncMutex::new(Box::new(PersistedProcess { handle }))),
             event_sender,
+            event_log,
+            compaction_checkpoints: Some(compaction_checkpoints),
             durable: true,
-            #[cfg(test)]
-            append_barrier: None,
         })
-    }
-
-    #[cfg(test)]
-    fn with_append_barrier(mut self, barrier: Arc<tokio::sync::Barrier>) -> Self {
-        self.append_barrier = Some(barrier);
-        self
     }
 
     fn view(&self) -> Arc<Mutex<Process>> {
@@ -236,9 +251,14 @@ impl ProcessState {
         Ok(change)
     }
 
-    async fn exec(&self, path: &str, input: Value) -> crate::Result<Activation> {
+    async fn exec(
+        &self,
+        path: &str,
+        input: Value,
+        builtins: Option<&Builtins>,
+    ) -> crate::Result<Activation> {
         let mut owner = self.owner.lock().await;
-        let activation = owner.exec(path, input).await?;
+        let activation = owner.exec(path, input, builtins).await?;
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &activation_change(&activation));
         Ok(activation)
@@ -276,71 +296,12 @@ impl ProcessState {
         Ok(())
     }
 
-    async fn update_thread_metadata(
-        &self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> crate::Result<()> {
+    async fn replace_thread_state(&self, value: Value) -> crate::Result<()> {
         let mut owner = self.owner.lock().await;
-        let change = owner
-            .update_thread_metadata(instructions, system_prompt)
-            .await?;
+        let change = owner.replace_thread_state(value).await?;
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &change);
         Ok(())
-    }
-
-    async fn append_reasoning_event(&self, request: EventRequest) -> Result<Event, EventLogError> {
-        #[cfg(test)]
-        if let Some(barrier) = &self.append_barrier {
-            barrier.wait().await;
-        }
-        let mut owner = self.owner.lock().await;
-        let process = owner.process_projection();
-        let mut state = load_thread_state(&process)
-            .map_err(event_log_corruption)?
-            .ok_or_else(|| EventLogError::Corruption {
-                detail: "missing Svit /thread state".into(),
-            })?;
-        if state.session_id != request.session_id {
-            return Err(EventLogError::InvalidAppend {
-                detail: "event belongs to a different Everruns session".into(),
-            });
-        }
-        let sequence =
-            i32::try_from(state.events.len() + 1).map_err(|_| EventLogError::InvalidAppend {
-                detail: "Everruns event sequence limit exceeded".into(),
-            })?;
-        let event = request.into_event(EventId::new(), sequence);
-        let previous_message_count = state.messages.len();
-        state.events.push(event.clone());
-        state.messages = messages_from_events(&state.events);
-        if state.messages.len() < previous_message_count {
-            return Err(EventLogError::Corruption {
-                detail: "Svit message projection shrank after an event append".into(),
-            });
-        }
-
-        // THREAT[TM-DOS-003]: Prompts, model output, and tool values remain
-        // untrusted; Svit value validation and process limits fail closed.
-        let event_value = Value::from_json(serde_json::to_value(&event).map_err(event_log_append)?)
-            .map_err(event_log_append)?;
-        let message_values = state.messages[previous_message_count..]
-            .iter()
-            .map(|message| {
-                serde_json::to_value(message)
-                    .map_err(event_log_append)
-                    .and_then(|value| Value::from_json(value).map_err(event_log_append))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let change = owner
-            .append_thread_event(event_value, message_values)
-            .await
-            .map_err(event_log_append)?;
-        self.refresh_view(owner.as_ref())
-            .map_err(event_log_append)?;
-        publish_committed(&self.event_sender, &change);
-        Ok(event)
     }
 
     async fn replace_builtins(&self, value: Value) -> crate::Result<()> {
@@ -349,6 +310,72 @@ impl ProcessState {
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &change);
         Ok(())
+    }
+
+    async fn import_thread_events(&self, events: &[Event]) -> crate::Result<()> {
+        if self.durable {
+            return self.owner.lock().await.import_thread_events(events).await;
+        }
+        for event in events {
+            self.event_log
+                .append(event_request_from(event))
+                .await
+                .map_err(|error| crate::Error::InvalidPersistence(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    async fn recent_thread_events(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        if self.durable {
+            return self
+                .owner
+                .lock()
+                .await
+                .recent_thread_events(session_id, limit)
+                .await;
+        }
+        if limit == 0 || limit > 4096 {
+            return Err(crate::Error::ResourceLimitExceeded("recent thread events"));
+        }
+        let page_limit = EventReadLimit::default();
+        let mut request = EventReadRequest::new(session_id, page_limit);
+        let mut recent = std::collections::VecDeque::with_capacity(limit);
+        loop {
+            let page = self
+                .event_log
+                .read_page(request)
+                .await
+                .map_err(|error| crate::Error::InvalidPersistence(error.to_string()))?;
+            for event in page
+                .events
+                .into_iter()
+                .filter(|event| message_from_event(event).is_some())
+            {
+                if recent.len() == limit {
+                    recent.pop_front();
+                }
+                recent.push_back(event);
+            }
+            let Some(cursor) = page.next_cursor else {
+                return Ok(recent.into());
+            };
+            request = EventReadRequest::from_cursor(cursor, page_limit);
+        }
+    }
+
+    async fn continues_thread_history(&self, session_id: SessionId) -> crate::Result<bool> {
+        if !self.durable {
+            return Ok(false);
+        }
+        self.owner
+            .lock()
+            .await
+            .continues_thread_history(session_id)
+            .await
     }
 
     fn refresh_view(&self, owner: &dyn ProcessOwner) -> crate::Result<()> {
@@ -366,22 +393,25 @@ trait ProcessOwner: Send + Sync {
     fn process_projection(&self) -> Process;
     async fn write(&mut self, path: &str, value: Value) -> crate::Result<Change>;
     async fn remove(&mut self, path: &str) -> crate::Result<Change>;
-    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation>;
+    async fn exec(
+        &mut self,
+        path: &str,
+        input: Value,
+        builtins: Option<&Builtins>,
+    ) -> crate::Result<Activation>;
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change>;
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change>;
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change>;
     async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change>;
-    async fn update_thread_metadata(
-        &mut self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> crate::Result<Change>;
-    async fn append_thread_event(
-        &mut self,
-        event: Value,
-        messages: Vec<Value>,
-    ) -> crate::Result<Change>;
+    async fn replace_thread_state(&mut self, value: Value) -> crate::Result<Change>;
     async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change>;
+    async fn import_thread_events(&self, events: &[Event]) -> crate::Result<()>;
+    async fn recent_thread_events(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>>;
+    async fn continues_thread_history(&self, session_id: SessionId) -> crate::Result<bool>;
 }
 
 struct VolatileProcess {
@@ -402,8 +432,23 @@ impl ProcessOwner for VolatileProcess {
         self.process.remove(path)
     }
 
-    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation> {
-        self.process.exec(path, input)
+    async fn exec(
+        &mut self,
+        path: &str,
+        input: Value,
+        builtins: Option<&Builtins>,
+    ) -> crate::Result<Activation> {
+        match builtins {
+            Some(builtins) => {
+                let context = Arc::new(Mutex::new(self.process.clone()));
+                let prepared = self
+                    .process
+                    .prepare_exec_with_builtins(path, input, builtins, context)
+                    .await?;
+                Ok(self.process.commit_prepared(prepared))
+            }
+            None => self.process.exec(path, input),
+        }
     }
 
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change> {
@@ -422,25 +467,28 @@ impl ProcessOwner for VolatileProcess {
         self.process.initialize_thread_state(value)
     }
 
-    async fn update_thread_metadata(
-        &mut self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> crate::Result<Change> {
-        self.process
-            .update_thread_metadata(instructions, system_prompt)
-    }
-
-    async fn append_thread_event(
-        &mut self,
-        event: Value,
-        messages: Vec<Value>,
-    ) -> crate::Result<Change> {
-        self.process.append_thread_event(event, messages)
+    async fn replace_thread_state(&mut self, value: Value) -> crate::Result<Change> {
+        self.process.replace_thread_state(value)
     }
 
     async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
         self.process.replace_builtins(value)
+    }
+
+    async fn import_thread_events(&self, _events: &[Event]) -> crate::Result<()> {
+        Err(crate::Error::PersistenceUnavailable)
+    }
+
+    async fn recent_thread_events(
+        &self,
+        _session_id: SessionId,
+        _limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        Err(crate::Error::PersistenceUnavailable)
+    }
+
+    async fn continues_thread_history(&self, _session_id: SessionId) -> crate::Result<bool> {
+        Ok(false)
     }
 }
 
@@ -465,8 +513,16 @@ where
         self.handle.remove(path).await
     }
 
-    async fn exec(&mut self, path: &str, input: Value) -> crate::Result<Activation> {
-        self.handle.exec(path, input).await
+    async fn exec(
+        &mut self,
+        path: &str,
+        input: Value,
+        builtins: Option<&Builtins>,
+    ) -> crate::Result<Activation> {
+        match builtins {
+            Some(builtins) => self.handle.exec_with_builtins(path, input, builtins).await,
+            None => self.handle.exec(path, input).await,
+        }
     }
 
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change> {
@@ -485,26 +541,28 @@ where
         self.handle.initialize_thread_state(value).await
     }
 
-    async fn update_thread_metadata(
-        &mut self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> crate::Result<Change> {
-        self.handle
-            .update_thread_metadata(instructions, system_prompt)
-            .await
-    }
-
-    async fn append_thread_event(
-        &mut self,
-        event: Value,
-        messages: Vec<Value>,
-    ) -> crate::Result<Change> {
-        self.handle.append_thread_event(event, messages).await
+    async fn replace_thread_state(&mut self, value: Value) -> crate::Result<Change> {
+        self.handle.replace_thread_state(value).await
     }
 
     async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
         self.handle.replace_builtins(value).await
+    }
+
+    async fn import_thread_events(&self, events: &[Event]) -> crate::Result<()> {
+        self.handle.import_thread_events(events).await
+    }
+
+    async fn recent_thread_events(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        self.handle.recent_thread_events(session_id, limit).await
+    }
+
+    async fn continues_thread_history(&self, session_id: SessionId) -> crate::Result<bool> {
+        self.handle.continues_thread_history(session_id).await
     }
 }
 
@@ -533,6 +591,7 @@ impl Svit {
 
     fn from_reasoning(reasoning: ReasoningLoop) -> Self {
         let process = reasoning.process();
+        let session_id = reasoning.session_id;
         let builtins = reasoning.builtins.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
@@ -540,6 +599,7 @@ impl Svit {
         Self {
             reasoning: Some(reasoning),
             process,
+            session_id,
             inbox_state: Arc::new(AsyncMutex::new(InboxState { accepting: true })),
             command_sender,
             command_receiver: Some(command_receiver),
@@ -618,6 +678,15 @@ impl Svit {
             .as_ref()
             .map(ReasoningLoop::messages)
             .ok_or(SvitError::AlreadyStarted)
+    }
+
+    /// Reads a bounded window of the newest durable conversation messages.
+    pub async fn recent_messages(&self, limit: usize) -> SvitResult<Vec<Message>> {
+        let events = self
+            .process
+            .recent_thread_events(self.session_id, limit)
+            .await?;
+        Ok(events.iter().filter_map(message_from_event).collect())
     }
 
     /// Returns the process identifier.
@@ -711,9 +780,12 @@ impl Svit {
         Ok(self.process.remove(path).await?)
     }
 
-    /// Executes one transactional process script by its absolute `/lib` path.
+    /// Executes one process script, including its host-attached built-in calls.
     pub async fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
-        Ok(self.process.exec(path, input).await?)
+        Ok(self
+            .process
+            .exec(path, input, self.builtins.as_ref())
+            .await?)
     }
 
     /// Returns committed Lisp message intents from process state.
@@ -900,7 +972,9 @@ impl SvitResumeBuilder {
         self
     }
 
-    /// Sets the maximum Everruns reason/act iterations for one turn.
+    /// Overrides Everruns' maximum reason/act iterations for one turn.
+    ///
+    /// Without this override, the configured Everruns host default applies.
     pub fn max_iterations(mut self, max_iterations: usize) -> Self {
         self.reasoning = self.reasoning.max_iterations(max_iterations);
         self
@@ -977,7 +1051,9 @@ impl SvitBuilder {
         self
     }
 
-    /// Sets the maximum Everruns reason/act iterations for one turn.
+    /// Overrides Everruns' maximum reason/act iterations for one turn.
+    ///
+    /// Without this override, the configured Everruns host default applies.
     pub fn max_iterations(mut self, max_iterations: usize) -> Self {
         self.reasoning = self.reasoning.max_iterations(max_iterations);
         self
@@ -1033,6 +1109,12 @@ impl ReasoningLoop {
             )
             .into());
         }
+        if result.stop_reason == TurnStopReason::MaxTurnRequests {
+            return Err(AgentLoopError::event(
+                "maximum reason/act iterations reached before a final answer",
+            )
+            .into());
+        }
         Ok(result)
     }
 
@@ -1052,7 +1134,7 @@ struct ReasoningLoopBuilder {
     access: ReasoningAccess,
     instructions: Option<String>,
     reasoner: Option<Reasoner>,
-    max_iterations: usize,
+    max_iterations: Option<usize>,
     builtins: Option<Builtins>,
 }
 
@@ -1067,7 +1149,7 @@ impl ReasoningLoopBuilder {
             access: ReasoningAccess::Full,
             instructions: None,
             reasoner: None,
-            max_iterations: 8,
+            max_iterations: None,
             builtins: None,
         }
     }
@@ -1095,7 +1177,7 @@ impl ReasoningLoopBuilder {
     }
 
     fn max_iterations(mut self, max_iterations: usize) -> Self {
-        self.max_iterations = max_iterations;
+        self.max_iterations = Some(max_iterations);
         self
     }
 
@@ -1127,6 +1209,13 @@ impl ReasoningLoopBuilder {
                     .map_err(|_| SvitError::HttpTransportUnavailable)
             })
             .transpose()?;
+        let initial_state = {
+            let view = process.view();
+            let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;
+            load_thread_state(&process).map_err(SvitError::from)?
+        };
+        let process_id = thread_process_id(&process)?;
+        migrate_legacy_thread_state(&process, &process_id, initial_state.as_ref()).await?;
         let stored_state = {
             let view = process.view();
             let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;
@@ -1140,17 +1229,18 @@ impl ReasoningLoopBuilder {
                     .and_then(|state| state.instructions.clone())
             })
             .filter(|instructions| !instructions.trim().is_empty());
-        let process_id = process
-            .view
-            .lock()
-            .map_err(|_| SvitError::ProcessUnavailable)?
-            .id()
-            .clone();
         let system_prompt = compose_system_prompt(&process_id, instructions.as_deref());
-        let session_id = stored_state
-            .as_ref()
-            .map(|state| state.session_id)
-            .unwrap_or_else(SessionId::new);
+        let session_id = match stored_state.as_ref() {
+            None => SessionId::new(),
+            Some(state) if !is_process_fork(&process)? => state.session_id,
+            Some(state) if process.continues_thread_history(state.session_id).await? => {
+                state.session_id
+            }
+            // A process-only fork carries no event-log authority. Starting a
+            // fresh session prevents a reused session ID from naming an empty
+            // or unrelated history; durable forks retain their immutable prefix.
+            Some(_) => SessionId::new(),
+        };
         let builtin_catalog = builtins
             .as_ref()
             .map(Builtins::catalog)
@@ -1161,11 +1251,13 @@ impl ReasoningLoopBuilder {
         process
             .replace_builtins(Value::from_json(builtin_catalog)?)
             .await?;
-        initialize_thread_state(
+        initialize_thread_state_from(
             &process,
+            &process_id,
             session_id,
             instructions.as_deref(),
             &system_prompt,
+            stored_state.as_ref(),
         )
         .await?;
 
@@ -1175,8 +1267,23 @@ impl ReasoningLoopBuilder {
             builtins: builtins.clone(),
         };
         let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
-        let event_log = Arc::new(ProcessEventLog::new(process.clone()));
-        let backends = HostBackends::in_memory().with_event_log(event_log);
+        let compaction_config = AgentCapabilityConfig::new("compaction").config(json!({
+            "strategy": "auto",
+            "proactive": true,
+            "budget_percent": 0.85,
+        }));
+        let event_log = Arc::new(ProcessEventLog::seeded(
+            process.clone(),
+            stored_state.as_ref(),
+        )?);
+        let mut backends = HostBackends::in_memory()
+            .with_event_log(event_log)
+            .with_event_sink(Arc::new(SvitEventSink {
+                sender: process.event_sender(),
+            }));
+        if let Some(checkpoints) = process.compaction_checkpoints.clone() {
+            backends = backends.with_compaction_checkpoint_store(checkpoints);
+        }
         let mut drivers = DriverRegistry::new();
         drivers.register_provider(provider)?;
         // Svit is an advanced Everruns host because it owns both the execution
@@ -1185,31 +1292,41 @@ impl ReasoningLoopBuilder {
         // separately installs the process-backed EventLog used for replay.
         let host_composition = HostComposition::builder()
             .capability(capability)
+            .capability(everruns_builtins::CompactionCapability)
             .driver_registry(drivers)
             .build();
+        let max_iterations = self.max_iterations;
         let runtime = InProcessRuntimeBuilder::new()
             .host_composition(host_composition)
             .single_session(|session| {
-                session
+                let session = session
                     .harness(process_id.as_str(), &system_prompt)
                     .agent(process_id.as_str(), &system_prompt)
                     .session_id(session_id)
                     .harness_capability(capability_config.clone())
                     .agent_capability(capability_config.clone())
                     .session_capability(capability_config)
-                    .agent_max_iterations(self.max_iterations)
-                    .session_max_iterations(self.max_iterations)
+                    .harness_capability(compaction_config.clone())
+                    .agent_capability(compaction_config.clone())
+                    .session_capability(compaction_config);
+                match max_iterations {
+                    Some(max_iterations) => session
+                        .agent_max_iterations(max_iterations)
+                        .session_max_iterations(max_iterations),
+                    // Everruns owns loop policy. Svit only attenuates it when
+                    // the embedding host explicitly requests an override.
+                    None => session,
+                }
             })
             .backends(backends)
             .model_spec(model)
             .build()
             .await?;
-        let messages = runtime.messages(session_id).await?;
         Ok(ReasoningLoop {
             process,
             runtime,
             session_id,
-            messages,
+            messages: Vec::new(),
             builtins,
         })
     }
@@ -1263,8 +1380,9 @@ impl Capability for ProcessCapability {
                  under /bin; run /bin built-ins or /lib scripts through exec. External resources \
                  appear under /mounts and are resolved one node at a time: discover a mount \
                  directory, stat a node to learn its kind, granted access, and locality (cache, \
-                 local, or remote), then read the leaf you need. /thread/system_prompt, \
-                 /thread/messages, and /thread/events are durable host-managed runtime projections."
+                 local, or remote), then read the leaf you need. /thread contains bounded \
+                 host-managed session metadata; canonical conversation history is not mutable \
+                 process memory."
                     .into()
             }
             ReasoningAccess::ReadExec(allowed_scripts) => format!(
@@ -1272,8 +1390,8 @@ impl Capability for ProcessCapability {
                  with discover, read, stat, and exec. Discover built-in manuals under /bin. \
                  External resources appear under /mounts and are resolved one node at a time \
                  through discover, stat, and read. Run only these /lib scripts through exec: {}. \
-                 /thread/system_prompt, /thread/messages, and /thread/events are durable \
-                 host-managed runtime projections.",
+                 /thread contains bounded host-managed session metadata; canonical conversation \
+                 history is not mutable process memory.",
                 allowed_scripts
                     .iter()
                     .cloned()
@@ -1390,7 +1508,8 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     };
     let exec = FunctionTool::new(
         "exec",
-        "Execute an absolute /lib script or /bin built-in path.",
+        "Execute an absolute /lib script or host-attached /bin built-in path. Inside Svit Lisp, \
+         use `(exec \"/bin/name\" input)` or `(exec \"/lib/name\" input)`, with the path first.",
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}, "input": {}},
@@ -1421,7 +1540,13 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
                 {
                     return tool_error(format!("script is not allowed: {script}"));
                 }
-                execute_script(&process, path, arguments["input"].clone()).await
+                execute_script(
+                    &process,
+                    path,
+                    arguments["input"].clone(),
+                    builtins.as_ref(),
+                )
+                .await
             }
         },
     );
@@ -1433,7 +1558,10 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     let write_process = capability.process.clone();
     let write = FunctionTool::new(
         "write",
-        "Transactionally write process memory or one named script.",
+        "Transactionally write process memory or one named Svit Lisp script. A /lib value is \
+         `{\"source\": \"(define (main input) ...)\", \"documentation\": \"...\"}`. \
+         Scripts compose executables with `(exec \"/bin/name\" input)` or \
+         `(exec \"/lib/name\" input)`, with the path first.",
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}, "value": {}},
@@ -1495,12 +1623,13 @@ async fn execute_script(
     process: &ProcessState,
     path: &str,
     input: JsonValue,
+    builtins: Option<&Builtins>,
 ) -> ToolExecutionResult {
     let input = match Value::from_json(input) {
         Ok(input) => input,
         Err(error) => return tool_error(error.to_string()),
     };
-    let activation = match process.exec(path, input).await {
+    let activation = match process.exec(path, input, builtins).await {
         Ok(activation) => activation,
         Err(error) => return tool_error(error.to_string()),
     };
@@ -1523,90 +1652,28 @@ async fn execute_script(
 }
 
 #[derive(Clone)]
-// Svit owns durability: the Everruns EventLog SPI commits each canonical event
-// and its derived guest-readable message projection in one process transition.
+// Svit owns the EventLog composition boundary, while the selected process
+// adapter owns paged storage. Canonical events are deliberately not copied
+// into the materialized process memory tree.
 struct ProcessEventLog {
     process: ProcessState,
 }
 
 impl ProcessEventLog {
+    #[cfg(test)]
     fn new(process: ProcessState) -> Self {
         Self { process }
+    }
+
+    fn seeded(process: ProcessState, _state: Option<&ThreadState>) -> SvitResult<Self> {
+        Ok(Self { process })
     }
 }
 
 #[async_trait]
 impl EventReader for ProcessEventLog {
     async fn read_page(&self, request: EventReadRequest) -> Result<EventPage, EventLogError> {
-        let view = self.process.view();
-        let process = view.lock().map_err(|_| EventLogError::Backend {
-            detail: "Svit process lock is unavailable".into(),
-        })?;
-        let Some(state) = load_thread_state(&process).map_err(event_log_corruption)? else {
-            return EventPage::new(Vec::new(), None, 0);
-        };
-        let current_high =
-            i32::try_from(state.events.len()).map_err(|_| EventLogError::Corruption {
-                detail: "Svit event count exceeds the Everruns sequence range".into(),
-            })?;
-        let (after, snapshot) = match request.cursor() {
-            None => (0, current_high),
-            Some(cursor) => {
-                if cursor.session_id() != request.session_id() {
-                    return Err(EventLogError::CrossSessionCursor {
-                        detail: "cursor belongs to another Everruns session".into(),
-                    });
-                }
-                match cursor.snapshot_high_watermark() {
-                    Some(snapshot) => {
-                        if snapshot > current_high {
-                            return Err(EventLogError::ExpiredCursor {
-                                detail: "cursor snapshot is not available in this Svit process"
-                                    .into(),
-                            });
-                        }
-                        if cursor.after_sequence() > snapshot {
-                            return Err(EventLogError::IncompatibleCursor {
-                                detail: "cursor position exceeds its snapshot".into(),
-                            });
-                        }
-                        (cursor.after_sequence(), snapshot)
-                    }
-                    None => (cursor.after_sequence(), current_high),
-                }
-            }
-        };
-        if state.session_id != request.session_id() || snapshot == 0 {
-            return EventPage::new(Vec::new(), None, 0);
-        }
-
-        let limit = request.limit().get();
-        let mut events = state
-            .events
-            .into_iter()
-            .filter(|event| {
-                event
-                    .sequence
-                    .is_some_and(|sequence| sequence > after && sequence <= snapshot)
-            })
-            .take(limit + 1)
-            .collect::<Vec<_>>();
-        let has_more = events.len() > limit;
-        if has_more {
-            events.pop();
-        }
-        let next_cursor = has_more
-            .then(|| {
-                let last = events
-                    .last()
-                    .and_then(|event| event.sequence)
-                    .ok_or_else(|| EventLogError::Corruption {
-                        detail: "event page continuation has no sequence".into(),
-                    })?;
-                EventCursor::continuation(request.session_id(), last, snapshot)
-            })
-            .transpose()?;
-        EventPage::new(events, next_cursor, snapshot)
+        self.process.event_log.read_page(request).await
     }
 }
 
@@ -1618,26 +1685,36 @@ impl EventLog for ProcessEventLog {
                 detail: "ephemeral events are sink-only".into(),
             });
         }
-        self.process.append_reasoning_event(request).await
+        let state = {
+            let view = self.process.view();
+            let process = view.lock().map_err(|_| EventLogError::Backend {
+                detail: "Svit process lock is unavailable".into(),
+            })?;
+            load_thread_state(&process).map_err(event_log_corruption)?
+        };
+        if state.as_ref().map(|state| state.session_id) != Some(request.session_id) {
+            return Err(EventLogError::InvalidAppend {
+                detail: "event belongs to a different Everruns session".into(),
+            });
+        }
+        self.process.event_log.append(request).await
     }
 
     fn durability(&self) -> EventDurability {
-        if self.process.durable {
-            EventDurability::CrashDurable
-        } else {
-            EventDurability::Volatile
-        }
+        self.process.event_log.durability()
     }
 }
 
+#[derive(Clone)]
 struct ThreadState {
     session_id: SessionId,
+    process_id: Option<ProcessId>,
     instructions: Option<String>,
     system_prompt: String,
-    messages: Vec<Message>,
-    events: Vec<Event>,
+    legacy_events: Option<Vec<Event>>,
 }
 
+#[cfg(test)]
 async fn initialize_thread_state(
     process: &ProcessState,
     session_id: SessionId,
@@ -1649,37 +1726,84 @@ async fn initialize_thread_state(
         let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;
         load_thread_state(&process).map_err(SvitError::from)?
     };
+    initialize_thread_state_from(
+        process,
+        &thread_process_id(process)?,
+        session_id,
+        instructions,
+        system_prompt,
+        state.as_ref(),
+    )
+    .await
+}
+
+async fn initialize_thread_state_from(
+    process: &ProcessState,
+    process_id: &ProcessId,
+    session_id: SessionId,
+    instructions: Option<&str>,
+    system_prompt: &str,
+    state: Option<&ThreadState>,
+) -> SvitResult<()> {
     match state {
-        Some(state) if state.session_id != session_id => Err(SvitError::from(event_error(
-            "Svit process already owns a different Everruns session",
-        ))),
         Some(state)
-            if state.instructions.as_deref() == instructions
+            if state.process_id.as_ref() == Some(process_id)
+                && state.instructions.as_deref() == instructions
                 && state.system_prompt == system_prompt =>
         {
             Ok(())
         }
         Some(_) => {
-            let instructions = instructions
-                .map(|instructions| Value::String(instructions.to_owned()))
-                .unwrap_or(Value::Null);
-            process
-                .update_thread_metadata(instructions, Value::String(system_prompt.to_owned()))
-                .await?;
+            let value = thread_state_value(session_id, process_id, instructions, system_prompt)
+                .map_err(SvitError::from)?;
+            process.replace_thread_state(value).await?;
             Ok(())
         }
         None => {
-            let value = thread_state_value(
-                session_id,
-                instructions,
-                system_prompt,
-                Vec::new(),
-                Vec::new(),
-            )
-            .map_err(SvitError::from)?;
+            let value = thread_state_value(session_id, process_id, instructions, system_prompt)
+                .map_err(SvitError::from)?;
             process.initialize_thread_state(value).await?;
             Ok(())
         }
+    }
+}
+
+async fn migrate_legacy_thread_state(
+    process: &ProcessState,
+    process_id: &ProcessId,
+    state: Option<&ThreadState>,
+) -> SvitResult<()> {
+    let Some(state) = state else {
+        return Ok(());
+    };
+    let Some(legacy_events) = state.legacy_events.as_deref() else {
+        return Ok(());
+    };
+
+    // The adapter imports the complete canonical prefix atomically and treats
+    // an identical existing row as success, so crash recovery cannot duplicate
+    // the former materialized history.
+    process.import_thread_events(legacy_events).await?;
+    let bounded = thread_state_value(
+        state.session_id,
+        process_id,
+        state.instructions.as_deref(),
+        &state.system_prompt,
+    )
+    .map_err(SvitError::from)?;
+    process.replace_thread_state(bounded).await?;
+    Ok(())
+}
+
+fn event_request_from(event: &Event) -> EventRequest {
+    EventRequest {
+        event_type: event.event_type.clone(),
+        ts: event.ts,
+        session_id: event.session_id,
+        context: event.context.clone(),
+        data: event.data.clone(),
+        metadata: event.metadata.clone(),
+        tags: event.tags.clone(),
     }
 }
 
@@ -1691,7 +1815,14 @@ fn load_thread_state(process: &Process) -> EverrunsResult<Option<ThreadState>> {
         return Ok(None);
     }
     let json = value.to_json();
-    if json.get("format").and_then(JsonValue::as_str) != Some(THREAD_STATE_FORMAT) {
+    let format = json
+        .get("format")
+        .and_then(JsonValue::as_str)
+        .ok_or_else(|| event_error("missing /thread format"))?;
+    if !matches!(
+        format,
+        THREAD_STATE_FORMAT | PREVIOUS_THREAD_STATE_FORMAT | LEGACY_THREAD_STATE_FORMAT
+    ) {
         return Err(event_error("invalid /thread format"));
     }
     let session_id = json
@@ -1700,6 +1831,16 @@ fn load_thread_state(process: &Process) -> EverrunsResult<Option<ThreadState>> {
         .ok_or_else(|| event_error("missing /thread session_id"))?
         .parse()
         .map_err(event_error)?;
+    let process_id = match (format, json.get("process_id")) {
+        (THREAD_STATE_FORMAT, Some(JsonValue::String(process_id))) => {
+            Some(ProcessId::new(process_id.clone()).map_err(event_error)?)
+        }
+        (THREAD_STATE_FORMAT, _) => return Err(event_error("missing /thread process_id")),
+        (_, Some(JsonValue::String(process_id))) => {
+            Some(ProcessId::new(process_id.clone()).map_err(event_error)?)
+        }
+        _ => None,
+    };
     let system_prompt = json
         .get("system_prompt")
         .and_then(JsonValue::as_str)
@@ -1710,33 +1851,43 @@ fn load_thread_state(process: &Process) -> EverrunsResult<Option<ThreadState>> {
         Some(JsonValue::Null) => None,
         _ => return Err(event_error("invalid /thread instructions")),
     };
-    let messages: Vec<Message> = serde_json::from_value(
-        json.get("messages")
-            .cloned()
-            .ok_or_else(|| event_error("missing /thread messages"))?,
-    )
-    .map_err(event_error)?;
-    let events: Vec<Event> = serde_json::from_value(
-        json.get("events")
-            .cloned()
-            .ok_or_else(|| event_error("missing /thread events"))?,
-    )
-    .map_err(event_error)?;
-    validate_thread_events(session_id, &events)?;
-    let derived = messages_from_events(&events);
-    if serde_json::to_value(&messages).map_err(event_error)?
-        != serde_json::to_value(&derived).map_err(event_error)?
-    {
-        return Err(event_error(
-            "/thread messages do not match the Everruns event projection",
-        ));
-    }
+    let legacy_events = if format == LEGACY_THREAD_STATE_FORMAT {
+        let messages: Vec<Message> = serde_json::from_value(
+            json.get("messages")
+                .cloned()
+                .ok_or_else(|| event_error("missing legacy /thread messages"))?,
+        )
+        .map_err(event_error)?;
+        let events: Vec<Event> = serde_json::from_value(
+            json.get("events")
+                .cloned()
+                .ok_or_else(|| event_error("missing legacy /thread events"))?,
+        )
+        .map_err(event_error)?;
+        validate_thread_events(session_id, &events)?;
+        let derived = messages_from_events(&events);
+        if serde_json::to_value(&messages).map_err(event_error)?
+            != serde_json::to_value(&derived).map_err(event_error)?
+        {
+            return Err(event_error(
+                "legacy /thread messages do not match the Everruns event projection",
+            ));
+        }
+        Some(events)
+    } else {
+        if json.get("events").is_some() || json.get("messages").is_some() {
+            return Err(event_error(
+                "bounded /thread metadata contains materialized history",
+            ));
+        }
+        None
+    };
     Ok(Some(ThreadState {
         session_id,
+        process_id,
         instructions,
         system_prompt,
-        messages,
-        events,
+        legacy_events,
     }))
 }
 
@@ -1764,23 +1915,41 @@ fn validate_thread_events(session_id: SessionId, events: &[Event]) -> EverrunsRe
 
 fn thread_state_value(
     session_id: SessionId,
+    process_id: &ProcessId,
     instructions: Option<&str>,
     system_prompt: &str,
-    events: Vec<Event>,
-    messages: Vec<Message>,
 ) -> EverrunsResult<Value> {
-    // THREAT[TM-AUD-001]: Everruns events are canonical. The guest-readable
-    // history is derived and committed at this host-only boundary.
+    // THREAT[TM-AUD-001]: `/thread` is bounded host metadata. Canonical event
+    // history remains in the paged EventLog selected by the Svit owner.
     let value = Value::from_json(json!({
         "format": THREAD_STATE_FORMAT,
         "session_id": session_id.to_string(),
+        "process_id": process_id.as_str(),
         "instructions": instructions,
         "system_prompt": system_prompt,
-        "messages": messages,
-        "events": events,
     }))
     .map_err(event_error)?;
     Ok(value)
+}
+
+fn thread_process_id(process: &ProcessState) -> SvitResult<ProcessId> {
+    Ok(process
+        .view()
+        .lock()
+        .map_err(|_| SvitError::ProcessUnavailable)?
+        .id()
+        .clone())
+}
+
+fn is_process_fork(process: &ProcessState) -> SvitResult<bool> {
+    Ok(matches!(
+        process
+            .view()
+            .lock()
+            .map_err(|_| SvitError::ProcessUnavailable)?
+            .read("/system/lineage/parent")?,
+        Some(Value::String(_))
+    ))
 }
 
 fn messages_from_events(events: &[Event]) -> Vec<Message> {
@@ -1864,12 +2033,6 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
     }
 }
 
-fn event_log_append(error: impl fmt::Display) -> EventLogError {
-    EventLogError::InvalidAppend {
-        detail: error.to_string(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use everruns::core::events::{EventContext, InputMessageData};
@@ -1883,8 +2046,7 @@ mod tests {
             .unwrap()
             .build()
             .unwrap();
-        let process = ProcessState::volatile(process)
-            .with_append_barrier(Arc::new(tokio::sync::Barrier::new(2)));
+        let process = ProcessState::volatile(process);
         initialize_thread_state(&process, session_id, None, "system")
             .await
             .unwrap();
@@ -1904,16 +2066,105 @@ mod tests {
 
         first.unwrap();
         second.unwrap();
-        let view = process.view();
-        let process = view.lock().unwrap();
-        let thread = load_thread_state(&process).unwrap().unwrap();
+        let page = event_log
+            .read_page(EventReadRequest::new(
+                session_id,
+                everruns_host::EventReadLimit::default(),
+            ))
+            .await
+            .unwrap();
         assert_eq!(
-            thread
-                .events
+            page.events
                 .iter()
                 .map(|event| event.sequence)
                 .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
+    }
+
+    #[tokio::test]
+    async fn thread_history_does_not_grow_the_process_snapshot() {
+        let session_id = SessionId::new();
+        let process = Process::builder("svit://local/growing-thread")
+            .unwrap()
+            .limits(Limits {
+                max_value_entries: 80,
+                ..Limits::default()
+            })
+            .build()
+            .unwrap();
+        let process = ProcessState::volatile(process);
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let event_log = ProcessEventLog::new(process.clone());
+        let snapshot_bytes = process.view().lock().unwrap().snapshot().unwrap().len();
+
+        for index in 0..12 {
+            event_log
+                .append(EventRequest::new(
+                    session_id,
+                    EventContext::empty(),
+                    InputMessageData::new(Message::user(format!("message {index}"))),
+                ))
+                .await
+                .unwrap();
+        }
+
+        let view = process.view();
+        let process = view.lock().unwrap();
+        let thread = process.read("/thread").unwrap().unwrap().to_json();
+        assert!(thread.get("events").is_none());
+        assert!(thread.get("messages").is_none());
+        assert_eq!(process.snapshot().unwrap().len(), snapshot_bytes);
+    }
+
+    #[tokio::test]
+    async fn paged_event_log_observes_later_appends() {
+        let session_id = SessionId::new();
+        let process = Process::builder("svit://local/seeded-event-cache")
+            .unwrap()
+            .build()
+            .unwrap();
+        let process = ProcessState::volatile(process);
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let initial_log = ProcessEventLog::new(process.clone());
+        initial_log
+            .append(EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                InputMessageData::new(Message::user("first")),
+            ))
+            .await
+            .unwrap();
+        let state = {
+            let view = process.view();
+            let process = view.lock().unwrap();
+            load_thread_state(&process).unwrap().unwrap()
+        };
+        let event_log = ProcessEventLog::seeded(process, Some(&state)).unwrap();
+        let request = EventReadRequest::new(session_id, everruns_host::EventReadLimit::default());
+        assert_eq!(
+            event_log
+                .read_page(request.clone())
+                .await
+                .unwrap()
+                .events
+                .len(),
+            1
+        );
+
+        event_log
+            .append(EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                InputMessageData::new(Message::user("second")),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(event_log.read_page(request).await.unwrap().events.len(), 2);
     }
 }

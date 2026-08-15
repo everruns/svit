@@ -49,10 +49,13 @@ The following scenarios execute with assertions and deterministic output under
 - a real folder, a materialized Turso query, and a writable folder mounted
   together, read lazily with node facts, and written back under an explicit
   grant while a read-only mount refuses the same write.
-- a process-owned conversation thread restored and continued in an isolated
-  child process.
+- a process-only fork starting a new session, plus a durable fork continuing
+  an immutable inherited event prefix without copying it into the process root.
 - a started Svit drains its durable inbox, emits completed turns, and leaves a
   failed turn's input queued.
+- Svit inherits Everruns' default iteration policy, while an explicit
+  iteration cap that stops on a tool call fails visibly, retains the inbox
+  message, and publishes no completed outbox message.
 - Svit supplies a base prompt without host instructions, wraps optional
   instructions in an `<instructions>` block, persists them across restore, and
   recomposes a forked prompt for the child address.
@@ -62,6 +65,13 @@ The following scenarios execute with assertions and deterministic output under
   JSON; focused tests cover data limits, unrestricted standard HTTP,
   allowlist-denied and host-routed HTTP, nested model selection, and local
   child spawn.
+- the owned system prompt documents path-first `/bin` and `/lib` composition.
+  A persisted model turn writes a reusable `/lib` script, invokes its
+  allowlisted `/bin/http` dependency exactly once across guest replay, consumes
+  the response, commits once, and drains the inbox. A later guest failure does
+  not repeat HTTP and rolls back all guest state. Bare `Process::exec` reports
+  that `/bin` execution requires a Svit host, while reversed arguments receive
+  an actionable diagnostic.
 - `/bin` discovery exposes installed built-in manuals, while
   resume removes catalog entries for absent host grants.
 - a host `BuiltinExtension` contributes a discoverable built-in that can
@@ -83,11 +93,31 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa's render loop depends only on the Svit contract, events, inbox, and
   outbox after construction; it reads after commit notifications rather than
   polling or assembling built-in state.
+- Lampa receives projected canonical messages into its timeline, renders
+  intermediate model commentary and tool calls, and deduplicates repeated
+  projection reads and optimistically displayed inbox messages by message ID;
+  outbox observation changes completion status without duplicating the final
+  answer.
+- Lampa collapses a completed tool call and result into one bounded row with a
+  success or failure marker, operation, target, and result summary. Built-in
+  `exec` calls use the built-in name, errors remain visible, and internal tool
+  call IDs do not appear in the transcript.
 - a persisted Svit commits model-driven memory, append-only canonical reasoning
   events, derived messages, built-in catalog refresh, inbox enqueue, and
   exact-head acknowledgement through one Turso owner; reopening by address
   reconstructs the same memory and conversation without rerunning the model or
   appending a transaction when the host grants and prompt are unchanged.
+- Turso publishes a recovery checkpoint atomically every 32 transactions,
+  retains only the newest checkpoint per process, resumes through it plus the
+  newer tail, and fails closed when either an uncovered event or the checkpoint
+  bytes are corrupted. Its blob is a direct process snapshot rather than a
+  nested public snapshot envelope.
+- reasoning startup seeds Everruns' process-backed event reader from the
+  already validated `/thread` projection and reuses that projection while the
+  process version is unchanged; committed event appends invalidate the cache.
+- cumulative thread history does not consume one guest value's entry budget;
+  every event and message remains independently validated, while the host
+  collections fail closed at their separate record and encoded-byte envelope.
 - Lampa maps one validated instance ID to
   `svit://local/lampa/{instance-id}` and a distinct
   `instances/{instance-id}/svit.db`; reopening resumes that address, a database
@@ -102,11 +132,14 @@ The following scenarios execute with assertions and deterministic output under
 - Lampa resolves every node through the same `discover`/`stat`/`read`
   interface, keeps unrelated nodes resolved across a commit that did not name
   them, and re-reads an externally changed mount only on an explicit reload.
-- Lampa opens only the memory-tree root and preserves the visible window when
-  a mouse click selects its bottom row; keyboard navigation scrolls only when
-  the selection leaves that window.
+- Lampa opens only the memory-tree root. Tuika's stable-path tree state
+  preserves the selected node, ancestor fallback, expanded branches, and the
+  visible window across refreshes; clicks use the exact resolved window.
 - Lampa panel focus cycles forward with plain `Tab` and backward with
   `Shift+Tab`.
+- Lampa consumes a plain transcript drag, paints its selected cells, and
+  extracts their text for deferred clipboard copy without changing memory-tree
+  selection; `Ctrl+C` re-copies an active range instead of quitting.
 - Lampa assistant messages consume Markdown emphasis delimiters and style bare
   HTTP(S) URLs as links before the hyperlink backend emits terminal targets.
 

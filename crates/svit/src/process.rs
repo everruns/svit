@@ -26,11 +26,13 @@ use crate::hooks::{
 };
 use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView};
 use crate::persistence::Mutation;
-use crate::{Error, Limits, Result, Script, Value};
+use crate::{Builtins, Error, Limits, Result, Script, Value};
 
 const SNAPSHOT_FORMAT: u32 = 7;
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
+const MAX_THREAD_BYTES: usize = 64 * 1024 * 1024;
+const MAX_THREAD_RECORDS: usize = 100_000;
 
 /// Stable logical address of one Svit process.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -588,7 +590,7 @@ impl Process {
     /// Runnable Svit persistence uses append-only thread transitions instead;
     /// this trusted-host boundary is retained for explicit snapshot assembly.
     pub fn replace_thread_state(&mut self, value: Value) -> Result<Change> {
-        value.validate(&self.limits, false)?;
+        validate_thread_value(&value, &self.limits)?;
         let mut root = root_map(self.root.as_ref())?.clone();
         root.insert("thread".into(), value.clone());
 
@@ -602,77 +604,6 @@ impl Process {
             }],
             Vec::new(),
         )
-    }
-
-    /// Updates only host-owned thread metadata without rewriting its history.
-    pub(crate) fn update_thread_metadata(
-        &mut self,
-        instructions: Value,
-        system_prompt: Value,
-    ) -> Result<Change> {
-        instructions.validate(&self.limits, false)?;
-        system_prompt.validate(&self.limits, false)?;
-        let mut root = root_map(self.root.as_ref())?.clone();
-        let thread = root_map_mut(root.get_mut("thread").expect("validated process root"))?;
-        thread.insert("instructions".into(), instructions.clone());
-        thread.insert("system_prompt".into(), system_prompt.clone());
-        self.commit(
-            Value::Map(root),
-            vec![
-                Mutation::Set {
-                    path: "/thread/instructions".into(),
-                    value: instructions,
-                },
-                Mutation::Set {
-                    path: "/thread/system_prompt".into(),
-                    value: system_prompt,
-                },
-            ],
-            Vec::new(),
-        )
-    }
-
-    /// Appends one canonical reasoning event and its newly derived messages.
-    pub(crate) fn append_thread_event(
-        &mut self,
-        event: Value,
-        messages: Vec<Value>,
-    ) -> Result<Change> {
-        event.validate(&self.limits, false)?;
-        for message in &messages {
-            message.validate(&self.limits, false)?;
-        }
-        let mut root = root_map(self.root.as_ref())?.clone();
-        let thread = root_map_mut(root.get_mut("thread").expect("validated process root"))?;
-        let Value::Array(events) = thread
-            .get_mut("events")
-            .ok_or_else(|| Error::InvalidSnapshot("/thread/events is missing".into()))?
-        else {
-            return Err(Error::InvalidSnapshot(
-                "/thread/events is not an array".into(),
-            ));
-        };
-        events.push(event.clone());
-        let Value::Array(committed_messages) = thread
-            .get_mut("messages")
-            .ok_or_else(|| Error::InvalidSnapshot("/thread/messages is missing".into()))?
-        else {
-            return Err(Error::InvalidSnapshot(
-                "/thread/messages is not an array".into(),
-            ));
-        };
-        committed_messages.extend(messages.clone());
-        let mut mutations = vec![Mutation::Append {
-            path: "/thread/events".into(),
-            values: vec![event],
-        }];
-        if !messages.is_empty() {
-            mutations.push(Mutation::Append {
-                path: "/thread/messages".into(),
-                values: messages,
-            });
-        }
-        self.commit(Value::Map(root), mutations, Vec::new())
     }
 
     /// Replaces the host-managed built-in catalog under `/bin`.
@@ -777,6 +708,103 @@ impl Process {
         result
     }
 
+    pub(crate) async fn prepare_exec_with_builtins(
+        &self,
+        path: &str,
+        input: Value,
+        builtins: &Builtins,
+        context: Arc<Mutex<Process>>,
+    ) -> Result<PreparedActivation> {
+        let script = library_path(path)?
+            .ok_or_else(|| Error::InvalidPath(path.into()))?
+            .to_owned();
+        let version_before = self.version;
+        let mut request = Ok(ActivationRequest {
+            script: script.clone(),
+            input,
+        });
+        for hook in self.hooks.iter() {
+            let current = match request {
+                Ok(current) => current,
+                Err(_) => break,
+            };
+            request = match hook.before_activation(current) {
+                HookAction::Continue(current) => Ok(current),
+                HookAction::Cancel(reason) => Err(Error::HookCancelled(reason)),
+            };
+        }
+
+        let event_script = request
+            .as_ref()
+            .map(|request| request.script.clone())
+            .unwrap_or_else(|_| script);
+        let result = async {
+            let request = request?;
+            let mut replay = Vec::new();
+            let mut execution_time = Duration::from_millis(self.limits.max_execution_millis);
+            loop {
+                let mut candidate = self.clone();
+                let step =
+                    candidate.exec_inner_step(request.clone(), replay.clone(), execution_time);
+                match step? {
+                    ExecStep::Complete(activation, mutations) => {
+                        return Ok(PreparedActivation {
+                            candidate,
+                            activation,
+                            mutations,
+                            event_script: event_script.clone(),
+                            version_before,
+                        });
+                    }
+                    ExecStep::Builtin(call, elapsed) => {
+                        execution_time = execution_time
+                            .checked_sub(elapsed)
+                            .ok_or(Error::ExecutionLimitExceeded)?;
+                        let Some(name) = call.path.strip_prefix("/bin/") else {
+                            return Err(Error::InvalidPath(call.path));
+                        };
+                        // THREAT[TM-CAP-004] THREAT[TM-EFF-005]: The guest can
+                        // select only a built-in installed by this Svit host.
+                        // The call is immediate and recorded for deterministic
+                        // replay of the remaining pure script segments; it is
+                        // never represented as committed or restorable authority.
+                        let output = builtins
+                            .execute_value(name, call.input.to_json(), context.clone())
+                            .await
+                            .map_err(|error| {
+                                Error::Script(sanitize_diagnostic(format!(
+                                    "built-in {} failed: {error}",
+                                    call.path
+                                )))
+                            })?;
+                        replay.push(BuiltinReplay {
+                            path: call.path,
+                            input: call.input,
+                            output: Value::from_json(output)?,
+                        });
+                    }
+                }
+            }
+        }
+        .await;
+
+        if let Err(error) = &result {
+            let event = ActivationEvent {
+                process_id: self.id.clone(),
+                script: event_script,
+                version_before,
+                status: ActivationStatus::Failed {
+                    error: sanitize_diagnostic(error),
+                },
+            };
+            for hook in self.hooks.iter() {
+                hook.after_activation(&event);
+            }
+        }
+
+        result
+    }
+
     pub(crate) fn commit_prepared(&mut self, prepared: PreparedActivation) -> Activation {
         self.root = prepared.candidate.root;
         self.version = prepared.candidate.version;
@@ -835,6 +863,18 @@ impl Process {
     /// Until then, restored mounts report `attached: false` and every read,
     /// listing, and write below their root fails closed.
     pub fn restore(bytes: &[u8]) -> Result<Self> {
+        Self::restore_snapshot(bytes).map(|(process, _)| process)
+    }
+
+    /// Restores a process and returns the already-validated root hash carried
+    /// by its snapshot. Persistence uses this to check boundary metadata
+    /// without serializing the complete restored root a second time.
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn restore_with_declared_root_hash(bytes: &[u8]) -> Result<(Self, String)> {
+        Self::restore_snapshot(bytes)
+    }
+
+    fn restore_snapshot(bytes: &[u8]) -> Result<(Self, String)> {
         // THREAT[TM-SNAP-001]: Bound untrusted bytes before the JSON decoder
         // can allocate from attacker-controlled lengths.
         if bytes.len() > MAX_SNAPSHOT_BYTES {
@@ -857,15 +897,19 @@ impl Process {
         if root_hash(&snapshot.root)? != snapshot.root_hash {
             return Err(Error::InvalidSnapshot("root hash mismatch".into()));
         }
-        Ok(Self {
-            id: snapshot.id,
-            version: snapshot.version,
-            root: Arc::new(snapshot.root),
-            limits: snapshot.limits,
-            hooks: Arc::from([]),
-            // THREAT[TM-CAP-008]: Restoring state never restores authority.
-            mounts: Arc::new(MountRegistry::default()),
-        })
+        let declared_root_hash = snapshot.root_hash;
+        Ok((
+            Self {
+                id: snapshot.id,
+                version: snapshot.version,
+                root: Arc::new(snapshot.root),
+                limits: snapshot.limits,
+                hooks: Arc::from([]),
+                // THREAT[TM-CAP-008]: Restoring state never restores authority.
+                mounts: Arc::new(MountRegistry::default()),
+            },
+            declared_root_hash,
+        ))
     }
 
     /// Creates an independent child at the current committed boundary.
@@ -918,7 +962,68 @@ impl Process {
         Ok(())
     }
 
+    /// Applies one validated event while reconstructing an unpublished owner.
+    ///
+    /// Unlike the public replay boundary, recovery may mutate its private root
+    /// in place: an error discards the entire reconstruction, so it does not
+    /// need a full rollback clone for every retained transaction.
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn apply_persisted_mutations_for_recovery(
+        &mut self,
+        version_before: u64,
+        version_after: u64,
+        mutations: &[Mutation],
+    ) -> Result<()> {
+        if self.version != version_before || version_before.checked_add(1) != Some(version_after) {
+            return Err(Error::InvalidPersistence(
+                "process version transition is invalid".into(),
+            ));
+        }
+        for mutation in mutations {
+            match mutation {
+                Mutation::Set { path, value } => {
+                    value.validate(&self.limits, path == "/lib" || path.starts_with("/lib/"))?;
+                }
+                Mutation::Append { values, .. } => {
+                    for value in values {
+                        value.validate(&self.limits, false)?;
+                    }
+                }
+                Mutation::Remove { .. } | Mutation::RemoveFront { .. } => {}
+            }
+        }
+        let root = Arc::make_mut(&mut self.root);
+        for mutation in mutations {
+            apply_mutation(root, mutation)?;
+        }
+        self.version = version_after;
+        Ok(())
+    }
+
+    #[cfg(feature = "persistence-turso")]
+    pub(crate) fn validate_recovery_boundary(&self) -> Result<()> {
+        validate_root(self.root.as_ref(), &self.id, &self.limits)
+    }
+
     fn exec_inner(&mut self, request: ActivationRequest) -> Result<(Activation, Vec<Mutation>)> {
+        match self.exec_inner_step(
+            request,
+            Vec::new(),
+            Duration::from_millis(self.limits.max_execution_millis),
+        )? {
+            ExecStep::Complete(activation, mutations) => Ok((activation, mutations)),
+            ExecStep::Builtin(_, _) => Err(Error::Script(
+                "Svit Lisp /bin execution requires a Svit host".into(),
+            )),
+        }
+    }
+
+    fn exec_inner_step(
+        &mut self,
+        request: ActivationRequest,
+        builtin_replay: Vec<BuiltinReplay>,
+        execution_time: Duration,
+    ) -> Result<ExecStep> {
         request.input.validate(&self.limits, false)?;
         let memory = self
             .read_committed("/memory")?
@@ -930,9 +1035,11 @@ impl Process {
             memory,
             Arc::clone(&self.mounts),
             self.limits.clone(),
-            Duration::from_millis(self.limits.max_execution_millis),
+            execution_time,
+            builtin_replay,
         );
-        let output = catch_unwind(AssertUnwindSafe(|| {
+        let execution_started = Instant::now();
+        let execution = catch_unwind(AssertUnwindSafe(|| {
             run_guest_script(
                 &state,
                 &request.script,
@@ -941,7 +1048,21 @@ impl Process {
                 self.limits.max_exec_depth,
             )
         }))
-        .map_err(|_| Error::Script("Lisp interpreter failed".into()))??;
+        .map_err(|_| Error::Script("Lisp interpreter failed".into()))?;
+        let output = match execution {
+            Ok(output) => {
+                if !state.builtin_replay_complete()? {
+                    return Err(Error::Script("built-in replay diverged".into()));
+                }
+                output
+            }
+            Err(error) => match state.pending_builtin()? {
+                Some(call) => {
+                    return Ok(ExecStep::Builtin(call, execution_started.elapsed()));
+                }
+                None => return Err(error),
+            },
+        };
 
         let new_memory = lock(&state.memory)?.clone();
         output.validate(&self.limits, false)?;
@@ -1022,7 +1143,7 @@ impl Process {
         }
         changed.sort();
 
-        Ok((
+        Ok(ExecStep::Complete(
             Activation {
                 output,
                 logs: lock(&state.logs)?.clone(),
@@ -1034,6 +1155,11 @@ impl Process {
             mutations,
         ))
     }
+}
+
+enum ExecStep {
+    Complete(Activation, Vec<Mutation>),
+    Builtin(BuiltinCall, Duration),
 }
 
 #[cfg_attr(not(feature = "persistence-turso"), allow(dead_code))]
@@ -1135,9 +1261,11 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     )?;
     validate_reserved_root(root, "tasks", Value::empty_map())?;
 
-    root.get("thread")
-        .ok_or_else(|| Error::InvalidSnapshot("missing /thread".into()))?
-        .validate(limits, false)?;
+    validate_thread_value(
+        root.get("thread")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /thread".into()))?,
+        limits,
+    )?;
 
     let bin = root_map(
         root.get("bin")
@@ -1213,6 +1341,41 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     Value::Array(outbox.clone()).validate(limits, false)?;
     for message in outbox {
         message_from_value(message)?;
+    }
+    Ok(())
+}
+
+fn validate_thread_value(value: &Value, limits: &Limits) -> Result<()> {
+    let Value::Map(thread) = value else {
+        return value.validate(limits, false);
+    };
+
+    // THREAT[TM-DOS-003]: `/thread` is an append-only host collection, not one
+    // guest value. Validate each untrusted envelope with the process value
+    // limits, then bound the collection independently. Applying one entry
+    // budget to the whole history makes valid durable sessions fail merely by
+    // accumulating individually valid Everruns events.
+    for (name, value) in thread {
+        if matches!(name.as_str(), "events" | "messages")
+            && let Value::Array(records) = value
+        {
+            if records.len() > MAX_THREAD_RECORDS {
+                return Err(Error::InvalidValue(
+                    "maximum thread records exceeded".into(),
+                ));
+            }
+            for record in records {
+                record.validate(limits, false)?;
+            }
+        } else {
+            value.validate(limits, false)?;
+        }
+    }
+
+    let encoded = serde_json::to_vec(value)
+        .map_err(|_| Error::InvalidValue("thread serialization failed".into()))?;
+    if encoded.len() > MAX_THREAD_BYTES {
+        return Err(Error::InvalidValue("maximum thread bytes exceeded".into()));
     }
     Ok(())
 }
@@ -1534,6 +1697,7 @@ fn validate_script_source(name: &str, source: &str, limits: &Limits) -> Result<(
         Arc::new(MountRegistry::default()),
         limits.clone(),
         Duration::from_millis(limits.max_execution_millis),
+        Vec::new(),
     );
     let interpreter = secure_lisp(&state, &Value::Null, limits, limits.max_exec_depth)?;
     interpreter
@@ -1557,6 +1721,7 @@ struct RuntimeState {
     messages: Arc<Mutex<Vec<StagedMessage>>>,
     library_changes: Arc<Mutex<LibraryChanges>>,
     mount_writes: Arc<Mutex<Vec<MountWrite>>>,
+    builtin_replay: Arc<Mutex<BuiltinReplayState>>,
     mounts: Arc<MountRegistry>,
     limits: Limits,
     deadline: Instant,
@@ -1570,6 +1735,30 @@ struct MountWrite {
     value: Option<Value>,
 }
 
+#[derive(Clone)]
+struct BuiltinReplay {
+    path: String,
+    input: Value,
+    output: Value,
+}
+
+struct BuiltinReplayState {
+    completed: Vec<BuiltinReplay>,
+    cursor: usize,
+    pending: Option<BuiltinCall>,
+}
+
+#[derive(Clone)]
+struct BuiltinCall {
+    path: String,
+    input: Value,
+}
+
+enum BuiltinResolution {
+    Output(Value),
+    Pending,
+}
+
 impl RuntimeState {
     fn new(
         committed_root: Value,
@@ -1577,6 +1766,7 @@ impl RuntimeState {
         mounts: Arc<MountRegistry>,
         limits: Limits,
         execution_time: Duration,
+        builtin_replay: Vec<BuiltinReplay>,
     ) -> Self {
         Self {
             committed_root: Arc::new(committed_root),
@@ -1586,10 +1776,40 @@ impl RuntimeState {
             messages: Arc::new(Mutex::new(Vec::new())),
             library_changes: Arc::new(Mutex::new(Vec::new())),
             mount_writes: Arc::new(Mutex::new(Vec::new())),
+            builtin_replay: Arc::new(Mutex::new(BuiltinReplayState {
+                completed: builtin_replay,
+                cursor: 0,
+                pending: None,
+            })),
             mounts,
             limits,
             deadline: Instant::now() + execution_time,
         }
+    }
+
+    fn resolve_builtin(&self, path: String, input: Value) -> Result<BuiltinResolution> {
+        let mut replay = lock(&self.builtin_replay)?;
+        if let Some(completed) = replay.completed.get(replay.cursor).cloned() {
+            if completed.path != path || completed.input != input {
+                return Err(Error::Script("built-in replay diverged".into()));
+            }
+            replay.cursor += 1;
+            return Ok(BuiltinResolution::Output(completed.output));
+        }
+        if replay.completed.len() >= self.limits.max_exec_depth {
+            return Err(Error::ResourceLimitExceeded("built-in calls"));
+        }
+        replay.pending = Some(BuiltinCall { path, input });
+        Ok(BuiltinResolution::Pending)
+    }
+
+    fn pending_builtin(&self) -> Result<Option<BuiltinCall>> {
+        Ok(lock(&self.builtin_replay)?.pending.clone())
+    }
+
+    fn builtin_replay_complete(&self) -> Result<bool> {
+        let replay = lock(&self.builtin_replay)?;
+        Ok(replay.cursor == replay.completed.len())
     }
 
     fn mount_view(&self) -> MountView<'_> {
@@ -1795,6 +2015,7 @@ impl ForeignValue for GuestPersistent {
 
 #[derive(Clone, Debug)]
 enum GuestFailure {
+    BuiltinPending,
     Execution,
     InvalidPath(String),
     InvalidValue(String),
@@ -1805,6 +2026,7 @@ enum GuestFailure {
 impl fmt::Display for GuestFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::BuiltinPending => formatter.write_str("built-in execution suspended"),
             Self::Execution => formatter.write_str("activation execution limit exceeded"),
             Self::InvalidPath(message) | Self::InvalidValue(message) | Self::Script(message) => {
                 formatter.write_str(message)
@@ -2052,7 +2274,25 @@ fn install_guest_api(
                 "nested exec depth",
             )));
         }
-        let path = guest_string(&args[0], "exec path")?;
+        let path = match guest_string(&args[0], "exec path") {
+            Ok(path) => path,
+            Err(_) if matches!(&args[1], KetosValue::String(_)) => {
+                return guest_error("exec expects (exec path input); arguments appear reversed");
+            }
+            Err(error) => return Err(error),
+        };
+        if path.starts_with("/bin/") {
+            let input = persistent_from_ketos(&args[1], &exec_limits).map_err(guest_from_svit)?;
+            return match state_for_exec
+                .resolve_builtin(path, input)
+                .map_err(guest_from_svit)?
+            {
+                BuiltinResolution::Output(output) => {
+                    persistent_to_ketos(&output).map_err(guest_from_svit)
+                }
+                BuiltinResolution::Pending => Err(KetosError::custom(GuestFailure::BuiltinPending)),
+            };
+        }
         let name = library_path(&path)
             .map_err(guest_from_svit)?
             .ok_or_else(|| guest_from_svit(Error::InvalidPath(path.clone())))?;
@@ -2450,6 +2690,9 @@ fn map_ketos_error(interpreter: &KetosInterpreter, error: KetosError) -> Error {
             Error::ResourceLimitExceeded("syntax depth")
         }
         KetosError::Custom(error) => match error.downcast_ref::<GuestFailure>() {
+            Some(GuestFailure::BuiltinPending) => {
+                Error::Script("built-in execution suspended".into())
+            }
             Some(GuestFailure::Execution) => Error::ExecutionLimitExceeded,
             Some(GuestFailure::InvalidPath(message)) => Error::InvalidPath(message.clone()),
             Some(GuestFailure::InvalidValue(message)) => Error::InvalidValue(message.clone()),

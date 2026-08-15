@@ -70,11 +70,12 @@ semantics of external state.
 
 The current implementation supports both in-memory processes and a local Turso
 adapter that durably stores one address-keyed stream of process transactions.
-Each transaction can mutate any committed process state, including memory,
-scripts, inbox/outbox, canonical reasoning events, and their derived message
-projection. Reasoning events live under `/thread/events` inside that stream;
-they are not a second event log. Snapshots, restore, forks, bounded
-queries, and safe history cuts use the same state model.
+Each transaction mutates process state: memory, scripts, inbox/outbox, and
+bounded `/thread` metadata. Canonical reasoning events use a separate paged
+durable `EventLog`, while Everruns compaction checkpoints retain a compact
+model context plus only its necessary raw suffix. Snapshots therefore remain
+small. A durable fork shares the exact immutable event prefix and any checkpoint
+within it; a process-only fork starts a fresh session.
 
 The storage contract is designed so an object store such as S3 can store
 immutable transaction objects and use a conditional head write as the commit

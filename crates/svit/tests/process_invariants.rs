@@ -73,13 +73,13 @@ fn thread_state_is_host_managed_and_guest_read_only() {
         .unwrap()
         .library(
             "forge-history",
-            svit::Script::new(r#"(define (main input) (write "/thread/events" input))"#),
+            svit::Script::new(r#"(define (main input) (write "/thread/system_prompt" input))"#),
         )
         .build()
         .unwrap();
 
     process
-        .replace_thread_state(value!({"format": "test@1", "events": []}))
+        .replace_thread_state(value!({"format": "test@1", "system_prompt": "host"}))
         .unwrap();
     let committed = unchanged(&process);
     let version = process.version();
@@ -103,6 +103,24 @@ fn thread_state_is_host_managed_and_guest_read_only() {
     ));
     assert_eq!(process.snapshot().unwrap(), committed);
     assert_eq!(process.version(), version);
+}
+
+#[test]
+// THREAT[TM-DOS-003]
+fn thread_collections_remain_hard_bounded() {
+    let mut process = Process::new("svit://local/tests/thread-collection-limit").unwrap();
+    let oversized = Value::from_json(serde_json::json!({
+        "events": vec![serde_json::Value::Null; 100_001],
+        "messages": [],
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        process.replace_thread_state(oversized),
+        Err(Error::InvalidValue(message)) if message == "maximum thread records exceeded"
+    ));
+    assert_eq!(process.version(), 0);
+    assert_eq!(process.read("/thread").unwrap(), Some(Value::Null));
 }
 
 #[test]
@@ -530,6 +548,37 @@ fn nested_exec_depth_is_bounded_without_resetting_the_transaction() {
         .unwrap();
     denied.remove("/lib/replacement").unwrap();
     assert!(denied.read("/lib/replacement").unwrap().is_none());
+}
+
+#[test]
+fn nested_exec_explains_reversed_arguments_and_requires_a_svit_host_for_builtins() {
+    let mut reversed = Process::builder("svit://local/tests/reversed-exec")
+        .unwrap()
+        .library(
+            "fetch",
+            svit::Script::new("(define (main input) (exec input \"/bin/http\"))"),
+        )
+        .build()
+        .unwrap();
+    let error = reversed
+        .exec("/lib/fetch", value!({"method": "GET"}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("exec expects (exec path input); arguments appear reversed"));
+
+    let mut host_builtin = Process::builder("svit://local/tests/host-builtin-exec")
+        .unwrap()
+        .library(
+            "fetch",
+            svit::Script::new("(define (main input) (exec \"/bin/http\" input))"),
+        )
+        .build()
+        .unwrap();
+    let error = host_builtin
+        .exec("/lib/fetch", value!({"method": "GET"}))
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("Svit Lisp /bin execution requires a Svit host"));
 }
 
 #[test]

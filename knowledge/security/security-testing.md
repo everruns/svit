@@ -53,6 +53,9 @@ Required for the initial vertical slice.
   recursive or generator constructs before evaluation.
 - `TM-DOS-011`: build-time recursive macro expansion fails under the compiler
   execution or call-stack limit.
+- `TM-PERS-001`: resume rejects corrupted uncovered event bytes and corrupted
+  recovery checkpoints; a valid checkpoint reconstructs its exact boundary and
+  only the newer hash-chained tail is reduced before publication.
 - `TM-ESC-003`: data built-ins accept only a committed process path or
   explicit JSON; no shell, filesystem, executable, or environment input exists.
 - `TM-ESC-004`: build-time script compilation rejects module loading while
@@ -72,8 +75,12 @@ Required for the initial vertical slice.
   duplicate a committed activation.
 - `TM-EFF-004`: the negative test demonstrates that independent controllers do
   not provide distributed ownership; this remains required until leases exist.
-- `TM-EFF-005`: the `llm` command can call only the host-selected driver; tests
-  do not claim transactional or replay-safe external effects.
+- `TM-EFF-005`: the `llm` command can call only the host-selected driver. A
+  persisted model-authored `/lib` script invokes an allowlisted host HTTP
+  built-in exactly once across guest suspension/replay and can consume its
+  result before one commit. A later guest failure still executes HTTP once but
+  rolls back guest state; tests do not claim rollback or exactly-once recovery
+  for the external effect.
 - `TM-FORK-002`: `spawn` records lineage, preserves parent memory, retains an
   independently restorable child, and rejects duplicate child addresses.
 - `TM-AUTH-001`: remote transport tests must prove authorization precedes
@@ -86,10 +93,10 @@ Required for the initial vertical slice.
   denies unlisted scripts before activation, and still executes an allowed script.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
-- `TM-AUD-001`: host commits to `/thread` succeed atomically, guest writes fail
-  without mutation, invalid host replacement values preserve the root and
-  version, message projection must match canonical events on resume, and the
-  event log rejects foreign sessions, duplicate IDs, or invalid sequences.
+- `TM-AUD-001`: guest writes to `/thread` fail without mutation; bounded thread
+  metadata rejects materialized history; the paged event log rejects foreign
+  sessions, duplicate IDs, or invalid sequences; and durable forks preserve
+  only their inherited immutable prefix and eligible context checkpoints.
 - `TM-MSG-002`: inbox enqueue and exact-head acknowledgement commit once;
   rejected values, mismatched acknowledgement, and guest writes preserve state.
 

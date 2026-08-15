@@ -1,7 +1,58 @@
 # Svit Knowledge Update Log
 
+## 2026-08-15
+
+* **Tuika tree host**: Upgraded Lampa to Tuika 0.9 and replaced its local
+  expanded-row, selection, viewport, and tree hit-testing mechanics with
+  `TreeState` and `TreeList`. The process remains the sole durable state owner;
+  Lampa supplies only lazily resolved path rows and labels.
+
 ## 2026-08-14
 
+* **Scripted built-in composition**: Removed `L-005`. Svit-hosted Lisp now
+  resolves both `/lib` scripts and the exact `/bin` built-ins attached by its
+  host. An async built-in suspends guest execution; Svit executes it once and
+  replays pure guest segments with recorded results before committing guest
+  state once. External effects remain immediate and non-transactional under
+  `L-036`. A persisted model-authored HTTP script and a post-HTTP rollback case
+  provide end-to-end evidence. Bare `Process::exec` remains `/lib`-only because
+  serialized process state contains no host authority, and reversed Lisp
+  arguments receive an actionable diagnostic.
+* **Bounded durable resume**: Turso now atomically replaces one validated
+  recovery checkpoint every 32 process transactions and after replaying an
+  older uncheckpointed tail. Resume mutates only its unpublished
+  reconstruction, validates complete state and root hashes at bounded
+  boundaries, and replays only the newer tail. Recovery blobs now store the
+  process snapshot directly, and the resumed reasoning loop reuses the already
+  validated thread projection instead of decoding it repeatedly through the
+  Everruns event reader. On a copied 839-event Lampa `test1` store, the
+  development build restored the 10 MB process in roughly one second and
+  constructed reasoning in roughly 0.35 seconds, down from more than 100
+  seconds without deleting retained history.
+* **Compact store snapshots**: Advanced store snapshots to
+  `svit-store-snapshot@2`, embedding the process image as structured JSON
+  instead of an integer array while retaining reads of format 1.
+* **Lampa transcript selection**: Integrated Tuika's captured mouse selection
+  and OSC 52 clipboard path. Plain transcript drags highlight and copy visible
+  text, `Ctrl+C` re-copies an active range, and memory-tree clicks keep their
+  existing selection behavior.
+* **Live reasoning timeline**: Lampa now follows newly committed
+  `/thread/messages` entries, rendering intermediate model commentary and tool
+  calls while a turn runs. Outbox observation marks completion only, and
+  message-ID deduplication reconciles optimistic inbox display with the durable
+  projection.
+* **Compact tool rows**: Lampa now replaces a pending tool call with one
+  Yolop-style completion row containing status, operation, target, and a
+  bounded result summary. It derives built-in names from `/bin` exec paths and
+  no longer exposes opaque tool-call IDs.
+* **Turn completion**: Removed Svit's hidden eight-iteration override so
+  Everruns owns its default loop policy. An explicit cap reached before a final
+  answer now fails the Svit turn, retains the inbox item, and never publishes a
+  tool call as completed outbox output.
+* **Thread history limits**: Separated append-only `/thread/events` and
+  `/thread/messages` collection bounds from the per-value entry budget. Every
+  record remains independently validated, while the encoded thread and record
+  counts have hard envelopes; recorded missing compaction as `L-047`.
 * **Canonical domain model**: Made `Svit` the runnable unit that owns one
   reason/act loop, durable conversation thread, and `Process`. The embedding
   application is the host, `Reasoner` binds model and provider, an activation

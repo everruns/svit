@@ -17,6 +17,7 @@ turso-mount = ["dep:turso"]
 [dependencies]
 async-trait.workspace = true
 everruns.workspace = true
+everruns-builtins.workspace = true
 everruns-host.workspace = true
 jaq-core.workspace = true
 jaq-json.workspace = true

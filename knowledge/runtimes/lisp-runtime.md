@@ -73,7 +73,7 @@ resource limit.
 | `(stat path)` | Describe one node: kind, granted access, locality, and source facts |
 | `(write path value)` | Stage a `/memory`, typed `/lib/<name>`, or granted mount-leaf update |
 | `(remove path)` | Stage a `/memory`, `/lib/<name>`, or granted mount-node removal |
-| `(exec script input)` | Execute a named script inside the same activation transaction |
+| `(exec path input)` | Execute a `/lib` script or host-attached `/bin` built-in, with the path first |
 | `(log-info! message fields?)` | Append a bounded activation log record |
 | `(send! address message)` | Buffer a message intent for atomic commit |
 | `*svit-version*` | The string `Svit Lisp 2` |
@@ -122,19 +122,24 @@ Nested `exec` uses the same working memory, staged library changes, logs,
 message intents, and activation deadline. It has an independent maximum depth
 because each call creates a fresh interpreter. A nested failure restores its
 call checkpoint and, unless handled by a future language construct, rejects
-the outer activation. Any syntax, runtime, conversion, limit, or validation
-failure before commit discards the complete activation working copy.
+the outer activation. A `/bin` call suspends guest execution while Svit invokes
+the exact host-attached built-in. Svit then replays pure guest segments with
+the recorded result, without repeating the completed built-in, and commits the
+final working copy once. Guest segments share one execution-time budget;
+waiting for the async built-in is outside that VM budget. Any syntax, runtime,
+conversion, limit, or validation failure before commit discards the complete
+activation working copy, but cannot undo an external built-in effect.
 
 ## Isolation and authority
 
 The runtime installs `GlobalIo::null()` and `NullModuleLoader`, and creates a
 fresh interpreter for every activation. Guest code reaches mount sources only
-through host-attached providers under the descriptor's granted access. It never
-receives a path, handle, connection, or credential, and has no ambient
+through host-attached providers under the descriptor's granted access and may
+select only the `/bin` implementations attached by its Svit host. It never
+receives a host path, handle, connection, or credential, and has no ambient
 filesystem, network, environment, host process, module, clock, or randomness
-capability.
-Rust functions capture only the process working copy and bounded activation
-buffers.
+capability. Rust functions capture only the process working copy, bounded
+activation buffers, and the typed built-in suspension boundary.
 
 Ketos is native code inside the host process. Pure Rust reduces the FFI and
 C/C++ interpreter surface but is not proof of hostile same-process tenant

@@ -157,8 +157,11 @@ remove(path)          commit a removal
 exec(path, input)     run a named script or host-attached built-in
 ```
 
-Model-facing `exec` resolves `/lib` scripts and installed `/bin` built-ins.
-Bare `Process::exec` and nested Svit Lisp execution resolve only `/lib`, because
+Model-facing `exec` and Svit-hosted Lisp resolve `/lib` scripts and installed
+`/bin` built-ins. A script uses `(exec "/bin/name" input)` with the path first.
+Svit suspends and replays pure guest execution around an async built-in call,
+then commits guest state once. The external effect itself is immediate and
+cannot be rolled back. Bare `Process::exec` resolves only `/lib`, because
 serializable process state never owns native host authority.
 
 ## Persistence and forks
@@ -187,15 +190,17 @@ On restart, use `store.resume("svit://local/persisted/demo")` in place of
 `store.create(process)` and build the returned handle through the same
 `Svit::persisted` path.
 
-Every mutation belongs to one canonical `ProcessTransaction` stream per
-process. Conversation events are values under `/thread/events`, and
-`/thread/messages` is their checked projection rather than a second log.
+Every process mutation belongs to one canonical `ProcessTransaction` stream.
+Conversation events are a separate paged `EventLog`; `/thread` contains only
+bounded session metadata, never a materialized conversation copy.
 Resume validates transaction hashes, versions, mutations, and resulting root
-hashes without rerunning guest code.
+hashes without rerunning guest code. The Turso adapter atomically maintains one
+validated recovery checkpoint per process, so ordinary resume reconstructs
+only the bounded transaction tail while retained history remains queryable.
 
-`Svit::snapshot` captures process state and the durable conversation together.
-`Svit::fork_process` creates an isolated child process with inherited committed
-state; future parent and child mutations do not cross process boundaries.
+`Svit::snapshot` captures process state and thread metadata. A durable
+`DurableProcess::fork` shares the parent event prefix at its exact boundary;
+`Svit::fork_process` is process-only and starts a fresh child session.
 
 | Feature | Purpose |
 | --- | --- |
@@ -215,9 +220,12 @@ OPENAI_API_KEY=... cargo run --locked -p lampa
 
 ![Lampa terminal process viewer](docs/lampa.gif)
 
-Lampa shows the conversation, complete memory tree, and selected value. It
-mounts the current directory read-only as `/mounts/cwd`, renders messages and
-text previews as Markdown, and exposes the standard `/bin` built-ins.
+Lampa shows the conversation, including intermediate model commentary and
+compact tool status rows, alongside the complete memory tree and selected
+value. It mounts the current directory read-only as `/mounts/cwd`, renders
+messages and text previews as Markdown, and exposes the standard `/bin`
+built-ins. Drag over transcript text to select and copy it; `Ctrl+C` copies an
+active selection again and otherwise exits Lampa.
 
 Each instance has its own database. Reuse an instance ID to resume its committed
 conversation and memory:

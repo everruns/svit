@@ -21,6 +21,10 @@ Svit is a Rust library for durable reasoning over isolated processes. One
 process. The process is an actor-like state machine: it handles one transition
 at a time and owns one committed state root. A `Reasoner` binds its model and
 provider. Everruns implements the current loop behind `svit::Svit`.
+Everruns owns the default turn-iteration policy; Svit applies a maximum only
+when its host explicitly configures one. Reaching that maximum before a final
+answer is a failed Svit turn: the inbox message remains queued and no tool-call
+message is published as completed outbox output.
 Parallelism comes from independent processes, not shared guest memory.
 
 The first executable slice contains:
@@ -62,7 +66,7 @@ the boundary.
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
-| Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, snapshots, forks, cuts, recovery, and fencing |
+| Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, recovery checkpoints, snapshots, forks, cuts, and fencing |
 | Built-ins | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
 
 The current workspace implements the process and process-owned reasoning loop in
@@ -73,17 +77,29 @@ Lampa maps one lowercase filesystem-safe instance ID to both
 one local Turso store; an existing file must contain the matching root address.
 The entry point creates, resumes, or explicitly imports that process and builds
 one persisted `Svit`; the TUI thereafter sends only through its durable inbox
-and consumes commit notifications, completed-turn outbox messages, and terminal
-failure events.
+and consumes commit notifications, completed-turn outbox signals, and terminal
+failure events. Its conversation timeline receives projected messages from the
+post-commit observer and reads only a bounded durable tail on startup, so
+intermediate model commentary, tool calls, and tool results appear promptly.
 After a commit notification it reads an owned root/version pair through the
 `Svit` contract. It never retains a direct reference to `Process`.
 The contract exposes a cloneable `Inbox` sink and creates independent `Outbox`
 and `Events` observers for transient host consumption; Tokio broadcast channels
 remain an implementation detail behind those ports.
-Tree expansion and selection remain local UI state, so the TUI does not become
-another process-state owner or poll the runtime. Raw durable reasoning events
-remain part of the process tree; the timeline does not duplicate message
-events already rendered as chat. When several commits arrive before one frame,
+Tree expansion, stable-path selection, ancestor fallback, viewport retention,
+and tree hit testing remain local UI state through Tuika's `TreeState` and
+`TreeList`, so the TUI does not become another process-state owner or poll the
+runtime. Raw durable reasoning events
+remain outside the process tree; the timeline projects their derived messages
+and deduplicates optimistic inbox display by message ID. The transient outbox
+only marks a turn complete; it is not a second message source. Tool presentation
+correlates each result with its preceding call, replaces a pending row when the
+result arrives, and shows status, operation, target, and a bounded outcome on
+one line instead of exposing the internal call ID. Transcript selection is also
+local UI state: Tuika resolves and paints plain mouse drags over the visible
+transcript, and Lampa writes the selected text through OSC 52 after release.
+Memory-tree presses remain tree operations and clear any transcript selection.
+When several commits arrive before one frame,
 Lampa retains the original selected path until the refreshed ancestors resolve;
 an intermediate partial tree never replaces operator navigation state. Svit
 binds the provider-visible model ID and host-owned provider into a
@@ -91,8 +107,8 @@ credential-free `ModelSpec`. Svit is an
 advanced Everruns host: it composes the compact single-session host builder and
 an explicit `HostComposition` containing only the Svit capability and selected
 provider driver. The separate `HostBackends` store bundle installs Svit's
-process-backed `EventLog`, while Everruns rebuilds runtime history from that
-canonical log. `InProcessRuntime` remains Everruns' current execution mechanism
+process-backed `EventLog` and durable compaction-checkpoint store. Everruns
+rebuilds a checkpoint plus its necessary event suffix. `InProcessRuntime` remains Everruns' current execution mechanism
 for advanced embedders; it is kept behind the Svit contract rather than exposed
 as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
@@ -105,9 +121,8 @@ policy; selecting the complete research registry explicitly grants unrestricted
 HTTP destinations. Svit supplies the reusable redirect-denying,
 response-bounded transport, and other hosts may attenuate destinations with an
 allowlist.
-Each append commits the canonical event and its derived guest-readable message
-projection together in the Svit process root and, when persisted, in the same
-Turso event transaction. One `Reasoner` owns the
+Each append commits the canonical event before its derived message is observed;
+it never grows the Svit process root. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a
 partially configured reasoning loop. Built-ins remain separate because their
 external authority is not part of reasoning identity.
@@ -153,16 +168,18 @@ Module names may evolve; the ownership boundary is the decision.
    stores mount identity, resolution runs through a host-attached provider
    under the descriptor's granted access, and activations receive persistent
    values, never filesystem or database handles.
-9. Durable loop and replay state is host-managed under `/thread`; untrusted
-   scripts and model tools can inspect the configured prompt, derived message
-   history, and canonical events but cannot rewrite them.
+9. `/thread` is bounded host-managed session metadata. Canonical events and
+   compaction checkpoints are host infrastructure, so untrusted scripts and
+   model tools cannot rewrite or materialize history in process memory.
 10. Inbox messages commit before loop notification and are acknowledged only
     after the corresponding turn succeeds.
-11. Built-ins remain outside Svit Lisp. They receive typed values and
-   a read-only process context, not a shell or implicit ambient host interface.
-   Built-ins receive only the HTTP, model, or child-runner authority explicitly
-   supplied by the host; custom implementations are trusted native extensions
-   and may capture additional explicit host capabilities.
+11. Svit Lisp may select a host-attached built-in by its `/bin` path. Svit
+   suspends and replays the guest around that async call; the built-in itself
+   remains trusted host code receiving typed values and a read-only committed
+   process context, not a shell or implicit ambient host interface. Built-ins
+   receive only the HTTP, model, or child-runner authority explicitly supplied
+   by the host; custom implementations are trusted native extensions and may
+   capture additional explicit host capabilities.
 12. `/bin` is generated from attached built-ins and refreshed
    on resume. It describes runtime availability but never grants authority.
 
@@ -180,5 +197,8 @@ between hosts, and production Wasm/OS isolation are outside this slice. See
   isolation harder to state.
 - Serializing Lisp stacks, closures, quotations, or foreign values was rejected. Only
   committed Svit values and script source cross activation boundaries.
-- Executing external effects inside the transaction was rejected because a
-  rollback cannot undo them. The slice records message intents only.
+- Treating external effects as transactional was rejected because rollback
+  cannot undo them. A Svit-hosted script may invoke a built-in immediately;
+  Svit records its result while replaying pure guest segments and commits guest
+  state only after the complete script succeeds. Durable effect receipts and
+  exactly-once recovery remain deferred.
