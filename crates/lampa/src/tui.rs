@@ -11,7 +11,10 @@ use tuika::components::{TreeList, TreeRow, TreeState};
 use tuika::mouse::{SelectionState, paint_selection, selected_text};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
-use tuika::term::{clipboard, hyperlink::HyperlinkBackend};
+use tuika::term::{
+    clipboard,
+    hyperlink::{self, HyperlinkBackend},
+};
 use tuika_codeformatters::TreeSitterHighlighter;
 
 type MemoryTreeRow = TreeRow<'static, String>;
@@ -108,6 +111,47 @@ fn contains(rect: Rect, mouse: &Mouse) -> bool {
         && mouse.column < rect.right()
         && mouse.row >= rect.y
         && mouse.row < rect.bottom()
+}
+
+/// Resolves a deliberate Ctrl/Cmd-click against the last rendered transcript.
+/// The target is either an explicit Markdown href or a visible HTTP(S) URL.
+fn transcript_link_click(mouse: &Mouse, buffer: &Buffer, area: Rect) -> Option<String> {
+    let mut activation = *mouse;
+    activation.ctrl |= activation.super_key;
+    hyperlink::ctrl_click_url(&activation, buffer, area)
+}
+
+/// Opens a user-selected web URL without invoking a shell.
+#[cfg(target_os = "macos")]
+fn open_link(url: &str) -> Result<(), String> {
+    std::process::Command::new("open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open {url}: {error}"))
+}
+
+#[cfg(target_os = "linux")]
+fn open_link(url: &str) -> Result<(), String> {
+    std::process::Command::new("xdg-open")
+        .arg(url)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open {url}: {error}"))
+}
+
+#[cfg(target_os = "windows")]
+fn open_link(url: &str) -> Result<(), String> {
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open {url}: {error}"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+fn open_link(_url: &str) -> Result<(), String> {
+    Err("opening links is not supported on this platform".into())
 }
 
 fn panel_body(rect: Rect) -> Rect {
@@ -347,6 +391,9 @@ struct App {
     pending_copy: bool,
     composer: TextInputState,
     transcript_scroll: ScrollState,
+    /// Wrapped transcript rows from the frame that established the current viewport.
+    transcript_content_height: usize,
+    transcript_viewport_height: usize,
     preview_scroll: ScrollState,
     preview_content_height: usize,
     preview_cache: Option<PreviewCache>,
@@ -386,6 +433,8 @@ impl App {
             pending_copy: false,
             composer: TextInputState::new(),
             transcript_scroll: ScrollState::new(),
+            transcript_content_height: 1,
+            transcript_viewport_height: 1,
             preview_scroll,
             preview_content_height: 1,
             preview_cache: None,
@@ -569,6 +618,11 @@ impl App {
             preview: probes.preview.rect(),
         };
         self.selection_area = probes.transcript.rect();
+        self.transcript_viewport_height = usize::from(self.selection_area.height).max(1);
+        self.transcript_scroll.clamp(
+            self.transcript_content_height,
+            self.transcript_viewport_height,
+        );
     }
 
     /// Routes mouse capture through Tuika's text selection before panel clicks.
@@ -698,8 +752,8 @@ impl App {
                     Focus::Composer => {
                         let _ = self.transcript_scroll.handle(
                             event,
-                            self.timeline.len() * 3,
-                            usize::from(self.panel_bounds.conversation.height.saturating_sub(3)),
+                            self.transcript_content_height,
+                            self.transcript_viewport_height,
                         );
                     }
                     Focus::Preview => {
@@ -866,9 +920,11 @@ impl App {
                 {
                     return AppAction::Submit(text);
                 } else {
-                    let _ = self
-                        .transcript_scroll
-                        .handle(event, self.timeline.len() * 3, 20);
+                    let _ = self.transcript_scroll.handle(
+                        event,
+                        self.transcript_content_height,
+                        self.transcript_viewport_height,
+                    );
                 }
             }
             Focus::Preview => {
@@ -982,6 +1038,21 @@ async fn run_terminal(
                 && let Some(event) =
                     translate_event(event::read().map_err(|error| error.to_string())?)
             {
+                if let Event::Mouse(mouse) = &event
+                    && let Some(url) = transcript_link_click(
+                        mouse,
+                        terminal.current_buffer_mut(),
+                        app.selection_area,
+                    )
+                {
+                    if let Err(error) = open_link(&url) {
+                        app.timeline.push(TimelineEntry::Event {
+                            label: "ERROR",
+                            text: error,
+                        });
+                    }
+                    continue;
+                }
                 match app.handle(&event) {
                     AppAction::Continue => {}
                     AppAction::Submit(text) => {
@@ -1233,8 +1304,20 @@ fn conversation_view(
     content_width: u16,
 ) -> Element {
     let lines = timeline_lines(&app.timeline, content_width, theme);
-    let viewport_height = 20usize;
-    app.transcript_scroll.clamp(lines.len(), viewport_height);
+    let viewport_height = if app.selection_area.height == 0 {
+        20
+    } else {
+        usize::from(app.selection_area.height)
+    };
+    let wrapped_height = tuika::components::text::wrap_lines(&lines, content_width).len();
+    app.transcript_content_height = if wrapped_height > viewport_height {
+        tuika::components::text::wrap_lines(&lines, content_width.saturating_sub(1)).len()
+    } else {
+        wrapped_height
+    };
+    app.transcript_viewport_height = viewport_height;
+    app.transcript_scroll
+        .clamp(app.transcript_content_height, viewport_height);
     let transcript = transcript_probe.wrap(element(
         Scroll::new(lines, &app.transcript_scroll).wrap(true),
     ));
@@ -2745,6 +2828,33 @@ mod tests {
     }
 
     #[test]
+    fn command_click_resolves_a_transcript_url() {
+        let mut app = test_app(value!({}), 0);
+        app.app
+            .push_message(Message::assistant("Visit https://everruns.com/ now."));
+        let probes = layout(&mut app, 90, 24);
+        let theme = lampa_theme();
+        let root = build_view(&mut app.app, Rect::new(0, 0, 90, 24), &theme, &probes);
+        let buffer = render(root.as_ref(), 90, 24, &theme);
+        let frame = grid(&buffer);
+        let (row, column) = frame
+            .lines()
+            .enumerate()
+            .find_map(|(row, line)| {
+                line.find("https://everruns.com/")
+                    .map(|column| (row as u16, column as u16))
+            })
+            .expect("transcript URL is visible");
+        let mut click = Mouse::at(MouseKind::Up(MouseButton::Left), column, row);
+        click.super_key = true;
+
+        assert_eq!(
+            transcript_link_click(&click, &buffer, probes.transcript.rect()),
+            Some("https://everruns.com/".into())
+        );
+    }
+
+    #[test]
     fn timeline_projects_llm_commentary_and_tool_calls_from_svit_events() {
         let optimistic_user = Message::user("Inspect memory.");
         let canonical_user = Message::user("Inspect memory.");
@@ -3175,6 +3285,31 @@ mod tests {
 
         assert_eq!(app.focus, Focus::Memory);
         assert_eq!(app.tree.selected().map(String::as_str), Some("/memory/1"));
+    }
+
+    #[test]
+    fn transcript_wheel_direction_uses_its_wrapped_height() {
+        let mut app = test_app(value!({}), 0);
+        app.app
+            .push_message(Message::assistant("word ".repeat(600)));
+        let probes = layout(&mut app, 90, 24);
+        let transcript = probes.transcript.rect();
+        let bottom = app.app.transcript_scroll.offset();
+        assert!(bottom > 3, "the transcript must overflow the viewport");
+
+        let _ = app.app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::ScrollUp,
+            transcript.x,
+            transcript.y,
+        )));
+        assert!(app.app.transcript_scroll.offset() < bottom);
+
+        let _ = app.app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::ScrollDown,
+            transcript.x,
+            transcript.y,
+        )));
+        assert_eq!(app.app.transcript_scroll.offset(), bottom);
     }
 
     #[test]
