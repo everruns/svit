@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io;
+use std::sync::Arc;
 use std::time::Duration;
 
 use crossterm::event;
@@ -21,14 +22,22 @@ type MemoryTreeRow = TreeRow<'static, String>;
 
 const MEMORY_WIDTH: u16 = 30;
 const FRAME_TIME: Duration = Duration::from_millis(50);
+/// Bounds input draining so continuous pointer motion cannot starve rendering.
+const MAX_READY_INPUT_EVENTS: usize = 64;
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
 const MAX_PREVIEW_DEPTH: usize = 2;
 const MAX_INLINE_VALUE_BYTES: usize = 160;
 const MAX_TREE_ITEM_PREVIEW_BYTES: usize = 48;
 const RECENT_MESSAGES_LIMIT: usize = 500;
+/// Bounded, read-only EventLog window projected beneath `/thread` for Lampa.
+const RECENT_EVENTS_LIMIT: usize = 200;
 /// Children shown under one directory row.
 const MAX_TREE_CHILDREN: usize = 200;
+const UKRAINE_BANNER: &str = "Світ, це Світ. Зроблено в Україні";
+const YOLOP_BLUE: &str = "\x1b[38;2;45;91;158m";
+const YOLOP_GOLD: &str = "\x1b[38;2;126;94;19m";
+const ANSI_RESET: &str = "\x1b[0m";
 
 /// Placeholder for a node the tree has not resolved yet.
 static PENDING_VALUE: Value = Value::Null;
@@ -121,6 +130,23 @@ fn transcript_link_click(mouse: &Mouse, buffer: &Buffer, area: Rect) -> Option<S
     hyperlink::ctrl_click_url(&activation, buffer, area)
 }
 
+/// Collects terminal input already available after the first event.
+///
+/// A trackpad can queue many wheel events between frames. Draining that queue
+/// lets a reversal take effect on the next render rather than replaying stale
+/// movement one event per frame.
+fn ready_terminal_events(
+    first: event::Event,
+    mut is_ready: impl FnMut() -> io::Result<bool>,
+    mut read: impl FnMut() -> io::Result<event::Event>,
+) -> io::Result<Vec<event::Event>> {
+    let mut events = vec![first];
+    while events.len() < MAX_READY_INPUT_EVENTS && is_ready()? {
+        events.push(read()?);
+    }
+    Ok(events)
+}
+
 /// Opens a user-selected web URL without invoking a shell.
 #[cfg(target_os = "macos")]
 fn open_link(url: &str) -> Result<(), String> {
@@ -191,6 +217,154 @@ impl MemoryView for Svit {
     fn version(&self) -> u64 {
         Svit::version(self).unwrap_or_default()
     }
+}
+
+/// Lampa's bounded presentation cache for canonical thread history.
+///
+/// This is deliberately outside Svit's process tree: history remains paged
+/// EventLog infrastructure and therefore cannot grow snapshots or resume work.
+#[derive(Clone)]
+struct ThreadHistory {
+    events: Value,
+    messages: Value,
+}
+
+impl Default for ThreadHistory {
+    fn default() -> Self {
+        Self {
+            events: Value::Array(Vec::new()),
+            messages: Value::Array(Vec::new()),
+        }
+    }
+}
+
+impl ThreadHistory {
+    fn set_events(&mut self, events: Vec<Value>) {
+        self.events = Value::Array(events);
+    }
+
+    fn push_event(&mut self, event: Value) {
+        let Value::Array(events) = &mut self.events else {
+            self.events = Value::Array(vec![event]);
+            return;
+        };
+        if events.len() == RECENT_EVENTS_LIMIT {
+            events.remove(0);
+        }
+        events.push(event);
+    }
+
+    fn push_message(&mut self, message: Value) {
+        let Value::Array(messages) = &mut self.messages else {
+            self.messages = Value::Array(vec![message]);
+            return;
+        };
+        if messages.len() == RECENT_MESSAGES_LIMIT {
+            messages.remove(0);
+        }
+        messages.push(message);
+    }
+
+    fn at(&self, path: &str) -> Option<&Value> {
+        let (value, suffix) = if path == "/thread/events" {
+            (&self.events, "")
+        } else if path == "/thread/messages" {
+            (&self.messages, "")
+        } else if let Some(suffix) = path.strip_prefix("/thread/events/") {
+            (&self.events, suffix)
+        } else if let Some(suffix) = path.strip_prefix("/thread/messages/") {
+            (&self.messages, suffix)
+        } else {
+            return None;
+        };
+        let mut current = value;
+        for segment in suffix.split('/').filter(|segment| !segment.is_empty()) {
+            current = match current {
+                Value::Map(values) => values.get(segment)?,
+                Value::Array(values) => values.get(segment.parse::<usize>().ok()?)?,
+                _ => return None,
+            };
+        }
+        Some(current)
+    }
+}
+
+/// Read-only Lampa overlay that makes bounded EventLog history browseable
+/// beneath `/thread` without changing the Svit memory tree.
+struct ThreadHistoryView<'a, V: MemoryView + ?Sized> {
+    process: &'a V,
+    history: &'a ThreadHistory,
+}
+
+impl<'a, V: MemoryView + ?Sized> ThreadHistoryView<'a, V> {
+    fn new(process: &'a V, history: &'a ThreadHistory) -> Self {
+        Self { process, history }
+    }
+}
+
+impl<V: MemoryView + ?Sized> MemoryView for ThreadHistoryView<'_, V> {
+    fn discover(&self, path: &str) -> Result<Vec<String>, String> {
+        if path == "/thread" {
+            let mut names = self.process.discover(path)?;
+            for name in ["events", "messages"] {
+                if !names.iter().any(|existing| existing == name) {
+                    names.push(name.into());
+                }
+            }
+            names.sort();
+            return Ok(names);
+        }
+        match self.history.at(path) {
+            Some(Value::Map(values)) => Ok(values.keys().cloned().collect()),
+            Some(Value::Array(values)) => {
+                Ok((0..values.len()).map(|index| index.to_string()).collect())
+            }
+            Some(_) => Err(format!("invalid state path: {path}")),
+            None => self.process.discover(path),
+        }
+    }
+
+    fn stat(&self, path: &str) -> Result<Option<Value>, String> {
+        match self.history.at(path) {
+            Some(value) => Ok(Some(value_facts(path, value))),
+            None => self.process.stat(path),
+        }
+    }
+
+    fn read(&self, path: &str) -> Result<Option<Value>, String> {
+        if let Some(value) = self.history.at(path) {
+            return Ok(Some(value.clone()));
+        }
+        self.process.read(path)
+    }
+
+    fn version(&self) -> u64 {
+        self.process.version()
+    }
+}
+
+fn value_facts(path: &str, value: &Value) -> Value {
+    let (kind, content, entries) = match value {
+        Value::Map(values) => ("directory", "object", Some(values.len())),
+        Value::Array(values) => ("directory", "array", Some(values.len())),
+        Value::String(_) => ("leaf", "text/plain", None),
+        Value::Script(_) => ("leaf", "svit-script", None),
+        _ => ("leaf", "scalar", None),
+    };
+    let mut facts = BTreeMap::from([("content".into(), Value::from(content))]);
+    if let Some(entries) = entries {
+        facts.insert("entries".into(), Value::Integer(entries as i64));
+    }
+    Value::Map(BTreeMap::from([
+        ("kind".into(), Value::from(kind)),
+        ("facts".into(), Value::Map(facts)),
+        ("locality".into(), Value::from("cache")),
+        ("path".into(), Value::from(path)),
+    ]))
+}
+
+fn serialized_value(value: serde_json::Value) -> Value {
+    Value::from_json(value).expect("Svit history values are valid JSON")
 }
 
 /// What the console knows about one node before reading its content.
@@ -398,6 +572,7 @@ struct App {
     preview_content_height: usize,
     preview_cache: Option<PreviewCache>,
     rows: Vec<MemoryTreeRow>,
+    thread_history: Arc<ThreadHistory>,
     /// A row path to reselect once the tree resolves it again.
     pending_selection: Option<String>,
     timeline: Vec<TimelineEntry>,
@@ -439,6 +614,7 @@ impl App {
             preview_content_height: 1,
             preview_cache: None,
             rows,
+            thread_history: Arc::new(ThreadHistory::default()),
             pending_selection: None,
             timeline: Vec::new(),
             seen_message_ids: BTreeSet::new(),
@@ -558,12 +734,33 @@ impl App {
             return false;
         }
         if self.seen_message_ids.insert(message.id.to_string()) {
+            Arc::make_mut(&mut self.thread_history).push_message(serialized_value(
+                serde_json::to_value(&message).expect("Svit messages serialize"),
+            ));
+            self.refresh_thread_history();
             self.clear_selection();
             self.timeline
                 .push(TimelineEntry::Message(Box::new(message)));
             return true;
         }
         false
+    }
+
+    fn set_thread_events(&mut self, events: Vec<Value>) {
+        Arc::make_mut(&mut self.thread_history).set_events(events);
+        self.refresh_thread_history();
+    }
+
+    fn push_thread_event(&mut self, event: Value) {
+        Arc::make_mut(&mut self.thread_history).push_event(event);
+        self.refresh_thread_history();
+    }
+
+    fn refresh_thread_history(&mut self) {
+        self.refresh_process(&Change::notification(
+            self.version,
+            vec!["/thread/events".into(), "/thread/messages".into()],
+        ));
     }
 
     fn reconcile_pending_user(&mut self, canonical: &Message) -> bool {
@@ -959,7 +1156,15 @@ enum AppAction {
 }
 
 pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
+    let recent_events = svit
+        .recent_events(RECENT_EVENTS_LIMIT)
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|event| serialized_value(serde_json::to_value(event).expect("Svit events serialize")))
+        .collect();
     let mut app = App::new(MemoryView::version(&svit), model);
+    app.set_thread_events(recent_events);
     for message in svit
         .recent_messages(RECENT_MESSAGES_LIMIT)
         .await
@@ -973,8 +1178,31 @@ pub async fn run(mut svit: Svit, model: String) -> Result<(), String> {
     svit.start().map_err(|error| error.to_string())?;
 
     let ui_result = run_terminal(&mut app, &svit, &inbox, &mut events, &mut outbox).await;
-    svit.block().await.map_err(|error| error.to_string())?;
+    let block_result = svit.block().await.map_err(|error| error.to_string());
+    if ui_result.is_ok() && block_result.is_ok() {
+        print_centered_ukraine_banner();
+    }
+    block_result?;
     ui_result
+}
+
+/// Prints Lampa's Ukrainian signature after the terminal session is restored.
+fn print_centered_ukraine_banner() {
+    let width = crossterm::terminal::size()
+        .map(|(width, _)| width as usize)
+        .unwrap_or(0);
+    println!("{}", centered_ukraine_banner(width));
+}
+
+fn centered_ukraine_banner(width: usize) -> String {
+    let pad = width.saturating_sub(UKRAINE_BANNER.chars().count()) / 2;
+    format!(
+        "{}{}Світ, це Світ. Зроблено в {}Україні{}",
+        " ".repeat(pad),
+        YOLOP_BLUE,
+        YOLOP_GOLD,
+        ANSI_RESET,
+    )
 }
 
 async fn run_terminal(
@@ -1000,6 +1228,9 @@ async fn run_terminal(
             while let Ok(event) = events.try_recv() {
                 match event {
                     SvitEvent::Committed(change) => app.refresh_process(&change),
+                    SvitEvent::CanonicalEvent(event) => app.push_thread_event(serialized_value(
+                        serde_json::to_value(&*event).expect("Svit events serialize"),
+                    )),
                     SvitEvent::Message(message) => {
                         app.push_message(*message);
                     }
@@ -1015,7 +1246,9 @@ async fn run_terminal(
             }
             // The tree resolves here, once per frame, so the console fetches
             // only the nodes the visible tree and current selection need.
-            app.resolve(svit);
+            let history = Arc::clone(&app.thread_history);
+            let view = ThreadHistoryView::new(svit, &history);
+            app.resolve(&view);
 
             let mut copied = None;
             terminal
@@ -1034,36 +1267,48 @@ async fn run_terminal(
                 clipboard::write(&mut io::stdout(), &text).map_err(|error| error.to_string())?;
             }
 
-            if event::poll(FRAME_TIME).map_err(|error| error.to_string())?
-                && let Some(event) =
-                    translate_event(event::read().map_err(|error| error.to_string())?)
-            {
-                if let Event::Mouse(mouse) = &event
-                    && let Some(url) = transcript_link_click(
-                        mouse,
-                        terminal.current_buffer_mut(),
-                        app.selection_area,
-                    )
-                {
-                    if let Err(error) = open_link(&url) {
-                        app.timeline.push(TimelineEntry::Event {
-                            label: "ERROR",
-                            text: error,
-                        });
+            if event::poll(FRAME_TIME).map_err(|error| error.to_string())? {
+                let mut quit = false;
+                let first = event::read().map_err(|error| error.to_string())?;
+                let ready =
+                    ready_terminal_events(first, || event::poll(Duration::ZERO), event::read)
+                        .map_err(|error| error.to_string())?;
+                for raw_event in ready {
+                    if let Some(event) = translate_event(raw_event) {
+                        if let Event::Mouse(mouse) = &event
+                            && let Some(url) = transcript_link_click(
+                                mouse,
+                                terminal.current_buffer_mut(),
+                                app.selection_area,
+                            )
+                        {
+                            if let Err(error) = open_link(&url) {
+                                app.timeline.push(TimelineEntry::Event {
+                                    label: "ERROR",
+                                    text: error,
+                                });
+                            }
+                            continue;
+                        }
+                        match app.handle(&event) {
+                            AppAction::Continue => {}
+                            AppAction::Submit(text) => {
+                                let message = Message::user(text);
+                                inbox
+                                    .send(message.clone())
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                                app.push_user(message);
+                            }
+                            AppAction::Quit => {
+                                quit = true;
+                                break;
+                            }
+                        }
                     }
-                    continue;
                 }
-                match app.handle(&event) {
-                    AppAction::Continue => {}
-                    AppAction::Submit(text) => {
-                        let message = Message::user(text);
-                        inbox
-                            .send(message.clone())
-                            .await
-                            .map_err(|error| error.to_string())?;
-                        app.push_user(message);
-                    }
-                    AppAction::Quit => break,
+                if quit {
+                    break;
                 }
             }
         }
@@ -1944,12 +2189,19 @@ fn compact_tool_line(
 
 fn tool_display_name(name: &str, arguments: Option<&serde_json::Value>) -> String {
     if name == "exec"
-        && let Some(path) = arguments
-            .and_then(|arguments| arguments.get("path"))
+        && let Some(port) = arguments
+            .and_then(|arguments| arguments.get("name"))
             .and_then(serde_json::Value::as_str)
-        && let Some(builtin) = path.strip_prefix("/bin/")
     {
-        return compact_text(builtin, 32);
+        return compact_text(port, 32);
+    }
+    if name == "exec"
+        && let Some(port) = arguments
+            .and_then(|arguments| arguments.get("source"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(port_name_from_source)
+    {
+        return compact_text(port, 32);
     }
     compact_text(name, 32)
 }
@@ -1960,7 +2212,6 @@ fn tool_target(name: &str, arguments: &serde_json::Value) -> Option<String> {
         .into_iter()
         .find_map(|key| fields.get(key).and_then(serde_json::Value::as_str));
     if name == "exec" {
-        let path = primary?;
         let input = fields.get("input")?;
         let input_path = input.get("path").and_then(serde_json::Value::as_str);
         let detail = ["url", "query", "pattern", "filter", "prompt", "task"]
@@ -1968,7 +2219,7 @@ fn tool_target(name: &str, arguments: &serde_json::Value) -> Option<String> {
             .find_map(|key| input.get(key).and_then(serde_json::Value::as_str));
         let method = input.get("method").and_then(serde_json::Value::as_str);
         let mut parts = Vec::new();
-        if !path.starts_with("/bin/") {
+        if let Some(path) = fields.get("path").and_then(serde_json::Value::as_str) {
             parts.push(compact_text(path, 36));
         }
         if let Some(method) = method {
@@ -1991,6 +2242,14 @@ fn tool_target(name: &str, arguments: &serde_json::Value) -> Option<String> {
         }
     }
     None
+}
+
+fn port_name_from_source(source: &str) -> Option<&str> {
+    source
+        .split_once("(port-call \"")?
+        .1
+        .split_once('"')
+        .map(|(name, _)| name)
 }
 
 fn tool_result_summary(name: &str, result: &serde_json::Value) -> Option<String> {
@@ -2463,7 +2722,7 @@ mod tests {
         app.resolve(&svit);
         assert_eq!(app.nodes.children("/mounts/files").len(), 2);
 
-        // Building a Svit commits its thread and built-in catalog, so the
+        // Building a Svit commits its thread and port catalog, so the
         // write continues an existing version chain rather than starting one.
         let committed_before = MemoryView::version(&svit);
         let change = svit.write("/memory/count", value!(1)).await.unwrap();
@@ -2698,6 +2957,45 @@ mod tests {
     }
 
     #[test]
+    fn bounded_thread_history_is_browseable_without_entering_process_state() {
+        let view = ValueView::new(value!({
+            "thread": {"format": "svit-thread@8"},
+            "memory": {}
+        }));
+        let mut app = App::new(0, "test".into());
+        app.set_thread_events(vec![value!({
+            "type": "input.message",
+            "data": {"text": "remember this"}
+        })]);
+        app.push_message(Message::user("remember this"));
+        app.tree.expand("/".into());
+        app.tree.expand("/thread".into());
+        app.tree.expand("/thread/events".into());
+        app.tree.expand("/thread/messages".into());
+        let history = Arc::clone(&app.thread_history);
+        let history_view = ThreadHistoryView::new(&view, &history);
+        app.resolve(&history_view);
+
+        let paths = app
+            .rows
+            .iter()
+            .map(|row| row.id.as_str())
+            .collect::<Vec<_>>();
+        assert!(paths.contains(&"/thread/events"));
+        assert!(paths.contains(&"/thread/events/0"));
+        assert!(paths.contains(&"/thread/messages"));
+        assert!(paths.contains(&"/thread/messages/0"));
+        assert_eq!(view.at("/thread/events"), None);
+
+        app.tree.select(Some("/thread/events/0".into()));
+        app.resolve(&history_view);
+        assert_eq!(
+            app.selected_value().to_json()["type"].as_str(),
+            Some("input.message")
+        );
+    }
+
+    #[test]
     fn array_tree_rows_include_bounded_item_previews() {
         let long_text = format!(
             "start\n\u{1b}{}",
@@ -2929,13 +3227,13 @@ mod tests {
     }
 
     #[test]
-    fn compact_exec_row_identifies_the_builtin_target_and_outcome() {
+    fn compact_inline_port_exec_identifies_the_target_and_outcome() {
         let mut call = Message::assistant("");
         call.content = vec![ContentPart::tool_call(
             "call_http",
             "exec",
             serde_json::json!({
-                "path": "/bin/http",
+                "source": "(define (main input) (port-call \"http\" input))",
                 "input": {"method": "GET", "url": "https://everruns.com/"}
             }),
         )];
@@ -3313,6 +3611,96 @@ mod tests {
     }
 
     #[test]
+    fn transcript_wheel_reversal_updates_the_next_rendered_frame() {
+        let mut app = test_app(value!({}), 0);
+        for index in 0..12 {
+            app.app.push_message(Message::assistant(format!(
+                "message-{index:02} {}",
+                "word ".repeat(80)
+            )));
+        }
+        let theme = lampa_theme();
+        let draw = |app: &mut TestApp| {
+            let probes = layout(app, 90, 24);
+            let root = build_view(&mut app.app, Rect::new(0, 0, 90, 24), &theme, &probes);
+            let frame = grid(&render(root.as_ref(), 90, 24, &theme));
+            (probes, frame)
+        };
+
+        let (probes, bottom) = draw(&mut app);
+        let transcript = probes.transcript.rect();
+        let _ = app.app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::ScrollUp,
+            transcript.x,
+            transcript.y,
+        )));
+        let (_, after_up) = draw(&mut app);
+        assert_ne!(after_up, bottom, "scroll up must change the next frame");
+
+        let _ = app.app.handle(&Event::Mouse(Mouse::at(
+            MouseKind::ScrollDown,
+            transcript.x,
+            transcript.y,
+        )));
+        let (_, after_down) = draw(&mut app);
+        assert_eq!(after_down, bottom, "scroll reversal must apply immediately");
+    }
+
+    #[test]
+    fn ready_terminal_events_drains_a_queued_wheel_reversal_in_one_frame() {
+        let wheel = |kind| {
+            event::Event::Mouse(event::MouseEvent {
+                kind,
+                column: 50,
+                row: 10,
+                modifiers: event::KeyModifiers::NONE,
+            })
+        };
+        let first = wheel(event::MouseEventKind::ScrollUp);
+        let mut readiness = [true, true, false].into_iter();
+        let mut remaining = [
+            wheel(event::MouseEventKind::ScrollUp),
+            wheel(event::MouseEventKind::ScrollDown),
+        ]
+        .into_iter();
+
+        let events = ready_terminal_events(
+            first,
+            || Ok(readiness.next().unwrap_or(false)),
+            || Ok(remaining.next().expect("ready event must be readable")),
+        )
+        .expect("pending terminal input should drain");
+
+        assert_eq!(
+            events,
+            [
+                wheel(event::MouseEventKind::ScrollUp),
+                wheel(event::MouseEventKind::ScrollUp),
+                wheel(event::MouseEventKind::ScrollDown),
+            ]
+        );
+    }
+
+    #[test]
+    fn ready_terminal_events_has_a_per_frame_limit() {
+        let first = event::Event::Resize(80, 24);
+        let mut read_count = 0_u16;
+
+        let events = ready_terminal_events(
+            first,
+            || Ok(true),
+            || {
+                read_count += 1;
+                Ok(event::Event::Resize(80 + read_count, 24))
+            },
+        )
+        .expect("continuous terminal input should be bounded");
+
+        assert_eq!(events.len(), MAX_READY_INPUT_EVENTS);
+        assert_eq!(read_count as usize, MAX_READY_INPUT_EVENTS - 1);
+    }
+
+    #[test]
     fn clicking_a_panel_activates_it() {
         let mut app = test_app(value!({"memory": {}}), 0);
         let probes = layout(&mut app, 90, 24);
@@ -3494,6 +3882,15 @@ mod tests {
         assert!(frame.contains("memory"));
         assert!(frame.contains("Stored in memory."));
         assert!(frame.contains("v3 · sim · ready"));
+    }
+
+    #[test]
+    fn exit_banner_is_centered_and_uses_yolop_colours() {
+        let banner = centered_ukraine_banner(40);
+
+        assert!(banner.starts_with("   \x1b[38;2;45;91;158m"));
+        assert!(banner.contains("Світ, це Світ. Зроблено в "));
+        assert!(banner.contains("\x1b[38;2;126;94;19mУкраїні\x1b[0m"));
     }
 
     #[test]
