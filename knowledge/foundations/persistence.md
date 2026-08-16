@@ -42,7 +42,7 @@ For one address, define durable state as `(base, transactions, head)` today and
 as `(base, transactions, head, receipts, owner_epoch)` once control receipts
 and distributed ownership are implemented. A process commit is admissible only
 when its envelope is a valid successor of the observed head, its before-version
-matches the reconstructed process, and—on a distributed adapter—its fencing
+matches the reconstructed process, and, on a distributed adapter, its fencing
 epoch is current. The linearization point is the atomic conditional update of
 the address head after immutable content has been written.
 

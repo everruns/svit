@@ -98,7 +98,7 @@ host crash.
 
 ## External systems
 
-The transaction covers Svit state and committed outbox intents—not the external
+The transaction covers Svit state and committed outbox intents, not the external
 world.
 
 ```mermaid
