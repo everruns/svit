@@ -72,7 +72,7 @@ an enormous, historically accidental surface area.
 Svit tests a different hypothesis:
 
 > An agent needs durable state, computation, effects, identity, communication,
-> time, and composition—but it does not necessarily need an operating system.
+> time, and composition, but it does not necessarily need an operating system.
 
 Designing those primitives together may produce an execution environment that
 is easier for an agent to understand, cheaper to snapshot and fork, portable
@@ -173,7 +173,7 @@ flowchart TB
 The core is an actor-like state machine. A process handles one event at a time,
 which removes data races inside the process and makes replay, forking, and
 formal reasoning substantially simpler. Parallelism comes from running many
-processes and from explicit, host-controlled effect batches—not from shared
+processes and from explicit, host-controlled effect batches, not from shared
 mutable state.
 
 An abstract process can be described as:

@@ -63,24 +63,24 @@ through host APIs; `/tasks` and `/children` remain reserved and empty.
 ### Mounts
 
 A mount is a virtual namespace, not a copy. `/mounts/<name>` commits only a
-descriptor — `kind`, host-disclosed `source`, `locality`, and granted `access`
-— while nodes below it resolve through a host-attached `MountProvider` at the
+descriptor (`kind`, host-disclosed `source`, `locality`, and granted `access`)
+while nodes below it resolve through a host-attached `MountProvider` at the
 moment they are read, discovered, stated, or written. No source data enters the
 committed root, so mount size is independent of process size and snapshot cost.
 
 Every node answers `stat` with the same facts record: `kind`
 (`directory`, `leaf`, or `missing`), `access`, `locality`, `mount`, `path`,
 `source`, `attached`, and provider `facts` such as byte size, modification
-time, or the folder's git branch and commit. A `content` fact names the shape —
-`object`, `array`, `text/plain`, `svit-script`, or `scalar` — so a caller can
+time, or the folder's git branch and commit. A `content` fact names the shape
+(`object`, `array`, `text/plain`, `svit-script`, or `scalar`), so a caller can
 tell an array from a map without reading either. Committed nodes answer the
 same shape with `locality: cache`, so one vocabulary describes the whole tree
 and a caller can weigh the cost of a read before making it.
 
 Because `discover`, `stat`, and `read` answer for committed state and mounts
 alike, a client browses one namespace. The Lampa console relies on exactly
-that: it holds no committed root of its own and resolves every node — memory,
-scripts, or mounted folder — through the same three operations.
+that: it holds no committed root of its own and resolves every node (memory,
+scripts, or mounted folder) through the same three operations.
 
 ### Change reporting
 
@@ -88,7 +88,7 @@ Every transition returns a `Change`: the process version it produced, the
 canonical paths it touched, and the replayable `Mutation` list. Paths and
 mutations come from the same fold, so a live observer and a stored durable
 event always describe the same transition. `Change::touches(path)` is the
-shared staleness predicate — a path is affected when it is at, below, or above
+shared staleness predicate: a path is affected when it is at, below, or above
 a changed path, because a write below a node changes that node's value and can
 change its child listing.
 
@@ -96,7 +96,7 @@ Two deliberate asymmetries:
 
 - A granted mount write reports its path but carries no mutation. It changed an
   external source, not committed state, so there is nothing to persist or
-  replay — but a client caching that node must still read it again.
+  replay, but a client caching that node must still read it again.
 - A notification carries version and paths without values. Observers read what
   they need back through the process API rather than receiving committed state
   on a broadcast channel.
