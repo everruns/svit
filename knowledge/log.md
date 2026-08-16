@@ -1,7 +1,33 @@
 # Svit Knowledge Update Log
 
+## 2026-08-16
+
+* **Bounded thread-history presentation**: Canonical events remain in Svit's
+  paged EventLog rather than serialized `/thread` state. Svit now exposes
+  bounded recent-event reads and canonical-event observations; Lampa projects
+  the latest 200 events and 500 messages as read-only `/thread/events` and
+  `/thread/messages` rows without changing process snapshots or model context.
+
 ## 2026-08-15
 
+* **Reasoning scenario suite**: Added the first deterministic model-driven
+  acceptance scenario: a model writes `/lib/summarize-model-catalog`, runs it
+  through `exec`, fetches the generic `models.dev/models.json` fixture through
+  `/ports/http`, uses Svit Lisp `jq` to reduce it, and persists only the count
+  and newest GPT records at `/memory/model_catalog`. The fixture exceeds the
+  persistent value envelope; HTTP and jq carry it only as activation-local
+  in-memory data until the script reduces it. Inline `exec` is available for
+  one-off scripts, including port calls and durable writes; named `/lib`
+  scripts are reserved for reuse.
+* **Svit Lisp data library**: `jq` and `search` are now standard-library
+  functions, rather than `/ports` capabilities. Jq decodes JSON text and JSON
+  HTTP response bodies before evaluation, returns emitted values as an array,
+  and has an end-to-end HTTP-to-jq script test covering the filtered-tree
+  workflow. Search walks the transactional process tree directly.
+* **Trusted Svit execution**: Removed the model-specific read/exec capability
+  mode and script allowlists. A Svit reasoning loop always receives the
+  complete process surface; attached ports and mounts remain the explicit
+  host-authority boundary.
 * **Tuika tree host**: Upgraded Lampa to Tuika 0.9 and replaced its local
   expanded-row, selection, viewport, and tree hit-testing mechanics with
   `TreeState` and `TreeList`. The process remains the sole durable state owner;
@@ -9,9 +35,9 @@
 
 ## 2026-08-14
 
-* **Scripted built-in composition**: Removed `L-005`. Svit-hosted Lisp now
-  resolves both `/lib` scripts and the exact `/bin` built-ins attached by its
-  host. An async built-in suspends guest execution; Svit executes it once and
+* **Scripted port composition**: Removed `L-005`. Svit-hosted Lisp now
+  resolves both `/lib` scripts and the exact `/ports` ports attached by its
+  host. An async port suspends guest execution; Svit executes it once and
   replays pure guest segments with recorded results before committing guest
   state once. External effects remain immediate and non-transactional under
   `L-036`. A persisted model-authored HTTP script and a post-HTTP rollback case
@@ -43,7 +69,7 @@
   projection.
 * **Compact tool rows**: Lampa now replaces a pending tool call with one
   Yolop-style completion row containing status, operation, target, and a
-  bounded result summary. It derives built-in names from `/bin` exec paths and
+  bounded result summary. It derives port names from `/ports` exec paths and
   no longer exposes opaque tool-call IDs.
 * **Turn completion**: Removed Svit's hidden eight-iteration override so
   Everruns owns its default loop policy. An explicit cap reached before a final
@@ -61,7 +87,7 @@
 * **Current persistence boundary**: Reconciled architecture, process,
   limitations, proposal, and public skill guidance with the implemented
   `Svit::persisted` path. Local Turso persistence covers inbox, reasoning
-  events, derived messages, built-in refresh, acknowledgements, memory,
+  events, derived messages, port refresh, acknowledgements, memory,
   snapshots, and forks; durable control receipts, crash qualification, and
   distributed ownership remain open under `L-006`.
 * **One operation vocabulary**: Restated the complete process contract as
@@ -102,7 +128,7 @@
   added `TM-ESC-004` and `TM-DOS-011` with focused evidence.
 * **Complete commit observation**: Moved transient commit publication into the
   shared process-state transition boundary. Host operations, reasoning tools,
-  inbox transitions, Lisp activations, thread events and metadata, and built-in
+  inbox transitions, Lisp activations, thread events and metadata, and port
   catalog refresh now publish after the owned read projection is current.
 * **Stable batched navigation**: Lampa retains the first selected path across
   all commit notifications drained before a frame. Temporary ancestor rows
@@ -142,7 +168,7 @@
   traversal, separators, empty, oversized, and NUL content, and the folder
   provider re-checks links and special files at every segment on every
   resolution (`TM-CAP-007`, `TM-CAP-003`).
-* **Built-ins inside mounts**: `BuiltinContext` gained `stat`, and `search`
+* **Ports inside mounts**: `PortContext` gained `stat`, and `search`
   walks a mount subtree node by node under an independent node budget instead
   of materializing it, reporting when a bound truncated the walk
   (`TM-DOS-010`).
@@ -191,7 +217,7 @@
   claimed complete.
 * **Durable Svit owner**: Added `Svit::persisted` over the adapter-neutral
   `DurableProcessHandle`. Inbox transitions, model-visible process tools,
-  append-only canonical reasoning events, derived messages, and built-in
+  append-only canonical reasoning events, derived messages, and port
   catalog refresh commit through one serialized owner before Svit refreshes its
   read projection.
 * **Persistent Lampa instances**: Lampa now creates or resumes
@@ -222,9 +248,9 @@
   recomposes fork prompts for the child address. Agent state advanced to
   `svit-thread@6`.
 * **Reasoner boundary**: Replaced independent model/provider setters with one
-  `Reasoner` value across Svit and model-backed built-ins. The public error is
+  `Reasoner` value across Svit and model-backed ports. The public error is
   now `SvitError`, avoiding agent terminology in the configuration API;
-  built-ins remain separate explicit host capabilities.
+  ports remain separate explicit host capabilities.
 * **Thread projection**: Renamed the durable public `/agent` projection to
   `/thread`, renamed the internal adapter and runnable example around reasoning,
   advanced thread state to `svit-thread@6`, and advanced snapshots to format 6.
@@ -233,17 +259,17 @@
   count.
 * **Lampa mouse selection**: Plain left clicks on visible memory rows now map
   through the current list viewport and update the selected value preview.
-* **Built-in extensions**: Split each built-in into its own module
+* **Port extensions**: Split each port into its own module
   and replaced the closed configuration switch with host registration through
-  `Builtin` and `BuiltinExtension`, following Bashkit's later-wins rule.
+  `Port` and `PortExtension`, following Bashkit's later-wins rule.
   The common boundary bounds JSON input/output and exposes committed reads only.
-* **One built-in setup path**: Removed the parallel native setup and
-  custom-transport builder operations. Hosts always attach one `Builtins`
-  registry through `builtins`; `Builtins::standard()` marks the complete set
+* **One port setup path**: Removed the parallel native setup and
+  custom-transport builder operations. Hosts always attach one `Ports`
+  registry through `ports`; `Ports::standard()` marks the complete set
   for reasoner resolution during Svit construction. The standard research set
   grants unrestricted HTTP destinations, while `with_http_allowlist`
   attenuates that grant and later registrations win.
-* **Lampa built-in catalog**: Attached the standard built-ins to Lampa.
+* **Lampa port catalog**: Attached the standard ports to Lampa.
   Svit's standard registry derives `llm` and `spawn` from its reasoner;
   Lampa supplies no HTTP policy. Svit owns the reusable redirect-denying,
   response-bounded reqwest transport.
@@ -299,10 +325,10 @@
 
 ## 2026-08-07
 
-* **Built-ins**: Added `/bin/search` and `/bin/jq` over
+* **Ports**: Added `/ports/search` and `/ports/jq` over
   committed process text and explicit JSON, with no shell or ambient host
   interface.
-* **Built-in discovery**: Added host-managed `/bin` manuals derived from
+* **Port discovery**: Added host-managed `/ports` manuals derived from
   installed native implementations, including schemas, output contracts,
   effect classes, and limits. Resume refreshes the catalog from current host grants.
 * **Explicit effects**: Added default-deny, host-allowlisted HTTP plus optional
@@ -320,7 +346,7 @@
 * **Dependency review**: Added direct jaq, regex, and URL dependencies for the
   native implementations; no shell runtime is included.
 * **Compatibility**: Advanced process snapshots to format 5 for the durable
-  `/bin` built-in catalog; agent state remains `svit-agent@2`.
+  `/ports` port catalog; agent state remains `svit-agent@2`.
 
 * **Lampa**: Added persistent inbox/outbox chat, complete committed process
   memory, and JSON item-preview panels with headless UI evidence.

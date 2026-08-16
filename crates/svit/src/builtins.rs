@@ -1,20 +1,20 @@
-//! Host-provided `/bin` built-ins for process-owned runtimes.
+//! Host-provided `/ports` ports for process-owned runtimes.
 //!
-//! Each standard built-in lives in its own module. Hosts can add individual
-//! [`Builtin`] implementations or bundles through [`BuiltinExtension`].
-//! Built-ins receive only explicit input and a read-only process context.
+//! Each standard port lives in its own module. Hosts can add individual
+//! [`Port`] implementations or bundles through [`PortExtension`].
+//! Ports receive only explicit input and a read-only process context.
 
+#[path = "builtins/http.rs"]
 mod http;
-mod jq;
+#[path = "builtins/llm.rs"]
 mod llm;
-mod search;
+#[path = "builtins/spawn.rs"]
 mod spawn;
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use everruns::core::ToolExecutionResult;
 use serde_json::{Value as JsonValue, json};
 
 use crate::error::sanitize_diagnostic;
@@ -25,40 +25,46 @@ pub use http::{
     ReqwestHttpTransport,
 };
 
-use http::{HttpBuiltin, HttpPolicy};
-use jq::JqBuiltin;
-use llm::LlmBuiltin;
-use search::SearchBuiltin;
-use spawn::{ChildRegistry, SpawnBuiltin};
+use http::{HttpPolicy, HttpPort};
+use llm::LlmPort;
+use spawn::{ChildRegistry, SpawnPort};
 
-pub(super) const MAX_TOOL_INPUT_BYTES: usize = 256 * 1024;
-pub(super) const MAX_TOOL_OUTPUT_BYTES: usize = 256 * 1024;
+pub(super) const MAX_PORT_INPUT_BYTES: usize = 256 * 1024;
 
-/// Discovery record projected under `/bin/<name>`.
+/// Discovery record projected under `/ports/<name>`.
 #[derive(Clone, Debug, PartialEq)]
-pub struct BuiltinManual {
+pub struct PortDescriptor {
+    /// Version of this port contract.
+    pub version: String,
     /// Concise behavior description.
     pub description: String,
-    /// JSON Schema for the built-in input.
+    /// JSON Schema for the port input.
     pub input_schema: JsonValue,
     /// Human-readable output contract.
     pub output: String,
     /// Effect class such as `pure`, `read`, or `external`.
     pub effect: String,
-    /// Builtin-specific limits exposed to the model.
+    /// Port-specific limits exposed to the model.
     pub limits: Vec<String>,
 }
 
-impl BuiltinManual {
-    /// Creates a host-defined builtin manual.
+impl PortDescriptor {
+    /// Creates a host-defined port descriptor.
     pub fn new(description: impl Into<String>, input_schema: JsonValue) -> Self {
         Self {
+            version: "v1".into(),
             description: description.into(),
             input_schema,
-            output: "Built-in-defined output.".into(),
+            output: "Port-defined output.".into(),
             effect: "host-defined".into(),
             limits: Vec::new(),
         }
+    }
+
+    /// Sets the port contract version.
+    pub fn version(mut self, version: impl Into<String>) -> Self {
+        self.version = version.into();
+        self
     }
 
     /// Sets the output contract.
@@ -73,7 +79,7 @@ impl BuiltinManual {
         self
     }
 
-    /// Replaces the documented builtin limits.
+    /// Replaces the documented port limits.
     pub fn limits<I, S>(mut self, limits: I) -> Self
     where
         I: IntoIterator<Item = S>,
@@ -84,17 +90,17 @@ impl BuiltinManual {
     }
 }
 
-/// Read-only committed process access supplied to one builtin call.
+/// Read-only committed process access supplied to one port call.
 ///
 /// The context deliberately exposes no mutation method or ambient host
-/// facility. A built-in may still use capabilities explicitly captured by
+/// facility. A port may still use capabilities explicitly captured by
 /// its host-owned implementation.
 #[derive(Clone)]
-pub struct BuiltinContext {
+pub struct PortContext {
     process: Arc<Mutex<Process>>,
 }
 
-impl BuiltinContext {
+impl PortContext {
     fn new(process: Arc<Mutex<Process>>) -> Self {
         Self { process }
     }
@@ -103,7 +109,7 @@ impl BuiltinContext {
     pub fn read(&self, path: &str) -> crate::Result<Option<Value>> {
         self.process
             .lock()
-            .map_err(|_| crate::Error::BuiltinContextUnavailable)?
+            .map_err(|_| crate::Error::PortContextUnavailable)?
             .read(path)
     }
 
@@ -111,7 +117,7 @@ impl BuiltinContext {
     pub fn stat(&self, path: &str) -> crate::Result<Option<Value>> {
         self.process
             .lock()
-            .map_err(|_| crate::Error::BuiltinContextUnavailable)?
+            .map_err(|_| crate::Error::PortContextUnavailable)?
             .stat(path)
     }
 
@@ -119,7 +125,7 @@ impl BuiltinContext {
     pub fn discover(&self, path: &str) -> crate::Result<Vec<String>> {
         self.process
             .lock()
-            .map_err(|_| crate::Error::BuiltinContextUnavailable)?
+            .map_err(|_| crate::Error::PortContextUnavailable)?
             .discover(path)
     }
 
@@ -128,16 +134,16 @@ impl BuiltinContext {
     }
 }
 
-/// Result returned by a built-in.
+/// Result returned by a port.
 #[derive(Clone, Debug, PartialEq)]
-pub enum BuiltinResult {
+pub enum PortResult {
     /// Successful JSON-compatible output.
     Success(JsonValue),
     /// Expected failure safe to expose to the model.
     Error(String),
 }
 
-impl BuiltinResult {
+impl PortResult {
     /// Creates a successful typed result.
     pub fn success(value: impl Into<JsonValue>) -> Self {
         Self::Success(value.into())
@@ -148,40 +154,34 @@ impl BuiltinResult {
         Self::Success(JsonValue::String(text.into()))
     }
 
-    /// Creates an expected builtin error.
+    /// Creates an expected port error.
     pub fn error(message: impl Into<String>) -> Self {
         Self::Error(message.into())
     }
 
     fn into_value_result(self) -> Result<JsonValue, String> {
         match self {
-            Self::Success(value) => {
-                if json_exceeds_limit(&value, MAX_TOOL_OUTPUT_BYTES) {
-                    Err("built-in output limit exceeded".into())
-                } else {
-                    Ok(value)
-                }
-            }
+            Self::Success(value) => Ok(value),
             Self::Error(message) => Err(sanitize_diagnostic(message)),
         }
     }
 }
 
-/// One host-owned `/bin` builtin.
+/// One host-owned `/ports` port.
 ///
 /// ```
 /// use serde_json::{Value as JsonValue, json};
 /// use svit::{
-///     Builtin, BuiltinContext, BuiltinManual, BuiltinResult,
-///     Builtins,
+///     Port, PortContext, PortDescriptor, PortResult,
+///     Ports,
 /// };
 ///
 /// struct Echo;
 ///
 /// #[svit::async_trait]
-/// impl Builtin for Echo {
-///     fn manual(&self) -> BuiltinManual {
-///         BuiltinManual::new(
+/// impl Port for Echo {
+///     fn descriptor(&self) -> PortDescriptor {
+///         PortDescriptor::new(
 ///             "Echo one value.",
 ///             json!({"type": "object", "properties": {"value": {}}}),
 ///         )
@@ -190,124 +190,109 @@ impl BuiltinResult {
 ///
 ///     async fn execute(
 ///         &self,
-///         _context: BuiltinContext,
+///         _context: PortContext,
 ///         input: JsonValue,
-///     ) -> BuiltinResult {
-///         BuiltinResult::success(input["value"].clone())
+///     ) -> PortResult {
+///         PortResult::success(input["value"].clone())
 ///     }
 /// }
 ///
-/// let builtins = Builtins::new().builtin("echo", Box::new(Echo));
-/// # let _ = builtins;
+/// let ports = Ports::new().port("echo", Box::new(Echo));
+/// # let _ = ports;
 /// ```
 #[async_trait]
-pub trait Builtin: Send + Sync {
-    /// Returns the discovery manual projected under `/bin`.
-    fn manual(&self) -> BuiltinManual;
+pub trait Port: Send + Sync {
+    /// Returns the discovery descriptor projected under `/ports`.
+    fn descriptor(&self) -> PortDescriptor;
 
     /// Executes one call against explicit input and read-only process context.
-    async fn execute(&self, context: BuiltinContext, input: JsonValue) -> BuiltinResult;
+    async fn execute(&self, context: PortContext, input: JsonValue) -> PortResult;
 }
 
-/// A related bundle of host-owned builtins registered as one unit.
-pub trait BuiltinExtension: Send + Sync {
-    /// Returns builtin names and implementations contributed by the bundle.
+/// A related bundle of host-owned ports registered as one unit.
+pub trait PortExtension: Send + Sync {
+    /// Returns port names and implementations contributed by the bundle.
     ///
     /// Later registrations replace earlier entries with the same name.
-    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)>;
+    fn ports(&self) -> Vec<(String, Box<dyn Port>)>;
 }
 
-/// Frozen host configuration for `/bin` built-ins.
+/// Frozen host configuration for `/ports` ports.
 ///
-/// `search` and `jq` are installed by default. Individual host built-ins and
-/// extension bundles follow Bashkit's registration rule: later entries replace
+/// Individual host ports and extension bundles follow Bashkit's registration rule: later entries replace
 /// earlier entries with the same name.
-#[derive(Clone)]
-pub struct Builtins {
-    entries: BTreeMap<String, Arc<dyn Builtin>>,
+#[derive(Clone, Default)]
+pub struct Ports {
+    entries: BTreeMap<String, Arc<dyn Port>>,
     children: ChildRegistry,
-    standard_model_builtins: bool,
+    standard_reasoning_ports: bool,
     http_policy: Option<HttpPolicy>,
 }
 
-impl Default for Builtins {
-    fn default() -> Self {
-        let mut builtins = Self {
-            entries: BTreeMap::new(),
-            children: ChildRegistry::default(),
-            standard_model_builtins: false,
-            http_policy: None,
-        };
-        builtins.register("search", Box::new(SearchBuiltin));
-        builtins.register("jq", Box::new(JqBuiltin));
-        builtins
-    }
-}
-
-impl Builtins {
-    /// Creates the local `search` and `jq` built-ins.
+impl Ports {
+    /// Creates an empty host port registry.
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Selects the complete standard built-in set.
+    /// Selects the complete standard port set.
     ///
-    /// `search` and `jq` are available immediately. During construction, Svit
-    /// resolves `http`, `llm`, and `spawn` from the instance's configuration.
+    /// During construction, Svit resolves `http`, `llm`, and `spawn` from the
+    /// instance's configuration.
     /// Selecting the standard set explicitly grants unrestricted HTTP. Hosts
     /// can attenuate it with [`Self::with_http_allowlist`].
-    /// Later registrations replace any standard built-in with the same name.
+    /// Later registrations replace any standard port with the same name.
     pub fn standard() -> Self {
         Self {
-            standard_model_builtins: true,
+            standard_reasoning_ports: true,
             http_policy: Some(HttpPolicy::Unrestricted),
             ..Self::default()
         }
     }
 
-    /// Adds the standard `http` built-in with the supplied URL grants.
+    /// Adds the standard `http` port with the supplied URL grants.
     pub fn with_http_allowlist(mut self, http_allowlist: HttpAllowlist) -> Self {
         self.http_policy = Some(HttpPolicy::Allowlist(http_allowlist));
         self
     }
 
-    /// Registers or replaces one host-owned built-in.
-    pub fn builtin(mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) -> Self {
-        self.register(name, builtin);
+    /// Registers or replaces one host-owned port.
+    pub fn port(mut self, name: impl Into<String>, port: Box<dyn Port>) -> Self {
+        self.register(name, port);
         self
     }
 
-    /// Registers a related built-in bundle.
+    /// Registers a related port bundle.
     pub fn extension<E>(mut self, extension: E) -> Self
     where
-        E: BuiltinExtension,
+        E: PortExtension,
     {
-        for (name, builtin) in extension.builtins() {
-            self.register(name, builtin);
+        for (name, port) in extension.ports() {
+            self.register(name, port);
         }
         self
     }
 
     /// Adds `http` with a host-selected allowlist and transport.
     pub fn http(self, allowlist: HttpAllowlist, transport: impl HttpTransport + 'static) -> Self {
-        self.builtin("http", Box::new(HttpBuiltin::new(allowlist, transport)))
+        self.port("http", Box::new(HttpPort::new(allowlist, transport)))
     }
 
     /// Adds `llm` using one host-selected reasoner.
     pub fn llm(self, reasoner: Reasoner) -> Self {
-        self.builtin("llm", Box::new(LlmBuiltin::new(reasoner)))
+        self.port("llm", Box::new(LlmPort::new(reasoner)))
     }
 
     /// Adds `spawn`, which forks and runs one child Svit turn.
     pub fn spawn(mut self, reasoner: Reasoner) -> Self {
-        let builtin = SpawnBuiltin::new(reasoner, self.children.clone());
-        self.register("spawn", Box::new(builtin));
+        let port = SpawnPort::new(reasoner, self.children.clone());
+        self.register("spawn", Box::new(port));
         self
     }
 
     pub(crate) fn resolve(mut self, reasoner: &Reasoner) -> Result<Self, HttpTransportError> {
         let http_policy = self.http_policy.take();
-        if http_policy.is_none() && !self.standard_model_builtins {
+        if http_policy.is_none() && !self.standard_reasoning_ports {
             return Ok(self);
         }
 
@@ -315,18 +300,18 @@ impl Builtins {
             && !self.entries.contains_key("http")
         {
             let transport = ReqwestHttpTransport::new()?;
-            let builtin = match http_policy {
-                HttpPolicy::Unrestricted => HttpBuiltin::unrestricted(transport),
-                HttpPolicy::Allowlist(allowlist) => HttpBuiltin::new(allowlist, transport),
+            let port = match http_policy {
+                HttpPolicy::Unrestricted => HttpPort::unrestricted(transport),
+                HttpPolicy::Allowlist(allowlist) => HttpPort::new(allowlist, transport),
             };
-            self.register("http", Box::new(builtin));
+            self.register("http", Box::new(port));
         }
-        if self.standard_model_builtins && !self.entries.contains_key("llm") {
-            self.register("llm", Box::new(LlmBuiltin::new(reasoner.clone())));
+        if self.standard_reasoning_ports && !self.entries.contains_key("llm") {
+            self.register("llm", Box::new(LlmPort::new(reasoner.clone())));
         }
-        if self.standard_model_builtins && !self.entries.contains_key("spawn") {
-            let builtin = SpawnBuiltin::new(reasoner.clone(), self.children.clone());
-            self.register("spawn", Box::new(builtin));
+        if self.standard_reasoning_ports && !self.entries.contains_key("spawn") {
+            let port = SpawnPort::new(reasoner.clone(), self.children.clone());
+            self.register("spawn", Box::new(port));
         }
         Ok(self)
     }
@@ -341,42 +326,31 @@ impl Builtins {
         self.children.snapshot(id)
     }
 
-    fn register(&mut self, name: impl Into<String>, builtin: Box<dyn Builtin>) {
-        self.entries.insert(name.into(), Arc::from(builtin));
+    fn register(&mut self, name: impl Into<String>, port: Box<dyn Port>) {
+        self.entries.insert(name.into(), Arc::from(port));
     }
 
     pub(crate) fn catalog(&self) -> JsonValue {
         JsonValue::Object(
             self.entries
                 .iter()
-                .map(|(name, builtin)| {
-                    let manual = builtin.manual();
+                .map(|(name, port)| {
+                    let descriptor = port.descriptor();
                     (
                         name.clone(),
                         json!({
                             "name": name,
-                            "description": manual.description,
-                            "input_schema": manual.input_schema,
-                            "output": manual.output,
-                            "effect": manual.effect,
-                            "limits": manual.limits,
+                            "version": descriptor.version,
+                            "description": descriptor.description,
+                            "input_schema": descriptor.input_schema,
+                            "output": descriptor.output,
+                            "effect": descriptor.effect,
+                            "limits": descriptor.limits,
                         }),
                     )
                 })
                 .collect(),
         )
-    }
-
-    pub(crate) async fn execute(
-        &self,
-        name: &str,
-        input: JsonValue,
-        process: Arc<Mutex<Process>>,
-    ) -> ToolExecutionResult {
-        match self.execute_value(name, input, process).await {
-            Ok(value) => ToolExecutionResult::success(value),
-            Err(message) => ToolExecutionResult::tool_error(message),
-        }
     }
 
     pub(crate) async fn execute_value(
@@ -385,18 +359,18 @@ impl Builtins {
         input: JsonValue,
         process: Arc<Mutex<Process>>,
     ) -> Result<JsonValue, String> {
-        let Some(builtin) = self.entries.get(name).cloned() else {
-            return Err("built-in not found".into());
+        let Some(port) = self.entries.get(name).cloned() else {
+            return Err("port not found".into());
         };
-        // THREAT[TM-DOS-008]: Every built-in and host extension crosses the
-        // same aggregate JSON input/output limits before and after execution.
-        if json_exceeds_limit(&input, MAX_TOOL_INPUT_BYTES) {
-            return Err("built-in input limit exceeded".into());
+        // THREAT[TM-DOS-008]: Every port input is bounded before execution.
+        // A port result is activation-local; the persistent-value boundary
+        // still bounds anything a script returns, writes, logs, or sends.
+        if json_exceeds_limit(&input, MAX_PORT_INPUT_BYTES) {
+            return Err("port input limit exceeded".into());
         }
         // THREAT[TM-CAP-006]: Registration is host-only, and the public call
         // context grants committed reads without process mutation authority.
-        builtin
-            .execute(BuiltinContext::new(process), input)
+        port.execute(PortContext::new(process), input)
             .await
             .into_value_result()
     }
@@ -416,11 +390,11 @@ mod tests {
     #[test]
     fn standard_registry_grants_unrestricted_http_tm_cap_004() {
         assert!(matches!(
-            Builtins::standard().http_policy,
+            Ports::standard().http_policy,
             Some(HttpPolicy::Unrestricted)
         ));
         assert!(matches!(
-            Builtins::standard()
+            Ports::standard()
                 .with_http_allowlist(HttpAllowlist::new())
                 .http_policy,
             Some(HttpPolicy::Allowlist(_))

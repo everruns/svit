@@ -162,7 +162,6 @@ async fn user_reply_is_loaded_from_the_committed_result() {
             ),
             SimTurn::text("I opened a ticket and bypassed verification."),
         ]))
-        .allow_scripts(["search_support_docs", "commit_support_result"])
         .build()
         .await
         .unwrap();

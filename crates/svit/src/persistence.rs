@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-use crate::{Activation, Builtins, Change, Mount, Process, ProcessId, Result, Value};
+use crate::{Activation, Change, Mount, Ports, Process, ProcessId, Result, Value};
 
 const TRANSACTION_FORMAT: &str = "svit-transaction@1";
 const MAX_TRANSACTION_METADATA_BYTES: usize = 4096;
@@ -556,22 +556,29 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     /// Idempotently imports canonical events from the former materialized
     /// `/thread/events` representation during bounded-state migration.
     async fn import_thread_events(&self, events: &[Event]) -> Result<()>;
-    /// Reads a bounded newest-first window for host presentation without
-    /// replaying the complete event log.
+    /// Reads a bounded newest-first window of canonical events for host
+    /// presentation without replaying the complete event log.
     async fn recent_thread_events(&self, session_id: SessionId, limit: usize)
     -> Result<Vec<Event>>;
+    /// Reads a bounded newest-first window of message-bearing events for host
+    /// presentation without replaying the complete event log.
+    async fn recent_thread_messages(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> Result<Vec<Event>>;
     /// Durably commits one host write.
     async fn write(&mut self, path: &str, value: Value) -> Result<Change>;
     /// Durably commits one host removal.
     async fn remove(&mut self, path: &str) -> Result<Change>;
     /// Executes guest Lisp and durably commits its successful transition.
     async fn exec(&mut self, path: &str, input: Value) -> Result<Activation>;
-    /// Executes guest Lisp with this runtime's host-attached built-ins.
-    async fn exec_with_builtins(
+    /// Executes guest Lisp with this runtime's host-attached ports.
+    async fn exec_with_ports(
         &mut self,
         path: &str,
         input: Value,
-        builtins: &Builtins,
+        ports: &Ports,
     ) -> Result<Activation>;
     /// Durably appends one host-supplied inbox value.
     async fn enqueue_inbox(&mut self, value: Value) -> Result<Change>;
@@ -583,8 +590,8 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     async fn initialize_thread_state(&mut self, value: Value) -> Result<Change>;
     /// Replaces legacy materialized thread history with bounded metadata.
     async fn replace_thread_state(&mut self, value: Value) -> Result<Change>;
-    /// Durably refreshes the descriptive built-in catalog from current host grants.
-    async fn replace_builtins(&mut self, value: Value) -> Result<Change>;
+    /// Durably refreshes the descriptive port catalog from current host grants.
+    async fn replace_ports(&mut self, value: Value) -> Result<Change>;
     /// Queries retained process transactions.
     async fn transactions(&self, query: TransactionQuery) -> Result<Vec<ProcessTransaction>>;
     /// Persists an on-demand process snapshot at the current transaction boundary.

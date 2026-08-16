@@ -32,27 +32,24 @@
 //! without a model loop. Successful activations commit memory, scripts, and
 //! message intents together; failures commit nothing.
 
-mod builtins;
 pub mod control;
 mod error;
 pub mod hooks;
 mod limits;
 pub mod mounts;
 mod persistence;
+#[path = "builtins.rs"]
+mod ports;
 mod process;
 mod reasoner;
 mod reasoning;
+mod stdlib;
 mod tools;
 #[cfg(feature = "persistence-turso")]
 mod turso_persistence;
 pub mod value;
 
 pub use async_trait::async_trait;
-pub use builtins::{
-    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins,
-    HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
-    ReqwestHttpTransport,
-};
 pub use control::{
     ControlClientId, ControlCommand, ControlFailure, ControlOutcome, ControlProtocol,
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
@@ -69,6 +66,10 @@ pub use mounts::{
 pub use persistence::{
     DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
     TransactionHead, TransactionQuery,
+};
+pub use ports::{
+    HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError, Port, PortContext,
+    PortDescriptor, PortExtension, PortResult, Ports, ReqwestHttpTransport,
 };
 pub use process::{
     Activation, Change, LogRecord, MessageIntent, Process, ProcessBuilder, ProcessId,

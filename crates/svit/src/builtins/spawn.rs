@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use serde_json::{Value as JsonValue, json};
 
-use super::{Builtin, BuiltinContext, BuiltinManual, BuiltinResult, MAX_TOOL_INPUT_BYTES};
+use super::{MAX_PORT_INPUT_BYTES, Port, PortContext, PortDescriptor, PortResult};
 use crate::{Message, ProcessId, Reasoner};
 
 #[derive(Clone)]
@@ -44,30 +44,30 @@ impl ChildRegistry {
     }
 }
 
-pub(super) struct SpawnBuiltin {
+pub(super) struct SpawnPort {
     reasoner: Reasoner,
     registry: ChildRegistry,
 }
 
-impl SpawnBuiltin {
+impl SpawnPort {
     pub(super) fn new(reasoner: Reasoner, registry: ChildRegistry) -> Self {
         Self { reasoner, registry }
     }
 
-    fn fail(&self, child_id: &ProcessId, message: &'static str) -> BuiltinResult {
+    fn fail(&self, child_id: &ProcessId, message: &'static str) -> PortResult {
         if let Ok(mut children) = self.registry.children.lock()
             && matches!(children.get(child_id), Some(ChildEntry::Starting))
         {
             children.remove(child_id);
         }
-        BuiltinResult::error(message)
+        PortResult::error(message)
     }
 }
 
 #[async_trait]
-impl Builtin for SpawnBuiltin {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new(
+impl Port for SpawnPort {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new(
             "Fork the committed process, run one child Svit turn, and retain its snapshot.",
             json!({
                 "type": "object",
@@ -84,24 +84,24 @@ impl Builtin for SpawnBuiltin {
         ])
     }
 
-    async fn execute(&self, context: BuiltinContext, arguments: JsonValue) -> BuiltinResult {
+    async fn execute(&self, context: PortContext, arguments: JsonValue) -> PortResult {
         let child_id = match arguments["id"]
             .as_str()
             .and_then(|id| ProcessId::new(id).ok())
         {
             Some(id) => id,
-            None => return BuiltinResult::error("invalid child address"),
+            None => return PortResult::error("invalid child address"),
         };
         let task = arguments["task"].as_str().unwrap_or_default();
-        if task.is_empty() || task.len() > MAX_TOOL_INPUT_BYTES {
-            return BuiltinResult::error("spawn task is empty or exceeds its limit");
+        if task.is_empty() || task.len() > MAX_PORT_INPUT_BYTES {
+            return PortResult::error("spawn task is empty or exceeds its limit");
         }
         {
             let Ok(mut children) = self.registry.children.lock() else {
-                return BuiltinResult::error("child registry unavailable");
+                return PortResult::error("child registry unavailable");
             };
             if children.contains_key(&child_id) {
-                return BuiltinResult::error("child address already exists");
+                return PortResult::error("child address already exists");
             }
             children.insert(child_id.clone(), ChildEntry::Starting);
         }
@@ -141,9 +141,9 @@ impl Builtin for SpawnBuiltin {
             Ok(mut children) if matches!(children.get(&child_id), Some(ChildEntry::Starting)) => {
                 children.insert(child_id.clone(), ChildEntry::Ready(snapshot));
             }
-            _ => return BuiltinResult::error("child address already exists"),
+            _ => return PortResult::error("child address already exists"),
         }
-        BuiltinResult::text(
+        PortResult::text(
             json!({"id": child_id.as_str(), "response": response.text().unwrap_or_default()})
                 .to_string(),
         )

@@ -18,7 +18,7 @@ Design adopted. The local Turso `DurableProcess` slice is implemented for
 create, host write/remove, activation, inbox enqueue/acknowledgement, resume,
 fork, query, on-demand snapshot, and cut. Runnable `Svit` instances can now own
 that handle: reasoning events, derived messages, process tools, inbox handling,
-and built-in catalog refresh commit through it. Persisting control-protocol
+and port catalog refresh commit through it. Persisting control-protocol
 receipts remains under implementation, so full control-plane completeness is
 not yet claimed.
 
@@ -80,7 +80,7 @@ every commit. Materialized receipt state remains under implementation.
 
 A deterministic reducer reconstructs the current process root and process
 version. Receipt reconstruction remains under implementation. Replay never
-reruns guest Lisp, model calls, HTTP, built-ins, or other external effects.
+reruns guest Lisp, model calls, HTTP, ports, or other external effects.
 Transactions describe the validated result of a committed transition, not a command
 that might behave differently when repeated.
 
@@ -199,7 +199,7 @@ position while preserving process version and root hash, and a retained exact
 retry appends nothing.
 
 `source` identifies the trusted transition boundary, such as `activation`,
-`host.write`, `host.remove`, `reasoning`, `builtins.refresh`, or an inbox
+`host.write`, `host.remove`, `reasoning`, `ports.refresh`, or an inbox
 operation. Future control integration will add its own descriptive sources. It
 does not select reducer behavior, grant authority, or create an agent-specific
 storage domain.
@@ -235,7 +235,7 @@ The operations are sufficient to represent every current process change:
 - inbox enqueue and exact-head acknowledgement;
 - reasoning initialization and each canonical Everruns event;
 - the derived message projection for that Everruns event;
-- descriptive built-in catalog refresh;
+- descriptive port catalog refresh;
 - future changes to reserved nodes only after their path schemas are defined.
 
 An activation records its ordered memory mutations, library mutations, and
@@ -277,7 +277,7 @@ checkpoints are stored separately with a monotonic source-sequence install;
 they bound model context without deleting canonical events.
 
 Reasoning-event commits and Lisp activations remain separate process transactions
-around external model and built-in calls. Uniform persistence does not make a
+around external model and port calls. Uniform persistence does not make a
 whole model turn or an external effect transactional.
 
 ## Control receipts
@@ -329,8 +329,8 @@ Resume is deterministic and streaming:
    position, content hash, hash chain, bounds, version transition, touched paths,
    and typed mutations. Complete root invariants and the claimed resulting root
    are checked every 32 records and at the requested head.
-5. Attach current reasoning and built-in authority only after recovery; rebuilding
-   a persisted Svit durably refreshes descriptive `/bin` state from those
+5. Attach current reasoning and port authority only after recovery; rebuilding
+   a persisted Svit durably refreshes descriptive `/ports` state from those
    current grants before Everruns can run a turn.
 6. Continue at the next stable position and process version.
 
@@ -378,7 +378,7 @@ root_hash
 snapshot_hash
 ```
 
-It never contains hooks, credentials, model providers, built-in authority,
+It never contains hooks, credentials, model providers, port authority,
 live observers, executing stacks, or uncommitted work.
 
 Snapshots serve four concrete purposes:
@@ -494,7 +494,7 @@ The initial normalized schema is:
 Canonical event, base, mutation, and snapshot encodings are stored as
 bounded BLOBs. Fields required for validation, CAS, and query are duplicated in
 typed columns and checked against the canonical encoding. Database rows never
-store hooks, credentials, provider objects, or built-in authority.
+store hooks, credentials, provider objects, or port authority.
 
 Required constraints include unique `(address, position)`, unique event and
 base hashes, child-address uniqueness, non-null hash lengths, and foreign-key

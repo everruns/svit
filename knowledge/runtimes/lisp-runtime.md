@@ -68,12 +68,15 @@ resource limit.
 | `(value-map key value ...)` | Construct a text-keyed persistent map |
 | `(value-array value ...)` | Construct a persistent array, including an empty array |
 | `(value-null? value)` | Test whether a value is the persistent null value |
+| `(jq filter value)` | Run a bounded jq filter and return its emitted values as a persistent array |
+| `(search path pattern)` | Search text below one process or mount path and return bounded match records |
 | `(discover path)` | List immediate children at an absolute process path |
 | `(read path)` | Read from the transactional process hierarchy, resolving mount nodes lazily |
 | `(stat path)` | Describe one node: kind, granted access, locality, and source facts |
 | `(write path value)` | Stage a `/memory`, typed `/lib/<name>`, or granted mount-leaf update |
 | `(remove path)` | Stage a `/memory`, `/lib/<name>`, or granted mount-node removal |
-| `(exec path input)` | Execute a `/lib` script or host-attached `/bin` built-in, with the path first |
+| `(exec path input)` | Execute a `/lib` script, with the path first |
+| `(port-call name input)` | Invoke one host-attached named port |
 | `(log-info! message fields?)` | Append a bounded activation log record |
 | `(send! address message)` | Buffer a message intent for atomic commit |
 | `*svit-version*` | The string `Svit Lisp 2` |
@@ -82,6 +85,17 @@ Ketos core arithmetic, comparison, immutable list, string, lexical binding,
 function, and conditional forms remain available. Output from `print` and
 related functions is discarded by null I/O. All module imports fail closed;
 the Ketos `random`, `math`, and `code` modules are unavailable.
+
+`jq` and `search` are Svit standard-library data transformations, not host
+ports. `jq` accepts one explicit Svit value, decodes JSON text and JSON HTTP
+response bodies when present, and returns the filter's emitted values as an
+array. `search` uses a Rust regular expression over the activation's process
+view and lazily walks mounts. Jq filters and search patterns are limited to 4
+KiB; jq output is limited to the persistent value envelope; jq recursive,
+generator, and range constructs are rejected; and both operations bound their
+result counts. Jq may reduce a larger activation-local port response, but that
+response remains in process memory until the activation ends (`L-048`). They
+have no host authority.
 
 ## Value boundary
 
@@ -122,24 +136,24 @@ Nested `exec` uses the same working memory, staged library changes, logs,
 message intents, and activation deadline. It has an independent maximum depth
 because each call creates a fresh interpreter. A nested failure restores its
 call checkpoint and, unless handled by a future language construct, rejects
-the outer activation. A `/bin` call suspends guest execution while Svit invokes
-the exact host-attached built-in. Svit then replays pure guest segments with
-the recorded result, without repeating the completed built-in, and commits the
+the outer activation. A `port-call` suspends guest execution while Svit invokes
+the exact host-attached port. Svit then replays pure guest segments with
+the recorded result, without repeating the completed port, and commits the
 final working copy once. Guest segments share one execution-time budget;
-waiting for the async built-in is outside that VM budget. Any syntax, runtime,
+waiting for the async port is outside that VM budget. Any syntax, runtime,
 conversion, limit, or validation failure before commit discards the complete
-activation working copy, but cannot undo an external built-in effect.
+activation working copy, but cannot undo an external port effect.
 
 ## Isolation and authority
 
 The runtime installs `GlobalIo::null()` and `NullModuleLoader`, and creates a
 fresh interpreter for every activation. Guest code reaches mount sources only
 through host-attached providers under the descriptor's granted access and may
-select only the `/bin` implementations attached by its Svit host. It never
+select only the `/ports` implementations attached by its Svit host. It never
 receives a host path, handle, connection, or credential, and has no ambient
 filesystem, network, environment, host process, module, clock, or randomness
 capability. Rust functions capture only the process working copy, bounded
-activation buffers, and the typed built-in suspension boundary.
+activation buffers, and the typed port suspension boundary.
 
 Ketos is native code inside the host process. Pure Rust reduces the FFI and
 C/C++ interpreter surface but is not proof of hostile same-process tenant

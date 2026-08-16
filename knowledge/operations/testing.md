@@ -28,6 +28,13 @@ Applies to the initial vertical slice as it is implemented.
 8. Cargo feature-matrix checks for the adapter-neutral core, Turso persistence,
    and Turso query mounts independently.
 
+[`Reasoning Scenarios`](scenarios.md) is the small, named acceptance suite for
+model-driven use of the complete Svit surface. Each scenario is deterministic:
+it uses a scripted Everruns reasoner and host fixtures, while preserving the
+same `discover`, `write`, `exec`, port, and `/memory` interactions a live model
+uses. A scenario is not satisfied by a host-specific helper or by preloading
+the expected durable result.
+
 Package-relative `.svit-script` files should enter Rust through
 `svit_script!(file ...)`, which catches Lisp compiler errors during
 `cargo check`. `svit_script_test!` supplies a fresh real process with the
@@ -61,27 +68,33 @@ The following scenarios execute with assertions and deterministic output under
   recomposes a forked prompt for the child address.
 - the agent reads its projected instructions, composed system prompt, message
   history, and canonical events through the runtime capability during a turn.
-- `/bin/search` reads committed process text and `/bin/jq` filters explicit
-  JSON; focused tests cover data limits, unrestricted standard HTTP,
+- Svit Lisp `(search path pattern)` reads the transactional process tree and
+  `(jq filter value)` filters explicit JSON; focused tests cover
+  data limits, unrestricted standard HTTP,
   allowlist-denied and host-routed HTTP, nested model selection, and local
   child spawn.
-- the owned system prompt documents path-first `/bin` and `/lib` composition.
+- the owned system prompt documents path-first `/ports` and `/lib` composition.
+  The model-catalog scenario writes `/lib/summarize-model-catalog`, invokes it
+  through `exec`, obtains a catalog through the generic HTTP port, reduces it
+  with Svit Lisp `jq`, and commits only its count and newest GPT records under
+  `/memory/model_catalog`; the fixture is intentionally larger than the
+  persistent value envelope.
   A persisted model turn writes a reusable `/lib` script, invokes its
-  allowlisted `/bin/http` dependency exactly once across guest replay, consumes
+  allowlisted `/ports/http` dependency exactly once across guest replay, consumes
   the response, commits once, and drains the inbox. A later guest failure does
   not repeat HTTP and rolls back all guest state. Bare `Process::exec` reports
-  that `/bin` execution requires a Svit host, while reversed arguments receive
+  that `/ports` execution requires a Svit host, while reversed arguments receive
   an actionable diagnostic.
-- `/bin` discovery exposes installed built-in manuals, while
+- `/ports` discovery exposes installed port manuals, while
   resume removes catalog entries for absent host grants.
-- a host `BuiltinExtension` contributes a discoverable built-in that can
+- a host `PortExtension` contributes a discoverable port that can
   read committed state through the restricted context; the common dispatcher
   rejects oversized extension output.
-- Lampa projects `http`, `jq`, `llm`, `search`, and `spawn` under `/bin` by
+- Lampa projects `http`, `llm`, and `spawn` under `/ports` by
   selecting the standard registry without additional HTTP policy; Svit's
   reusable reqwest transport rejects redirect escape and oversized streamed
   responses.
-- the Svit standard built-in setup derives the full catalog from one instance's
+- the Svit standard port setup derives the full catalog from one instance's
   `Reasoner`; commit events are notifications, and an atomic
   Svit contract read returns an owned value/version pair after inbox and
   completed-turn transitions. Multiple `Events` observers independently see
@@ -92,18 +105,18 @@ The following scenarios execute with assertions and deterministic output under
   selected path and expanded branches until the tree resolves again.
 - Lampa's render loop depends only on the Svit contract, events, inbox, and
   outbox after construction; it reads after commit notifications rather than
-  polling or assembling built-in state.
+  polling or assembling port state.
 - Lampa receives projected canonical messages into its timeline, renders
   intermediate model commentary and tool calls, and deduplicates repeated
   projection reads and optimistically displayed inbox messages by message ID;
   outbox observation changes completion status without duplicating the final
   answer.
 - Lampa collapses a completed tool call and result into one bounded row with a
-  success or failure marker, operation, target, and result summary. Built-in
-  `exec` calls use the built-in name, errors remain visible, and internal tool
+  success or failure marker, operation, target, and result summary. Port
+  `exec` calls use the port name, errors remain visible, and internal tool
   call IDs do not appear in the transcript.
 - a persisted Svit commits model-driven memory, append-only canonical reasoning
-  events, derived messages, built-in catalog refresh, inbox enqueue, and
+  events, derived messages, port catalog refresh, inbox enqueue, and
   exact-head acknowledgement through one Turso owner; reopening by address
   reconstructs the same memory and conversation without rerunning the model or
   appending a transaction when the host grants and prompt are unchanged.
@@ -112,9 +125,9 @@ The following scenarios execute with assertions and deterministic output under
   newer tail, and fails closed when either an uncovered event or the checkpoint
   bytes are corrupted. Its blob is a direct process snapshot rather than a
   nested public snapshot envelope.
-- reasoning startup seeds Everruns' process-backed event reader from the
-  already validated `/thread` projection and reuses that projection while the
-  process version is unchanged; committed event appends invalidate the cache.
+- reasoning startup reads its compact Everruns checkpoint and required paged
+  EventLog suffix without decoding history from `/thread`; canonical appends
+  are observable through `SvitEvent::CanonicalEvent`.
 - cumulative thread history does not consume one guest value's entry budget;
   every event and message remains independently validated, while the host
   collections fail closed at their separate record and encoded-byte envelope.
@@ -123,6 +136,9 @@ The following scenarios execute with assertions and deterministic output under
   `instances/{instance-id}/svit.db`; reopening resumes that address, a database
   containing a different root fails closed, and explicit legacy import
   preserves current state/version/hash while rejecting an existing target.
+- Lampa renders a bounded, read-only `/thread/events` and `/thread/messages`
+  history overlay from the EventLog; those rows remain absent from the
+  committed process tree and snapshots.
 - adapter-neutral process import starts an empty retained-history tail at the
   imported version; its first subsequent transaction begins at position zero
   and advances from that version.
@@ -149,14 +165,13 @@ deterministic core suite and must never receive secrets on
 pull-request-controlled code.
 
 The support-agent-process consumer scenario uses Everruns' simulated driver to
-prove that model-visible mutation is attenuated, the committed answer is authoritative,
-request mismatches roll back, ticket policy is derived from retrieved state, and
-retries cannot duplicate a ticket intent. Its optional live-model executable
-remains outside the deterministic suite.
+prove that the committed answer is authoritative, request mismatches roll back,
+ticket policy is derived from retrieved state, and retries cannot duplicate a
+ticket intent. Its optional live-model executable remains outside the
+deterministic suite.
 
 Agent-loop integration tests snapshot and restore a conversation, continue a
-fork in a child process, assert parent isolation, and enforce script
-allowlisting through the Svit-owned builder.
+fork in a child process, and assert parent isolation.
 The credentialed `support-agent-svit` consumer exercises one process-owned Svit
 with `gpt-5.6-terra`. It remains outside the deterministic suite; lifecycle,
 snapshot, and fork behavior stays covered by integration tests.

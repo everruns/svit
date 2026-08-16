@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value as JsonValue, json};
 
-use super::{Builtin, BuiltinContext, BuiltinManual, BuiltinResult, MAX_TOOL_INPUT_BYTES};
+use super::{MAX_PORT_INPUT_BYTES, Port, PortContext, PortDescriptor, PortResult};
 use crate::Reasoner;
 
 impl Reasoner {
@@ -11,7 +11,7 @@ impl Reasoner {
             .map(|prompt| format!("{prompt}\n\nComplete the supplied task."))
             .unwrap_or_else(|| "Complete the supplied task.".to_string());
         let agent = everruns::Agent::builder()
-            .name("svit-builtin-llm")
+            .name("svit-port-llm")
             .instructions(instructions)
             .model(self.model_id())
             .provider(self.provider().clone())
@@ -26,12 +26,12 @@ impl Reasoner {
     }
 }
 
-pub(super) struct LlmBuiltin {
+pub(super) struct LlmPort {
     reasoner: Reasoner,
     system_prompt: Option<String>,
 }
 
-impl LlmBuiltin {
+impl LlmPort {
     pub(super) fn new(reasoner: Reasoner) -> Self {
         Self {
             reasoner,
@@ -41,9 +41,9 @@ impl LlmBuiltin {
 }
 
 #[async_trait]
-impl Builtin for LlmBuiltin {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new(
+impl Port for LlmPort {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new(
             "Call the host-selected nested model with one prompt.",
             json!({
                 "type": "object",
@@ -56,10 +56,10 @@ impl Builtin for LlmBuiltin {
         .limits(["256 KiB prompt.", "Host model and provider limits apply."])
     }
 
-    async fn execute(&self, _context: BuiltinContext, arguments: JsonValue) -> BuiltinResult {
+    async fn execute(&self, _context: PortContext, arguments: JsonValue) -> PortResult {
         let prompt = arguments["prompt"].as_str().unwrap_or_default();
-        if prompt.is_empty() || prompt.len() > MAX_TOOL_INPUT_BYTES {
-            return BuiltinResult::error("llm prompt is empty or exceeds its limit");
+        if prompt.is_empty() || prompt.len() > MAX_PORT_INPUT_BYTES {
+            return PortResult::error("llm prompt is empty or exceeds its limit");
         }
         // THREAT[TM-EFF-005]: Model calls require an explicit host-selected
         // provider and remain outside Svit transactions.
@@ -68,8 +68,8 @@ impl Builtin for LlmBuiltin {
             .run_once(self.system_prompt.clone(), prompt.to_owned())
             .await
         {
-            Ok(response) => BuiltinResult::text(response),
-            Err(_) => BuiltinResult::error("llm request failed"),
+            Ok(response) => PortResult::text(response),
+            Err(_) => PortResult::error("llm request failed"),
         }
     }
 }

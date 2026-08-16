@@ -24,7 +24,7 @@ use crate::persistence::{
     DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
     TransactionHead, TransactionQuery,
 };
-use crate::{Activation, Builtins, Error, Mount, Process, ProcessId, Result, Value};
+use crate::{Activation, Error, Mount, Ports, Process, ProcessId, Result, Value};
 
 const SCHEMA_VERSION: &str = "2";
 const BASE_FORMAT: &str = "svit-base@1";
@@ -1166,6 +1166,36 @@ impl TursoProcessStore {
                 .ok_or_else(|| {
                     Error::InvalidPersistence("thread history has a sequence gap".into())
                 })?;
+            events.push(event);
+            if events.len() == limit {
+                break;
+            }
+        }
+        events.reverse();
+        Ok(events)
+    }
+
+    async fn recent_thread_messages(
+        &self,
+        address: &ProcessId,
+        session_id: SessionId,
+        limit: usize,
+    ) -> Result<Vec<Event>> {
+        if limit == 0 || limit > 4096 {
+            return Err(Error::ResourceLimitExceeded("recent thread messages"));
+        }
+        let connection = self.database.connect().map_err(store_error)?;
+        let high = thread_history_high(&connection, address, session_id, 0)
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
+        let mut events = Vec::with_capacity(limit);
+        for sequence in (1..=high).rev() {
+            let event = thread_event_at(&connection, address, session_id, sequence, 0)
+                .await
+                .map_err(|error| Error::InvalidPersistence(error.to_string()))?
+                .ok_or_else(|| {
+                    Error::InvalidPersistence("thread history has a sequence gap".into())
+                })?;
             if matches!(
                 event.event_type.as_str(),
                 INPUT_MESSAGE | OUTPUT_MESSAGE_COMPLETED | TOOL_COMPLETED
@@ -2159,12 +2189,11 @@ impl DurableProcess {
         Ok(change)
     }
 
-    /// Durably refreshes the descriptive built-in catalog.
-    pub async fn replace_builtins(&mut self, value: Value) -> Result<crate::Change> {
+    /// Durably refreshes the descriptive port catalog.
+    pub async fn replace_ports(&mut self, value: Value) -> Result<crate::Change> {
         let mut candidate = self.process.clone();
-        let change = candidate.replace_builtins(value)?;
-        self.commit_change(candidate, change, "builtins.refresh")
-            .await
+        let change = candidate.replace_ports(value)?;
+        self.commit_change(candidate, change, "ports.refresh").await
     }
 
     /// Executes guest Lisp and durably publishes its exact committed write set.
@@ -2173,17 +2202,17 @@ impl DurableProcess {
         self.commit_activation(prepared).await
     }
 
-    /// Executes guest Lisp with host-attached built-ins and durably commits it.
-    pub async fn exec_with_builtins(
+    /// Executes guest Lisp with host-attached ports and durably commits it.
+    pub async fn exec_with_ports(
         &mut self,
         path: &str,
         input: Value,
-        builtins: &Builtins,
+        ports: &Ports,
     ) -> Result<Activation> {
         let context = Arc::new(Mutex::new(self.process.clone()));
         let prepared = self
             .process
-            .prepare_exec_with_builtins(path, input, builtins, context)
+            .prepare_exec_with_ports(path, input, ports, context)
             .await?;
         self.commit_activation(prepared).await
     }
@@ -2342,6 +2371,16 @@ impl DurableProcessHandle for DurableProcess {
             .await
     }
 
+    async fn recent_thread_messages(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> Result<Vec<Event>> {
+        self.store
+            .recent_thread_messages(self.process.id(), session_id, limit)
+            .await
+    }
+
     async fn write(&mut self, path: &str, value: Value) -> Result<crate::Change> {
         DurableProcess::write(self, path, value).await
     }
@@ -2354,13 +2393,13 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::exec(self, path, input).await
     }
 
-    async fn exec_with_builtins(
+    async fn exec_with_ports(
         &mut self,
         path: &str,
         input: Value,
-        builtins: &Builtins,
+        ports: &Ports,
     ) -> Result<Activation> {
-        DurableProcess::exec_with_builtins(self, path, input, builtins).await
+        DurableProcess::exec_with_ports(self, path, input, ports).await
     }
 
     async fn enqueue_inbox(&mut self, value: Value) -> Result<crate::Change> {
@@ -2383,8 +2422,8 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::replace_thread_state(self, value).await
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> Result<crate::Change> {
-        DurableProcess::replace_builtins(self, value).await
+    async fn replace_ports(&mut self, value: Value) -> Result<crate::Change> {
+        DurableProcess::replace_ports(self, value).await
     }
 
     async fn transactions(&self, query: TransactionQuery) -> Result<Vec<ProcessTransaction>> {

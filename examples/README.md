@@ -1,4 +1,4 @@
-# Built-in examples
+# Port examples
 
 The Rust examples exercise the main Svit and Process APIs. Run them from the
 repository root:
@@ -12,7 +12,7 @@ cargo run -p svit --example sandbox_limits
 cargo run -p svit --example multi_client_control
 cargo run -p svit --example mounted_resources
 cargo run -p svit --example process_reasoning
-cargo run -p svit --example builtins
+cargo run -p svit --example ports
 ```
 
 `multi_client_control` demonstrates two clients using optimistic version
@@ -32,28 +32,30 @@ It obtains inbox and outbox handles, starts the loop, submits one durable
 Everruns `Message` with content parts, receives the assistant message while the
 loop is live, and then blocks until the committed queue drains.
 
-`builtins` runs the default `search` and `jq` implementations and a custom
-`BuiltinExtension`. The extension reads committed process state through
-`BuiltinContext` without receiving process mutation authority.
+`ports` runs a custom `PortExtension`. Svit Lisp uses its built-in
+`(jq filter value)` and `(search path pattern)` functions for local data
+processing. The extension reads committed process state through
+`PortContext` without receiving process mutation authority.
 
 ## Process-configured support workflow
 
 `support-agent-process/` constructs memory, mounts, and scripts through the
 lower-level `Process` builder, then runs that process through `Svit::resume`
-with `gpt-5.6-terra`. The model sees an attenuated Svit capability surface:
+with `gpt-5.6-terra`. The model sees Svit's complete process surface:
 
 - `discover`: list children under any Svit process path;
 - `read`: read a value by absolute process path;
-- `exec`: transactionally execute `search_support_docs` or
-  `commit_support_result`.
+- `write` and `remove`: transactionally change process memory or named scripts;
+- `exec`: transactionally execute inline or named Svit Lisp scripts.
 
 `search_support_docs` and `commit_support_result` are Svit scripts, not agent
 tools. The host places the question and request ID in process memory. Search
 reads documents from a real folder snapshot and account context from a Turso
 query snapshot, then records source IDs and ticket policy in process memory.
 Commit derives those fields from committed state, writes the result exactly
-once, and atomically appends an authorized ticket intent. Generic writes,
-removes, and other scripts are not available to the model.
+once, and atomically appends an authorized ticket intent. The workflow prompt
+and scripts define its behavior; Svit does not impose a separate model-script
+allowlist.
 
 The process exposes mounted data under `/mounts/support_docs` and
 `/mounts/account_context`, request and committed result state under

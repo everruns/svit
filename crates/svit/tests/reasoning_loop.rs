@@ -8,9 +8,9 @@ use everruns_test_support::{
 };
 use serde_json::json;
 use svit::{
-    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins, Change,
-    ContentPart, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError,
-    Limits, Message, MessageRole, ObserveError, Process, Reasoner, Script, Svit, SvitError,
+    Change, ContentPart, HttpAllowlist, HttpRequest, HttpResponse, HttpTransport,
+    HttpTransportError, Limits, Message, MessageRole, ObserveError, Port, PortContext,
+    PortDescriptor, PortExtension, PortResult, Ports, Process, Reasoner, Script, Svit, SvitError,
     SvitEvent, Value, value,
 };
 #[cfg(feature = "persistence-turso")]
@@ -20,12 +20,16 @@ struct FixtureHttp;
 
 struct CountingFixtureHttp(Arc<AtomicUsize>);
 
+struct TreeFixtureHttp;
+
+struct ModelCatalogFixtureHttp;
+
 struct ReadValue;
 
 #[async_trait]
-impl Builtin for ReadValue {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new(
+impl Port for ReadValue {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new(
             "Read one committed process value.",
             json!({
                 "type": "object",
@@ -38,20 +42,20 @@ impl Builtin for ReadValue {
         .limits(["Read-only process context."])
     }
 
-    async fn execute(&self, context: BuiltinContext, input: serde_json::Value) -> BuiltinResult {
+    async fn execute(&self, context: PortContext, input: serde_json::Value) -> PortResult {
         let path = input["path"].as_str().unwrap_or_default();
         match context.read(path) {
-            Ok(Some(value)) => BuiltinResult::success(value.to_json()),
-            Ok(None) => BuiltinResult::error("path not found"),
-            Err(error) => BuiltinResult::error(error.to_string()),
+            Ok(Some(value)) => PortResult::success(value.to_json()),
+            Ok(None) => PortResult::error("path not found"),
+            Err(error) => PortResult::error(error.to_string()),
         }
     }
 }
 
-struct FixtureBuiltins;
+struct FixturePorts;
 
-impl BuiltinExtension for FixtureBuiltins {
-    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+impl PortExtension for FixturePorts {
+    fn ports(&self) -> Vec<(String, Box<dyn Port>)> {
         vec![("read-value".into(), Box::new(ReadValue))]
     }
 }
@@ -59,13 +63,13 @@ impl BuiltinExtension for FixtureBuiltins {
 struct OversizedOutput;
 
 #[async_trait]
-impl Builtin for OversizedOutput {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new("Return an oversized fixture.", json!({"type": "object"}))
+impl Port for OversizedOutput {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new("Return an oversized fixture.", json!({"type": "object"}))
     }
 
-    async fn execute(&self, _context: BuiltinContext, _input: serde_json::Value) -> BuiltinResult {
-        BuiltinResult::text("x".repeat(300 * 1024))
+    async fn execute(&self, _context: PortContext, _input: serde_json::Value) -> PortResult {
+        PortResult::text("x".repeat(2 * 1024 * 1024))
     }
 }
 
@@ -135,6 +139,54 @@ impl HttpTransport for CountingFixtureHttp {
     }
 }
 
+#[async_trait]
+impl HttpTransport for TreeFixtureHttp {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpTransportError> {
+        assert_eq!(request.url, "https://8.8.8.8/tree");
+        Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            body: br#"{"tree":[{"path":"README.md","type":"blob"},{"path":"src","type":"tree"},{"path":"src/lib.rs","type":"blob"}]}"#.to_vec(),
+        })
+    }
+}
+
+#[async_trait]
+impl HttpTransport for ModelCatalogFixtureHttp {
+    async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpTransportError> {
+        assert_eq!(request.url, "https://models.dev/models.json");
+        let body = json!({
+            "openai/gpt-4.1": {
+                "id": "openai/gpt-4.1",
+                "name": "GPT-4.1",
+                "release_date": "2025-04-14"
+            },
+            "openai/gpt-5.6": {
+                "id": "openai/gpt-5.6",
+                "name": "GPT-5.6",
+                "release_date": "2026-08-01"
+            },
+            "openai/gpt-5.4": {
+                "id": "openai/gpt-5.4",
+                "name": "GPT-5.4",
+                "release_date": "2026-06-01"
+            },
+            "anthropic/large-catalog-entry": {
+                "id": "anthropic/large-catalog-entry",
+                "name": "Large catalog entry",
+                "description": "x".repeat(2 * 1024 * 1024)
+            }
+        });
+        let body = serde_json::to_vec(&body).unwrap();
+        assert!(body.len() > 1024 * 1024);
+        Ok(HttpResponse {
+            status: 200,
+            headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+            body,
+        })
+    }
+}
+
 #[tokio::test]
 async fn svit_builder_requires_a_reasoner() {
     let result = Svit::builder("svit://local/missing-provider")
@@ -164,8 +216,9 @@ async fn svit_owns_the_system_prompt_without_host_instructions() {
     };
     assert!(system_prompt.contains("svit://local/base-prompt"));
     assert!(system_prompt.contains("Use its memory tree for durable facts and working state."));
-    assert!(system_prompt.contains("(exec \"/bin/name\" input)"));
+    assert!(system_prompt.contains("(port-call \"name\" input)"));
     assert!(system_prompt.contains("(exec \"/lib/name\" input)"));
+    assert!(system_prompt.contains("(value-map \"key\" value ...)"));
     assert!(system_prompt.contains("immediate external effect"));
     assert!(!system_prompt.contains("<instructions>"));
 }
@@ -286,7 +339,7 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
             ),
             SimTurn::text("persisted answer"),
         ]))
-        .builtins(Builtins::standard())
+        .ports(Ports::standard())
         .build()
         .await
         .unwrap();
@@ -311,14 +364,14 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
         .iter()
         .map(|event| event.source().to_owned())
         .collect::<Vec<_>>();
-    assert!(sources.iter().any(|source| source == "builtins.refresh"));
+    assert!(sources.iter().any(|source| source == "ports.refresh"));
     assert!(sources.iter().any(|source| source == "inbox.enqueue"));
     assert!(sources.iter().any(|source| source == "inbox.acknowledge"));
     assert!(!sources.iter().any(|source| source == "reasoning"));
     let resumed = Svit::persisted(durable)
         .unwrap()
         .reasoner(scripted_reasoner([]))
-        .builtins(Builtins::standard())
+        .ports(Ports::standard())
         .build()
         .await
         .unwrap();
@@ -345,6 +398,17 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
             .unwrap()
             .text(),
         Some("persisted answer")
+    );
+    let events = resumed.recent_events(128).await.unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "input.message")
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "output.message.completed")
     );
     assert_eq!(resumed.read("/inbox").unwrap(), Some(value!([])));
     assert_eq!(resumed.version().unwrap(), expected_version);
@@ -418,31 +482,31 @@ async fn durable_fork_shares_an_immutable_event_prefix_and_diverges_afterward() 
 
 #[tokio::test]
 async fn svit_standard_builtin_setup_derives_model_tools() {
-    let svit = Svit::builder("svit://local/builtin-setup")
+    let svit = Svit::builder("svit://local/port-setup")
         .unwrap()
         .reasoner(scripted_reasoner([]))
-        .builtins(Builtins::standard())
+        .ports(Ports::standard())
         .build()
         .await
         .unwrap();
 
     assert_eq!(
-        svit.discover("/bin").unwrap(),
-        vec!["http", "jq", "llm", "search", "spawn"]
+        svit.discover("/ports").unwrap(),
+        vec!["http", "llm", "spawn"]
     );
 }
 
 #[tokio::test]
 async fn http_allowlist_layers_onto_a_custom_builtin_set() {
-    let svit = Svit::builder("svit://local/http-builtins")
+    let svit = Svit::builder("svit://local/http-ports")
         .unwrap()
         .reasoner(scripted_reasoner([]))
-        .builtins(Builtins::new().with_http_allowlist(HttpAllowlist::new()))
+        .ports(Ports::new().with_http_allowlist(HttpAllowlist::new()))
         .build()
         .await
         .unwrap();
 
-    assert_eq!(svit.discover("/bin").unwrap(), vec!["http", "jq", "search"]);
+    assert_eq!(svit.discover("/ports").unwrap(), vec!["http"]);
 }
 
 #[tokio::test]
@@ -451,6 +515,7 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
         loop {
             match events.recv().await.unwrap() {
                 SvitEvent::Committed(change) => return change,
+                SvitEvent::CanonicalEvent(_) => {}
                 SvitEvent::Message(_) => {}
                 SvitEvent::Failed(error) => panic!("Svit failed: {error}"),
             }
@@ -486,6 +551,41 @@ async fn svit_commit_notifications_are_observed_through_the_contract() {
 }
 
 #[tokio::test]
+async fn canonical_events_are_observed_without_materializing_thread_history() {
+    let mut svit = Svit::builder("svit://local/canonical-event-observation")
+        .unwrap()
+        .reasoner(scripted_reasoner([SimTurn::text("done")]))
+        .build()
+        .await
+        .unwrap();
+    let inbox = svit.inbox();
+    let mut events = svit.events();
+
+    svit.start().unwrap();
+    inbox.send(Message::user("run")).await.unwrap();
+    let observed = loop {
+        if let SvitEvent::CanonicalEvent(event) = events.recv().await.unwrap()
+            && event.event_type == "input.message"
+        {
+            break event;
+        }
+    };
+    svit.block().await.unwrap();
+
+    assert_eq!(observed.event_type, "input.message");
+    assert_eq!(
+        svit.discover("/thread").unwrap(),
+        vec![
+            "format",
+            "instructions",
+            "process_id",
+            "session_id",
+            "system_prompt"
+        ]
+    );
+}
+
+#[tokio::test]
 async fn reasoning_tool_commits_are_observed_through_the_contract() {
     let mut svit = Svit::builder("svit://local/reasoning-tool-events")
         .unwrap()
@@ -509,7 +609,7 @@ async fn reasoning_tool_commits_are_observed_through_the_contract() {
     let changes = std::iter::from_fn(|| events.try_recv().ok())
         .filter_map(|event| match event {
             SvitEvent::Committed(change) => Some(change),
-            SvitEvent::Message(_) | SvitEvent::Failed(_) => None,
+            SvitEvent::CanonicalEvent(_) | SvitEvent::Message(_) | SvitEvent::Failed(_) => None,
         })
         .collect::<Vec<_>>();
     svit.block().await.unwrap();
@@ -551,17 +651,15 @@ async fn started_svit_processes_inbox_messages_in_commit_order() {
 
 #[tokio::test]
 async fn reasoning_loop_exposes_bounded_thread_metadata_and_host_history() {
-    // THREAT[TM-CAP-005]: The built-in catalog comes from the exact host
+    // THREAT[TM-CAP-005]: The port catalog comes from the exact host
     // runtime attached to this process and remains read-only to guest code.
     let instructions = "Inspect your projected runtime state.";
     let mut svit = Svit::builder("svit://local/thread-projection")
         .unwrap()
         .instructions(instructions)
-        .builtins(Builtins::new())
         .reasoner(scripted_reasoner([
             SimTurn::tool_call("read", json!({"path": "/thread/system_prompt"})),
-            SimTurn::tool_call("discover", json!({"path": "/bin"})),
-            SimTurn::tool_call("read", json!({"path": "/bin/search"})),
+            SimTurn::tool_call("discover", json!({"path": "/ports"})),
             SimTurn::text("projection inspected"),
         ]))
         .build()
@@ -582,15 +680,7 @@ async fn reasoning_loop_exposes_bounded_thread_metadata_and_host_history() {
     assert_eq!(thread["format"], "svit-thread@8");
     assert!(thread.get("messages").is_none());
     assert!(thread.get("events").is_none());
-    assert_eq!(svit.discover("/bin").unwrap(), vec!["jq", "search"]);
-    let search_manual = svit.read("/bin/search").unwrap().unwrap().to_json();
-    assert_eq!(search_manual["name"], "search");
-    assert_eq!(search_manual["effect"], "read");
-    assert_eq!(
-        search_manual["input_schema"]["required"],
-        json!(["path", "pattern"])
-    );
-    assert!(search_manual["limits"].is_array());
+    assert!(svit.discover("/ports").unwrap().is_empty());
 
     let inbox = svit.inbox();
     svit.start().unwrap();
@@ -610,10 +700,9 @@ async fn reasoning_loop_exposes_bounded_thread_metadata_and_host_history() {
         .filter(|message| message.role == MessageRole::ToolResult)
         .map(message_text)
         .collect::<Vec<_>>();
-    assert_eq!(tool_results.len(), 3);
+    assert_eq!(tool_results.len(), 2);
     assert!(tool_results[0].contains(instructions));
-    assert!(tool_results[1].contains("search"));
-    assert!(tool_results[2].contains("input_schema"));
+    assert!(tool_results[1].contains("\"entries\":[]"));
 }
 
 #[tokio::test]
@@ -622,12 +711,12 @@ async fn resumed_svit_refreshes_builtin_discovery_to_current_host_grants() {
     // grant when a restored process is attached to a new agent runtime.
     let source = Svit::builder("svit://local/tool-projection-source")
         .unwrap()
-        .builtins(Builtins::new().llm(scripted_reasoner([SimTurn::text("nested")])))
+        .ports(Ports::new().llm(scripted_reasoner([SimTurn::text("nested")])))
         .reasoner(scripted_reasoner([]))
         .build()
         .await
         .unwrap();
-    assert!(source.discover("/bin").unwrap().contains(&"llm".into()));
+    assert!(source.discover("/ports").unwrap().contains(&"llm".into()));
     let snapshot = source.snapshot().unwrap();
 
     let restored = Process::restore(&snapshot).unwrap();
@@ -637,9 +726,8 @@ async fn resumed_svit_refreshes_builtin_discovery_to_current_host_grants() {
         .await
         .unwrap();
 
-    let tools = resumed.discover("/bin").unwrap();
+    let tools = resumed.discover("/ports").unwrap();
     assert!(!tools.contains(&"llm".into()));
-    assert!(!tools.contains(&"search".into()));
     assert!(tools.is_empty());
 }
 
@@ -818,36 +906,55 @@ async fn child_process_owns_an_isolated_forked_process() {
 }
 
 #[tokio::test]
-async fn process_reasoning_enforces_its_script_allowlist() {
-    // THREAT[TM-CAP-002]: Svit assembles the Everruns tools and checks script
-    // authority before executing model-supplied arguments.
-    let mut agent = Svit::builder("svit://local/restricted-agent")
+async fn process_reasoning_executes_any_process_script() {
+    let mut agent = Svit::builder("svit://local/process-agent")
         .unwrap()
         .memory("changed", value!(false))
         .library(
-            "denied",
+            "any_script",
             Script::new(r#"(define (main input) (do (write "/memory/changed" true) input))"#),
         )
         .reasoner(scripted_reasoner([
-            SimTurn::tool_call("exec", json!({"path": "/lib/denied", "input": null})),
-            SimTurn::text("denied as expected"),
+            SimTurn::tool_call("exec", json!({"path": "/lib/any_script", "input": null})),
+            SimTurn::text("script completed"),
         ]))
-        .allow_scripts(["allowed"])
         .build()
         .await
         .unwrap();
 
-    assert!(agent.discover("/bin").unwrap().is_empty());
+    assert!(agent.discover("/ports").unwrap().is_empty());
 
     let inbox = agent.inbox();
     agent.start().unwrap();
-    inbox
-        .send(Message::user("try the denied script"))
-        .await
-        .unwrap();
+    inbox.send(Message::user("run the script")).await.unwrap();
     agent.block().await.unwrap();
 
-    assert_eq!(agent.read("/memory/changed").unwrap(), Some(value!(false)));
+    assert_eq!(agent.read("/memory/changed").unwrap(), Some(value!(true)));
+}
+
+#[tokio::test]
+async fn system_prompt_teaches_the_script_library_lifecycle() {
+    let svit = Svit::builder("svit://local/script-guidance")
+        .unwrap()
+        .reasoner(scripted_reasoner([]))
+        .build()
+        .await
+        .unwrap();
+
+    let prompt = svit
+        .read("/thread/system_prompt")
+        .unwrap()
+        .unwrap()
+        .to_json();
+    let prompt = prompt.as_str().unwrap();
+    assert!(prompt.contains("Scripts are first-class process state under /lib."));
+    assert!(prompt.contains("For an operation you expect to reuse"));
+    assert!(prompt.contains("exec with path /lib/name"));
+    assert!(prompt.contains("For a one-off operation, provide source directly to exec"));
+    assert!(prompt.contains("Either form can call ports and write durable state"));
+    assert!(prompt.contains("A port response is activation-local"));
+    assert!(prompt.contains("(jq filter value)"));
+    assert!(prompt.contains("(search path pattern)"));
 }
 
 #[tokio::test]
@@ -898,16 +1005,16 @@ async fn reasoning_event_growth_fails_closed_at_the_process_limit() {
 #[tokio::test]
 async fn host_extension_registers_discoverable_process_builtin() {
     // THREAT[TM-CAP-006]: An extension receives the same explicit input and
-    // read-only process context as a standard built-in.
-    let mut svit = Svit::builder("svit://local/builtin-extension")
+    // read-only process context as a standard port.
+    let mut svit = Svit::builder("svit://local/port-extension")
         .unwrap()
         .memory("color", value!("blue"))
-        .builtins(Builtins::new().extension(FixtureBuiltins))
+        .ports(Ports::new().extension(FixturePorts))
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/read-value",
+                    "source": "(define (main input) (port-call \"read-value\" input))",
                     "input": {"path": "/memory/color"}
                 }),
             ),
@@ -918,13 +1025,14 @@ async fn host_extension_registers_discoverable_process_builtin() {
         .unwrap();
 
     assert!(
-        svit.discover("/bin")
+        svit.discover("/ports")
             .unwrap()
             .contains(&"read-value".into())
     );
-    let manual = svit.read("/bin/read-value").unwrap().unwrap().to_json();
-    assert_eq!(manual["effect"], "read");
-    assert_eq!(manual["output"], "The committed JSON value at path.");
+    let descriptor = svit.read("/ports/read-value").unwrap().unwrap().to_json();
+    assert_eq!(descriptor["version"], "v1");
+    assert_eq!(descriptor["effect"], "read");
+    assert_eq!(descriptor["output"], "The committed JSON value at path.");
 
     let inbox = svit.inbox();
     svit.start().unwrap();
@@ -942,33 +1050,36 @@ async fn host_extension_registers_discoverable_process_builtin() {
 }
 
 #[tokio::test]
-async fn later_builtin_registration_replaces_the_default_entry() {
-    let svit = Svit::builder("svit://local/builtin-override")
+async fn host_port_registration_exposes_its_own_descriptor() {
+    let svit = Svit::builder("svit://local/port-override")
         .unwrap()
-        .builtins(
-            Builtins::standard()
+        .ports(
+            Ports::standard()
                 .with_http_allowlist(HttpAllowlist::new())
-                .builtin("search", Box::new(ReadValue)),
+                .port("read-value", Box::new(ReadValue)),
         )
         .reasoner(scripted_reasoner([]))
         .build()
         .await
         .unwrap();
 
-    let manual = svit.read("/bin/search").unwrap().unwrap().to_json();
-    assert_eq!(manual["description"], "Read one committed process value.");
-    assert_eq!(manual["effect"], "read");
+    let descriptor = svit.read("/ports/read-value").unwrap().unwrap().to_json();
+    assert_eq!(
+        descriptor["description"],
+        "Read one committed process value."
+    );
+    assert_eq!(descriptor["effect"], "read");
 }
 
 #[tokio::test]
-async fn host_builtin_output_is_globally_bounded() {
-    // THREAT[TM-DOS-008]: Host extensions cannot bypass the aggregate output
-    // limit enforced by the built-in dispatcher.
-    let mut svit = Svit::builder("svit://local/builtin-output-limit")
+async fn port_output_cannot_cross_the_persistent_value_boundary() {
+    // THREAT[TM-DOS-008]: A port may return activation-local data, but a script
+    // cannot publish an oversized result into memory or model-visible output.
+    let mut svit = Svit::builder("svit://local/port-output-limit")
         .unwrap()
-        .builtins(Builtins::new().builtin("oversized", Box::new(OversizedOutput)))
+        .ports(Ports::new().port("oversized", Box::new(OversizedOutput)))
         .reasoner(scripted_reasoner([
-            SimTurn::tool_call("exec", json!({"path": "/bin/oversized", "input": {}})),
+            SimTurn::tool_call("exec", json!({"source": "(define (main input) (port-call \"oversized\" input))", "input": {}})),
             SimTurn::text("limit observed"),
         ]))
         .build()
@@ -987,12 +1098,12 @@ async fn host_builtin_output_is_globally_bounded() {
         .find(|message| message.role == MessageRole::ToolResult)
         .map(message_text)
         .unwrap();
-    assert!(tool_result.contains("built-in output limit exceeded"));
+    assert!(tool_result.contains("maximum text bytes exceeded"));
     assert!(!tool_result.contains(&"x".repeat(1024)));
 }
 
 #[tokio::test]
-async fn builtin_search_and_jq_process_structured_data() {
+async fn standard_library_processes_structured_data() {
     let records = json!({
         "items": [
             {"name": "alpha", "active": false},
@@ -1002,26 +1113,20 @@ async fn builtin_search_and_jq_process_structured_data() {
     let mut svit = Svit::builder("svit://local/native-data-tools")
         .unwrap()
         .memory("records", value!({"items": records["items"].clone()}))
-        .builtins(Builtins::new())
+        .ports(Ports::new())
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/search",
-                    "input": {
-                        "path": "/memory/records",
-                        "pattern": "^beta$"
-                    }
+                    "source": "(define (main input) (search \"/memory/records\" \"^beta$\"))",
+                    "input": null
                 }),
             ),
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/jq",
-                    "input": {
-                        "filter": ".items[] | select(.active) | .name",
-                        "input": records
-                    }
+                    "source": "(define (main input) (jq \".items[] | select(.active) | .name\" input))",
+                    "input": records
                 }),
             ),
             SimTurn::text("found active record"),
@@ -1046,7 +1151,113 @@ async fn builtin_search_and_jq_process_structured_data() {
         .map(message_text)
         .collect::<Vec<_>>();
     assert!(tool_results[0].contains("/memory/records/items/1/name"));
-    assert!(tool_results[1].contains("\"beta\""));
+    assert!(tool_results[1].contains("beta"));
+}
+
+#[tokio::test]
+async fn jq_standard_library_processes_json_returned_by_the_http_port() {
+    let mut svit = Svit::builder("svit://local/http-jq-pipeline")
+        .unwrap()
+        .ports(Ports::new().http(
+            HttpAllowlist::new().allow("https://8.8.8.8/tree"),
+            TreeFixtureHttp,
+        ))
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call(
+                "exec",
+                json!({
+                    "source": r#"
+                        (define (main input)
+                          (let ((response
+                                 (port-call "http"
+                                   (value-map "method" "GET" "url" "https://8.8.8.8/tree"))))
+                            (jq "[.tree[] | select(.type == \"blob\")] | length" response)))
+                    "#,
+                    "input": null,
+                }),
+            ),
+            SimTurn::text("counted blobs"),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox.send(Message::user("count blobs")).await.unwrap();
+    svit.block().await.unwrap();
+
+    let tool_result = svit
+        .messages()
+        .unwrap()
+        .iter()
+        .find(|message| message.role == MessageRole::ToolResult)
+        .map(message_text)
+        .unwrap();
+    assert!(tool_result.contains("[2]"), "{tool_result}");
+}
+
+#[tokio::test]
+async fn model_catalog_scenario_uses_a_saved_script_to_reduce_http_into_memory() {
+    let script = r#"
+        (define (main input)
+          (let ((response
+                 (port-call "http"
+                   (value-map "method" "GET" "url" "https://models.dev/models.json"))))
+            (let ((summary
+                   (jq "to_entries | map(.value) | {model_count: length, latest_gpt_models: ([.[] | select(.id | startswith(\"openai/gpt\"))] | sort_by(.release_date) | reverse | .[:2] | map({id, name, release_date}))}" response)))
+              (do
+                (write "/memory/model_catalog" (value-get summary "/0"))
+                (value-get summary "/0")))))
+    "#;
+    let mut svit = Svit::builder("svit://local/model-catalog-scenario")
+        .unwrap()
+        .ports(Ports::new().http(
+            HttpAllowlist::new().allow("https://models.dev/models.json"),
+            ModelCatalogFixtureHttp,
+        ))
+        .reasoner(scripted_reasoner([
+            SimTurn::tool_call(
+                "write",
+                json!({
+                    "path": "/lib/summarize-model-catalog",
+                    "value": {
+                        "source": script,
+                        "documentation": "Fetch a model catalog, count its models, and save the newest GPT models."
+                    }
+                }),
+            ),
+            SimTurn::tool_call(
+                "exec",
+                json!({"path": "/lib/summarize-model-catalog", "input": null}),
+            ),
+            SimTurn::text("Saved the model count and latest GPT models to /memory/model_catalog."),
+        ]))
+        .build()
+        .await
+        .unwrap();
+
+    let inbox = svit.inbox();
+    svit.start().unwrap();
+    inbox
+        .send(Message::user(
+            "Count models.dev models and save the latest GPT models to memory.",
+        ))
+        .await
+        .unwrap();
+    svit.block().await.unwrap();
+
+    assert_eq!(
+        svit.read("/memory/model_catalog").unwrap(),
+        Some(value!({
+            "model_count": 4,
+            "latest_gpt_models": [
+                {"id": "openai/gpt-5.6", "name": "GPT-5.6", "release_date": "2026-08-01"},
+                {"id": "openai/gpt-5.4", "name": "GPT-5.4", "release_date": "2026-06-01"}
+            ]
+        }))
+    );
+    assert!(svit.read("/lib/summarize-model-catalog").unwrap().is_some());
 }
 
 #[tokio::test]
@@ -1054,12 +1265,12 @@ async fn builtin_http_is_denied_without_an_explicit_url_grant() {
     // THREAT[TM-CAP-004]: Merely supplying a URL does not grant HTTP authority.
     let mut svit = Svit::builder("svit://local/native-network-denied")
         .unwrap()
-        .builtins(Builtins::new().http(HttpAllowlist::new(), FixtureHttp))
+        .ports(Ports::new().http(HttpAllowlist::new(), FixtureHttp))
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/http",
+                    "source": "(define (main input) (port-call \"http\" input))",
                     "input": {"method": "GET", "url": "https://example.com"}
                 }),
             ),
@@ -1085,21 +1296,21 @@ async fn builtin_http_is_denied_without_an_explicit_url_grant() {
 }
 
 #[tokio::test]
-async fn builtin_http_uses_the_host_allowlist_and_transport() {
+async fn inline_exec_can_call_http_and_commit_memory() {
     // THREAT[TM-CAP-004]: An allowed call passes both the host-selected URL
     // policy and host-owned transport before its response reaches the model.
-    let tools = Builtins::new().http(
+    let tools = Ports::new().http(
         HttpAllowlist::new().allow("https://8.8.8.8/data"),
         FixtureHttp,
     );
     let mut svit = Svit::builder("svit://local/native-network-allowed")
         .unwrap()
-        .builtins(tools)
+        .ports(tools)
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/http",
+                    "source": "(define (main input) ((lambda (response) (do (write \"/memory/inline-http\" response) response)) (port-call \"http\" input)))",
                     "input": {"method": "GET", "url": "https://8.8.8.8/data"}
                 }),
             ),
@@ -1122,6 +1333,13 @@ async fn builtin_http_uses_the_host_allowlist_and_transport() {
             .unwrap(),
     );
     assert!(tool_result.contains("fixture"), "{tool_result}");
+    assert!(
+        svit.read("/memory/inline-http").unwrap().unwrap().to_json()["body"]
+            .as_str()
+            .unwrap()
+            .contains("fixture")
+    );
+    assert_eq!(svit.read("/lib/inline").unwrap(), None);
 }
 
 #[tokio::test]
@@ -1132,29 +1350,29 @@ async fn persisted_model_authored_script_invokes_host_http_builtin() {
     let process = Process::new("svit://local/scripted-http").unwrap();
     let durable = store.create(process).await.unwrap();
     let requests = Arc::new(AtomicUsize::new(0));
-    let builtins = Builtins::new().http(
+    let ports = Ports::new().http(
         HttpAllowlist::new().allow("https://8.8.8.8/data"),
         CountingFixtureHttp(requests.clone()),
     );
     let mut svit = Svit::persisted(durable)
         .unwrap()
-        .builtins(builtins)
+        .ports(ports)
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "write",
                 json!({
-                    "path": "/lib/fetch",
+                    "path": "/lib/fetch-everruns",
                     "value": {
-                        "source": "(define (main input) ((lambda (response) (do (write \"/memory/http-response\" response) response)) (exec \"/bin/http\" input)))",
-                        "documentation": "Fetch one HTTP resource."
+                        "source": "(define (main input) ((lambda (response) (do (write \"/memory/http-response\" response) response)) (port-call \"http\" (value-map \"method\" \"GET\" \"url\" \"https://8.8.8.8/data\"))))",
+                        "documentation": "Fetch the Everruns homepage."
                     }
                 }),
             ),
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/lib/fetch",
-                    "input": {"method": "GET", "url": "https://8.8.8.8/data"}
+                    "path": "/lib/fetch-everruns",
+                    "input": null
                 }),
             ),
             SimTurn::text("fetched through the saved script"),
@@ -1166,7 +1384,9 @@ async fn persisted_model_authored_script_invokes_host_http_builtin() {
     let inbox = svit.inbox();
     svit.start().unwrap();
     inbox
-        .send(Message::user("create and invoke a reusable fetch script"))
+        .send(Message::user(
+            "create and invoke a reusable Everruns fetch script",
+        ))
         .await
         .unwrap();
     svit.block().await.unwrap();
@@ -1180,7 +1400,7 @@ async fn persisted_model_authored_script_invokes_host_http_builtin() {
         .collect::<Vec<_>>();
     assert_eq!(tool_results.len(), 2);
     assert!(
-        tool_results[1].contains("\\\"status\\\":200"),
+        tool_results[1].contains("\"status\":200"),
         "{}",
         tool_results[1]
     );
@@ -1195,7 +1415,8 @@ async fn persisted_model_authored_script_invokes_host_http_builtin() {
             .unwrap()
             .unwrap()
             .to_json()
-            .as_str()
+            .get("body")
+            .and_then(serde_json::Value::as_str)
             .unwrap()
             .contains("fixture")
     );
@@ -1206,7 +1427,7 @@ async fn persisted_model_authored_script_invokes_host_http_builtin() {
 // THREAT[TM-EFF-001] THREAT[TM-EFF-005]
 async fn failed_script_does_not_repeat_builtin_or_commit_guest_state() {
     let requests = Arc::new(AtomicUsize::new(0));
-    let builtins = Builtins::new().http(
+    let ports = Ports::new().http(
         HttpAllowlist::new().allow("https://8.8.8.8/data"),
         CountingFixtureHttp(requests.clone()),
     );
@@ -1215,10 +1436,10 @@ async fn failed_script_does_not_repeat_builtin_or_commit_guest_state() {
         .library(
             "fetch-then-fail",
             Script::new(
-                "(define (main input) (do (write \"/memory/uncommitted\" true) (exec \"/bin/http\" input) (panic \"failed after HTTP\")))",
+                "(define (main input) (do (write \"/memory/uncommitted\" true) (port-call \"http\" input) (panic \"failed after HTTP\")))",
             ),
         )
-        .builtins(builtins)
+        .ports(ports)
         .reasoner(scripted_reasoner([]))
         .build()
         .await
@@ -1245,12 +1466,12 @@ async fn builtin_llm_uses_only_the_host_selected_nested_model() {
     // driver and remains outside the process transaction.
     let mut svit = Svit::builder("svit://local/native-llm")
         .unwrap()
-        .builtins(Builtins::new().llm(scripted_reasoner([SimTurn::text("nested answer")])))
+        .ports(Ports::new().llm(scripted_reasoner([SimTurn::text("nested answer")])))
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/llm",
+                    "source": "(define (main input) (port-call \"llm\" input))",
                     "input": {"prompt": "nested question"}
                 }),
             ),
@@ -1283,19 +1504,19 @@ async fn builtin_spawn_runs_and_retains_an_isolated_child_svit() {
     let mut parent = Svit::builder("svit://local/native-parent")
         .unwrap()
         .memory("owner", value!("parent"))
-        .builtins(Builtins::new().spawn(scripted_reasoner([SimTurn::text("child answer")])))
+        .ports(Ports::new().spawn(scripted_reasoner([SimTurn::text("child answer")])))
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/spawn",
+                    "source": "(define (main input) (port-call \"spawn\" input))",
                     "input": {"id": "svit://local/native-child", "task": "analyze this"}
                 }),
             ),
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/spawn",
+                    "source": "(define (main input) (port-call \"spawn\" input))",
                     "input": {"id": "svit://local/native-child", "task": "duplicate"}
                 }),
             ),
@@ -1335,29 +1556,26 @@ async fn builtin_spawn_runs_and_retains_an_isolated_child_svit() {
 }
 
 #[tokio::test]
-async fn builtin_data_tools_reject_unbounded_or_oversized_work() {
-    // THREAT[TM-DOS-008]: Native tools reject unbounded jq constructs and
-    // oversized search expressions before evaluation.
+async fn bounded_data_operations_reject_unbounded_or_oversized_work() {
+    // THREAT[TM-DOS-008]: Runtime-library jq rejects unbounded constructs and
+    // search rejects oversized expressions before evaluation.
     let mut svit = Svit::builder("svit://local/native-limits")
         .unwrap()
         .memory("text", value!("bounded"))
-        .builtins(Builtins::new())
+        .ports(Ports::new())
         .reasoner(scripted_reasoner([
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/jq",
-                    "input": {"filter": "def f: f; f", "input": null}
+                    "source": "(define (main input) (jq \"def f: f; f\" input))",
+                    "input": null
                 }),
             ),
             SimTurn::tool_call(
                 "exec",
                 json!({
-                    "path": "/bin/search",
-                    "input": {
-                        "path": "/memory/text",
-                        "pattern": "x".repeat(5 * 1024)
-                    }
+                    "source": "(define (main input) (search \"/memory/text\" input))",
+                    "input": "x".repeat(5 * 1024)
                 }),
             ),
             SimTurn::text("limit observed"),

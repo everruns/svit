@@ -48,16 +48,20 @@ Required for the initial vertical slice.
   the configured nesting depth, and rolls back the complete activation.
 - `TM-DOS-007`: folder entry/text and Turso row/text limits stop materializing
   data at their configured bounds; query execution still needs an outer deadline.
-- `TM-DOS-008`: the common built-in dispatcher rejects oversized extension
-  output; `search` rejects oversized patterns and `jq` rejects
-  recursive or generator constructs before evaluation.
+- `TM-DOS-008`: port input and every persistent or model-visible script result
+  are bounded; the model-catalog scenario proves that an HTTP response larger
+  than the persistent value envelope can be reduced by Svit Lisp `jq` before
+  durable commit. `search` rejects oversized patterns and `jq` rejects
+  recursive or generator constructs before evaluation. Activation-local port
+  response memory remains `L-048`.
 - `TM-DOS-011`: build-time recursive macro expansion fails under the compiler
   execution or call-stack limit.
 - `TM-PERS-001`: resume rejects corrupted uncovered event bytes and corrupted
   recovery checkpoints; a valid checkpoint reconstructs its exact boundary and
   only the newer hash-chained tail is reduced before publication.
-- `TM-ESC-003`: data built-ins accept only a committed process path or
-  explicit JSON; no shell, filesystem, executable, or environment input exists.
+- `TM-ESC-003`: data ports accept only a committed process path or
+  explicit JSON; the Svit Lisp standard library has no shell, filesystem,
+  executable, or environment input.
 - `TM-ESC-004`: build-time script compilation rejects module loading while
   evaluating guest macros and constants under null I/O.
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
@@ -66,7 +70,7 @@ Required for the initial vertical slice.
   allowed fixture request passes through both URL policy and host transport;
   Svit's standard reqwest transport refuses redirects and bounds the streamed
   body.
-- `TM-CAP-005`: `/bin` exposes the exact installed built-in manuals during a
+- `TM-CAP-005`: `/ports` exposes the exact installed port manuals during a
   turn, and resume removes entries whose host grants are no longer configured.
 - `TM-CAP-006`: a host extension executes through bounded explicit JSON and a
   context exposing committed reads without process mutation methods.
@@ -77,7 +81,7 @@ Required for the initial vertical slice.
   not provide distributed ownership; this remains required until leases exist.
 - `TM-EFF-005`: the `llm` command can call only the host-selected driver. A
   persisted model-authored `/lib` script invokes an allowlisted host HTTP
-  built-in exactly once across guest suspension/replay and can consume its
+  port exactly once across guest suspension/replay and can consume its
   result before one commit. A later guest failure still executes HTTP once but
   rolls back guest state; tests do not claim rollback or exactly-once recovery
   for the external effect.
@@ -89,8 +93,6 @@ Required for the initial vertical slice.
 - `TM-AUTH-001`: namespace tests must show that discoverable process identity
   is marked unauthenticated and cannot be modified through the memory mutation
   API.
-- `TM-CAP-002`: an attenuated agent capability omits generic mutation tools,
-  denies unlisted scripts before activation, and still executes an allowed script.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
   Rust backtraces, pointers, and raw interpreter debug output.
 - `TM-AUD-001`: guest writes to `/thread` fail without mutation; bounded thread

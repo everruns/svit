@@ -42,9 +42,9 @@ pub enum Error {
     #[error("spawned child process is unavailable")]
     ChildUnavailable,
 
-    /// A built-in cannot access its read-only process context.
-    #[error("built-in process context is unavailable")]
-    BuiltinContextUnavailable,
+    /// A port cannot access its read-only process context.
+    #[error("port process context is unavailable")]
+    PortContextUnavailable,
 
     /// A host-supplied resource configuration exceeds the runtime's hard
     /// safety envelope.

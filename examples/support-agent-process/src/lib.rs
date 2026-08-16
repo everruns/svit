@@ -1,4 +1,4 @@
-//! Transactional support-agent-process workflow used by the builtin example.
+//! Transactional support-agent-process workflow used by the port example.
 
 use serde_json::json;
 use std::path::PathBuf;

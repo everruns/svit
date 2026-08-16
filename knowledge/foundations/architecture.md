@@ -45,7 +45,7 @@ Host application ----> Svit
                         +----> snapshot / restore / fork
                         +----> buffered message intents (not delivery)
                         +----> bounded folder / Turso query mounts
-                        +----> opt-in `/bin` built-ins
+                        +----> opt-in `/ports` ports
 ```
 
 The trusted core owns validation, resource accounting, transaction boundaries,
@@ -67,7 +67,7 @@ the boundary.
 | Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 | Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, recovery checkpoints, snapshots, forks, cuts, and fencing |
-| Built-ins | `/bin` process search and JSON filtering with explicit host grants for HTTP, model calls, and local child execution |
+| Ports | `/ports` host integrations with explicit grants for HTTP, model calls, and local child execution |
 
 The current workspace implements the process and process-owned reasoning loop in
 the `svit` crate and provides an interactive three-panel tree host in Lampa.
@@ -114,17 +114,18 @@ as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
 read projection only after storage accepts the process transaction. Reasoning
 events are appended values within those transactions, never a second
-persistence stream. Svit's standard built-in setup derives local
-`search` and `jq` plus model-backed `llm` and `spawn` from the instance
+persistence stream. Svit's standard port setup derives model-backed `llm` and
+`spawn` from the instance
 configuration. Lampa selects that standard registry without additional HTTP
 policy; selecting the complete research registry explicitly grants unrestricted
 HTTP destinations. Svit supplies the reusable redirect-denying,
-response-bounded transport, and other hosts may attenuate destinations with an
-allowlist.
+in-memory HTTP response transport, and other hosts may attenuate destinations
+with an allowlist. A script must reduce a large response before it crosses the
+persistent or model-visible value boundary; file-backed transfer remains open.
 Each append commits the canonical event before its derived message is observed;
 it never grows the Svit process root. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a
-partially configured reasoning loop. Built-ins remain separate because their
+partially configured reasoning loop. Ports remain separate because their
 external authority is not part of reasoning identity.
 The process address is the Svit identity; there is no independent runtime name.
 Svit owns the base system prompt, including the generic requirement to use
@@ -145,10 +146,9 @@ the entire process tree and do not change committed process state.
 `SvitEvent::Committed` is deliberately notification-only. The atomic
 `Svit::read_versioned` operation returns an owned value/version observation and
 keeps the mutable process tree behind the Svit abstraction.
-`svit::Svit` assembles the Everruns host internally and can expose the complete
-generic process surface or attenuate a model to discovery, reads, and a
-host-selected script allowlist. Everruns owns the public model, provider, and
-loop contracts; Svit owns process state and its canonical event-log adapter.
+`svit::Svit` assembles the Everruns host internally and exposes one complete
+generic process surface. Everruns owns the public model, provider, and loop
+contracts; Svit owns process state and its canonical event-log adapter.
 Module names may evolve; the ownership boundary is the decision.
 
 ## Trusted-boundary rules
@@ -173,14 +173,14 @@ Module names may evolve; the ownership boundary is the decision.
    model tools cannot rewrite or materialize history in process memory.
 10. Inbox messages commit before loop notification and are acknowledged only
     after the corresponding turn succeeds.
-11. Svit Lisp may select a host-attached built-in by its `/bin` path. Svit
-   suspends and replays the guest around that async call; the built-in itself
+11. Svit Lisp may select a host-attached port by its `/ports` path. Svit
+   suspends and replays the guest around that async call; the port itself
    remains trusted host code receiving typed values and a read-only committed
-   process context, not a shell or implicit ambient host interface. Built-ins
+   process context, not a shell or implicit ambient host interface. Ports
    receive only the HTTP, model, or child-runner authority explicitly supplied
    by the host; custom implementations are trusted native extensions and may
    capture additional explicit host capabilities.
-12. `/bin` is generated from attached built-ins and refreshed
+12. `/ports` is generated from attached ports and refreshed
    on resume. It describes runtime availability but never grants authority.
 
 ## Deferred architecture
@@ -198,7 +198,7 @@ between hosts, and production Wasm/OS isolation are outside this slice. See
 - Serializing Lisp stacks, closures, quotations, or foreign values was rejected. Only
   committed Svit values and script source cross activation boundaries.
 - Treating external effects as transactional was rejected because rollback
-  cannot undo them. A Svit-hosted script may invoke a built-in immediately;
+  cannot undo them. A Svit-hosted script may invoke a port immediately;
   Svit records its result while replaying pure guest segments and commits guest
   state only after the complete script succeeds. Durable effect receipts and
   exactly-once recovery remain deferred.

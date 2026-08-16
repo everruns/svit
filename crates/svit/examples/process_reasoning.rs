@@ -39,7 +39,6 @@ async fn main() -> SvitResult<()> {
             }]),
             SimTurn::Assistant("remembered blue".into()),
         ]))
-        .allow_scripts(["remember_color"])
         .build()
         .await?;
 

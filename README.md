@@ -24,12 +24,12 @@ implements the current reason/act loop behind the Svit API.
 - **Transactional actions.** A bounded script activation commits memory,
   scripts, and buffered message intents together, or commits nothing.
 - **One inspectable memory tree.** Agents use the same absolute-path interface
-  for committed state, named scripts, built-ins, and mounted resources.
+  for committed state, named scripts, ports, and mounted resources.
 - **Portable execution state.** A committed process can be snapshotted,
   restored, persisted, or forked into an independently mutable child.
 - **Explicit authority.** Guest scripts receive no ambient filesystem, network,
   environment, process, module, clock, or randomness access. Host capabilities
-  are attached explicitly through mounts and built-ins.
+  are attached explicitly through mounts and ports.
 
 ## Quick start
 
@@ -135,10 +135,10 @@ the `/memory` node:
 
 ```text
 /
-├── thread/      durable prompt, messages, and canonical reasoning events
+├── thread/      bounded durable session metadata
 ├── memory/      durable application values
 ├── lib/         named Svit Lisp scripts
-├── bin/         manuals for host-attached built-ins
+├── ports/       manuals for host-attached ports
 ├── inbox/       durable input queue
 ├── mounts/      virtual host resources under explicit grants
 ├── tasks/       reserved in the current slice
@@ -154,12 +154,15 @@ read(path)            read one value
 stat(path)            inspect kind, access, locality, and source facts
 write(path, value)    commit a memory, script, or granted mount write
 remove(path)          commit a removal
-exec(path, input)     run a named script or host-attached built-in
+exec(path, input)     run a named script
 ```
 
-Model-facing `exec` and Svit-hosted Lisp resolve `/lib` scripts and installed
-`/bin` built-ins. A script uses `(exec "/bin/name" input)` with the path first.
-Svit suspends and replays pure guest execution around an async built-in call,
+Model-facing `exec` runs transient Svit Lisp source through the interpreter or
+a named `/lib` script. Installed host ports are discoverable under
+`/ports`; a Svit Lisp script invokes one with `(port-call "name" input)`. It constructs a
+persistent object—such as a fixed port request—with
+`(value-map "key" value ...)`.
+Svit suspends and replays pure guest execution around an async port call,
 then commits guest state once. The external effect itself is immediate and
 cannot be rolled back. Bare `Process::exec` resolves only `/lib`, because
 serializable process state never owns native host authority.
@@ -193,6 +196,9 @@ On restart, use `store.resume("svit://local/persisted/demo")` in place of
 Every process mutation belongs to one canonical `ProcessTransaction` stream.
 Conversation events are a separate paged `EventLog`; `/thread` contains only
 bounded session metadata, never a materialized conversation copy.
+Lampa projects bounded, read-only `events` and `messages` entries beneath its
+`/thread` tree for inspection; they are not process values and never enter a
+snapshot or guest context.
 Resume validates transaction hashes, versions, mutations, and resulting root
 hashes without rerunning guest code. The Turso adapter atomically maintains one
 validated recovery checkpoint per process, so ordinary resume reconstructs
@@ -223,8 +229,8 @@ OPENAI_API_KEY=... cargo run --locked -p lampa
 Lampa shows the conversation, including intermediate model commentary and
 compact tool status rows, alongside the complete memory tree and selected
 value. It mounts the current directory read-only as `/mounts/cwd`, renders
-messages and text previews as Markdown, and exposes the standard `/bin`
-built-ins. Drag over transcript text to select and copy it; `Ctrl+C` copies an
+messages and text previews as Markdown, and exposes the standard `/ports`
+ports. Drag over transcript text to select and copy it; `Ctrl+C` copies an
 active selection again and otherwise exits Lampa.
 
 Each instance has its own database. Reuse an instance ID to resume its committed
@@ -277,14 +283,18 @@ finite floats, text, arrays, and text-keyed maps. See the
 [runtime contract](knowledge/runtimes/lisp-runtime.md) and
 [examples](examples/README.md).
 
-## Built-ins and mounts
+## Ports and mounts
 
-`Builtins::new()` installs bounded local `search` and `jq` implementations.
-Hosts may explicitly add HTTP, model, child-process, or custom built-ins. The
-`/bin` entries are manuals for the attached implementations, not serialized
+`Ports::new()` creates an empty host port registry. Svit Lisp has pure
+standard-library functions for local data work: `(jq filter value)` transforms
+JSON, while `(search path pattern)` searches the transactional process tree.
+`jq` accepts structured JSON, JSON text, or an HTTP response and evaluates JSON
+response bodies directly; it returns the array of values emitted by the filter.
+Hosts may explicitly add HTTP, model, child-process, or custom ports. The
+`/ports` entries are manuals for the attached implementations, not serialized
 authority. Restoring a process does not recreate a missing host grant.
 
-`Builtins::standard()` additionally selects `http`, `llm`, and `spawn`. It is a
+`Ports::standard()` selects `http`, `llm`, and `spawn`. It is a
 research-host preset and explicitly grants unrestricted HTTP destinations;
 hosts that need destination policy should apply `with_http_allowlist` or
 install a narrower transport.
@@ -303,7 +313,7 @@ Implemented now:
 - bounded values, execution, diagnostics, snapshots, restore, and forks;
 - local Turso persistence with one canonical process-transaction stream;
 - virtual folder and materialized-query mounts;
-- explicit built-ins for local data work and host-granted external effects;
+- explicit ports for local data work and host-granted external effects;
 - VAST control semantics with process-version preconditions and conflicts;
 - runnable acceptance examples and adversarial invariant tests.
 

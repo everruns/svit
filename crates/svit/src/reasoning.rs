@@ -1,6 +1,6 @@
 //! Process-owned reasoning loop implemented by Everruns.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -27,8 +27,8 @@ use tokio::task::JoinHandle;
 
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
-    Activation, ActivationHook, Builtins, Change, DurableProcessHandle, Limits, MessageIntent,
-    Mount, Process, ProcessBuilder, ProcessId, Reasoner, Script, Value,
+    Activation, ActivationHook, Change, DurableProcessHandle, Limits, MessageIntent, Mount, Ports,
+    Process, ProcessBuilder, ProcessId, Reasoner, Script, Value,
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
@@ -36,7 +36,7 @@ const THREAD_STATE_FORMAT: &str = "svit-thread@8";
 const PREVIOUS_THREAD_STATE_FORMAT: &str = "svit-thread@7";
 const LEGACY_THREAD_STATE_FORMAT: &str = "svit-thread@6";
 const PROCESS_CAPABILITY_ID: &str = "svit";
-const SVIT_SYSTEM_PROMPT: &str = "You operate one Svit process. Use its memory tree for durable facts and working state. Svit owns the process state, conversation history, and execution environment. Use only the capabilities supplied by Svit, and treat committed process state as authoritative. The exec tool runs /bin built-ins and /lib scripts. Inside Svit Lisp, use (exec \"/bin/name\" input) or (exec \"/lib/name\" input), with the path first. A /bin call uses only the built-in authority attached by this Svit host and is an immediate external effect, even when invoked from a transactional script.";
+const SVIT_SYSTEM_PROMPT: &str = "You operate one Svit process. Use its memory tree for durable facts and working state. Svit owns the process state, conversation history, and execution environment. Use only the capabilities supplied by Svit, and treat committed process state as authoritative. Discover host integrations under /ports.\n\nScripts are first-class process state under /lib. Discover /lib before reusing a script. For an operation you expect to reuse, write a named /lib script with source and documentation; source must define (main input), then run it through exec with path /lib/name and input. For a one-off operation, provide source directly to exec. Either form can call ports and write durable state. Inside Svit Lisp, use (exec \"/lib/name\" input) for a script and (port-call \"name\" input) for an attached port. A port response is activation-local; reduce large JSON with (jq filter value), then persist or return only the small derived result. Use (search path pattern) to search the process tree; jq and search return Svit values and do not appear under /ports. Construct persistent object inputs with (value-map \"key\" value ...), for example (port-call \"http\" (value-map \"method\" \"GET\" \"url\" \"https://example.com\")). A port call uses only the authority attached by this Svit host and is an immediate external effect, even when invoked from a transactional script.";
 
 /// Failure to construct or run a Svit process.
 #[derive(Debug, Error)]
@@ -127,6 +127,12 @@ pub enum SvitEvent {
     /// reports an external change to a mounted source, so a client caching
     /// mount content can still be stale (`L-045`).
     Committed(Change),
+    /// One canonical reasoning event appended to this Svit's paged history.
+    ///
+    /// This is an observation, not a node in the process memory tree. Hosts
+    /// can retain a bounded presentation window or retrieve one through
+    /// [`Svit::recent_events`].
+    CanonicalEvent(Box<Event>),
     /// One message projected from a newly committed canonical reasoning event.
     Message(Box<Message>),
     /// The independently running process loop stopped with a sanitized failure.
@@ -142,7 +148,7 @@ pub struct Svit {
     command_sender: mpsc::UnboundedSender<RuntimeCommand>,
     command_receiver: Option<mpsc::UnboundedReceiver<RuntimeCommand>>,
     outbox_sender: broadcast::Sender<Message>,
-    builtins: Option<Builtins>,
+    ports: Option<Ports>,
     event_sender: broadcast::Sender<SvitEvent>,
     task: Option<JoinHandle<SvitResult<ReasoningLoop>>>,
 }
@@ -191,6 +197,9 @@ struct SvitEventSink {
 
 impl EventSink for SvitEventSink {
     fn try_send(&self, event: Event) -> Result<(), EventSinkError> {
+        let _ = self
+            .sender
+            .send(SvitEvent::CanonicalEvent(Box::new(event.clone())));
         if let Some(message) = message_from_event(&event) {
             let _ = self.sender.send(SvitEvent::Message(Box::new(message)));
         }
@@ -255,10 +264,10 @@ impl ProcessState {
         &self,
         path: &str,
         input: Value,
-        builtins: Option<&Builtins>,
+        ports: Option<&Ports>,
     ) -> crate::Result<Activation> {
         let mut owner = self.owner.lock().await;
-        let activation = owner.exec(path, input, builtins).await?;
+        let activation = owner.exec(path, input, ports).await?;
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &activation_change(&activation));
         Ok(activation)
@@ -304,9 +313,9 @@ impl ProcessState {
         Ok(())
     }
 
-    async fn replace_builtins(&self, value: Value) -> crate::Result<()> {
+    async fn replace_ports(&self, value: Value) -> crate::Result<()> {
         let mut owner = self.owner.lock().await;
-        let change = owner.replace_builtins(value).await?;
+        let change = owner.replace_ports(value).await?;
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &change);
         Ok(())
@@ -340,6 +349,46 @@ impl ProcessState {
         }
         if limit == 0 || limit > 4096 {
             return Err(crate::Error::ResourceLimitExceeded("recent thread events"));
+        }
+        let page_limit = EventReadLimit::default();
+        let mut request = EventReadRequest::new(session_id, page_limit);
+        let mut recent = std::collections::VecDeque::with_capacity(limit);
+        loop {
+            let page = self
+                .event_log
+                .read_page(request)
+                .await
+                .map_err(|error| crate::Error::InvalidPersistence(error.to_string()))?;
+            for event in page.events {
+                if recent.len() == limit {
+                    recent.pop_front();
+                }
+                recent.push_back(event);
+            }
+            let Some(cursor) = page.next_cursor else {
+                return Ok(recent.into());
+            };
+            request = EventReadRequest::from_cursor(cursor, page_limit);
+        }
+    }
+
+    async fn recent_thread_messages(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        if self.durable {
+            return self
+                .owner
+                .lock()
+                .await
+                .recent_thread_messages(session_id, limit)
+                .await;
+        }
+        if limit == 0 || limit > 4096 {
+            return Err(crate::Error::ResourceLimitExceeded(
+                "recent thread messages",
+            ));
         }
         let page_limit = EventReadLimit::default();
         let mut request = EventReadRequest::new(session_id, page_limit);
@@ -397,16 +446,21 @@ trait ProcessOwner: Send + Sync {
         &mut self,
         path: &str,
         input: Value,
-        builtins: Option<&Builtins>,
+        ports: Option<&Ports>,
     ) -> crate::Result<Activation>;
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change>;
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change>;
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change>;
     async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change>;
     async fn replace_thread_state(&mut self, value: Value) -> crate::Result<Change>;
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change>;
+    async fn replace_ports(&mut self, value: Value) -> crate::Result<Change>;
     async fn import_thread_events(&self, events: &[Event]) -> crate::Result<()>;
     async fn recent_thread_events(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>>;
+    async fn recent_thread_messages(
         &self,
         session_id: SessionId,
         limit: usize,
@@ -436,14 +490,14 @@ impl ProcessOwner for VolatileProcess {
         &mut self,
         path: &str,
         input: Value,
-        builtins: Option<&Builtins>,
+        ports: Option<&Ports>,
     ) -> crate::Result<Activation> {
-        match builtins {
-            Some(builtins) => {
+        match ports {
+            Some(ports) => {
                 let context = Arc::new(Mutex::new(self.process.clone()));
                 let prepared = self
                     .process
-                    .prepare_exec_with_builtins(path, input, builtins, context)
+                    .prepare_exec_with_ports(path, input, ports, context)
                     .await?;
                 Ok(self.process.commit_prepared(prepared))
             }
@@ -471,8 +525,8 @@ impl ProcessOwner for VolatileProcess {
         self.process.replace_thread_state(value)
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
-        self.process.replace_builtins(value)
+    async fn replace_ports(&mut self, value: Value) -> crate::Result<Change> {
+        self.process.replace_ports(value)
     }
 
     async fn import_thread_events(&self, _events: &[Event]) -> crate::Result<()> {
@@ -480,6 +534,14 @@ impl ProcessOwner for VolatileProcess {
     }
 
     async fn recent_thread_events(
+        &self,
+        _session_id: SessionId,
+        _limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        Err(crate::Error::PersistenceUnavailable)
+    }
+
+    async fn recent_thread_messages(
         &self,
         _session_id: SessionId,
         _limit: usize,
@@ -517,10 +579,10 @@ where
         &mut self,
         path: &str,
         input: Value,
-        builtins: Option<&Builtins>,
+        ports: Option<&Ports>,
     ) -> crate::Result<Activation> {
-        match builtins {
-            Some(builtins) => self.handle.exec_with_builtins(path, input, builtins).await,
+        match ports {
+            Some(ports) => self.handle.exec_with_ports(path, input, ports).await,
             None => self.handle.exec(path, input).await,
         }
     }
@@ -545,8 +607,8 @@ where
         self.handle.replace_thread_state(value).await
     }
 
-    async fn replace_builtins(&mut self, value: Value) -> crate::Result<Change> {
-        self.handle.replace_builtins(value).await
+    async fn replace_ports(&mut self, value: Value) -> crate::Result<Change> {
+        self.handle.replace_ports(value).await
     }
 
     async fn import_thread_events(&self, events: &[Event]) -> crate::Result<()> {
@@ -559,6 +621,14 @@ where
         limit: usize,
     ) -> crate::Result<Vec<Event>> {
         self.handle.recent_thread_events(session_id, limit).await
+    }
+
+    async fn recent_thread_messages(
+        &self,
+        session_id: SessionId,
+        limit: usize,
+    ) -> crate::Result<Vec<Event>> {
+        self.handle.recent_thread_messages(session_id, limit).await
     }
 
     async fn continues_thread_history(&self, session_id: SessionId) -> crate::Result<bool> {
@@ -592,7 +662,7 @@ impl Svit {
     fn from_reasoning(reasoning: ReasoningLoop) -> Self {
         let process = reasoning.process();
         let session_id = reasoning.session_id;
-        let builtins = reasoning.builtins.clone();
+        let ports = reasoning.ports.clone();
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let (outbox_sender, _) = broadcast::channel(64);
         let event_sender = process.event_sender();
@@ -604,7 +674,7 @@ impl Svit {
             command_sender,
             command_receiver: Some(command_receiver),
             outbox_sender,
-            builtins,
+            ports,
             event_sender,
             task: None,
         }
@@ -684,9 +754,20 @@ impl Svit {
     pub async fn recent_messages(&self, limit: usize) -> SvitResult<Vec<Message>> {
         let events = self
             .process
-            .recent_thread_events(self.session_id, limit)
+            .recent_thread_messages(self.session_id, limit)
             .await?;
         Ok(events.iter().filter_map(message_from_event).collect())
+    }
+
+    /// Reads a bounded window of the newest canonical reasoning events.
+    ///
+    /// Event history is host infrastructure rather than serialized `/thread`
+    /// state, so this never grows process snapshots or startup work.
+    pub async fn recent_events(&self, limit: usize) -> SvitResult<Vec<Event>> {
+        Ok(self
+            .process
+            .recent_thread_events(self.session_id, limit)
+            .await?)
     }
 
     /// Returns the process identifier.
@@ -780,12 +861,9 @@ impl Svit {
         Ok(self.process.remove(path).await?)
     }
 
-    /// Executes one process script, including its host-attached built-in calls.
+    /// Executes one process script, including its host-attached port calls.
     pub async fn exec(&mut self, path: &str, input: Value) -> SvitResult<Activation> {
-        Ok(self
-            .process
-            .exec(path, input, self.builtins.as_ref())
-            .await?)
+        Ok(self.process.exec(path, input, self.ports.as_ref()).await?)
     }
 
     /// Returns committed Lisp message intents from process state.
@@ -828,18 +906,18 @@ impl Svit {
             .fork(child_id)?)
     }
 
-    /// Returns completed child addresses created through `/bin/spawn`.
+    /// Returns completed child addresses created through `/ports/spawn`.
     pub fn child_ids(&self) -> Vec<ProcessId> {
-        self.builtins
+        self.ports
             .as_ref()
-            .map(Builtins::child_ids)
+            .map(Ports::child_ids)
             .unwrap_or_default()
     }
 
-    /// Snapshots one completed child created through `/bin/spawn`.
+    /// Snapshots one completed child created through `/ports/spawn`.
     pub fn child_snapshot(&self, id: &ProcessId) -> SvitResult<Option<Vec<u8>>> {
         Ok(self
-            .builtins
+            .ports
             .as_ref()
             .map(|tools| tools.child_snapshot(id))
             .transpose()?
@@ -980,19 +1058,9 @@ impl SvitResumeBuilder {
         self
     }
 
-    /// Restricts the model to discovery, reads, and named scripts.
-    pub fn allow_scripts<I, S>(mut self, scripts: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.reasoning = self.reasoning.allow_scripts(scripts);
-        self
-    }
-
-    /// Installs host-provided `/bin` built-ins with explicit grants.
-    pub fn builtins(mut self, builtins: Builtins) -> Self {
-        self.reasoning = self.reasoning.builtins(builtins);
+    /// Installs host-provided `/ports` ports with explicit grants.
+    pub fn ports(mut self, ports: Ports) -> Self {
+        self.reasoning = self.reasoning.ports(ports);
         self
     }
 
@@ -1059,19 +1127,9 @@ impl SvitBuilder {
         self
     }
 
-    /// Restricts the model to discovery, reads, and named scripts.
-    pub fn allow_scripts<I, S>(mut self, scripts: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.reasoning = self.reasoning.allow_scripts(scripts);
-        self
-    }
-
-    /// Installs host-provided `/bin` built-ins with explicit grants.
-    pub fn builtins(mut self, builtins: Builtins) -> Self {
-        self.reasoning = self.reasoning.builtins(builtins);
+    /// Installs host-provided `/ports` ports with explicit grants.
+    pub fn ports(mut self, ports: Ports) -> Self {
+        self.reasoning = self.reasoning.ports(ports);
         self
     }
 
@@ -1089,7 +1147,7 @@ struct ReasoningLoop {
     runtime: InProcessRuntime,
     session_id: SessionId,
     messages: Vec<Message>,
-    builtins: Option<Builtins>,
+    ports: Option<Ports>,
 }
 
 impl ReasoningLoop {
@@ -1131,11 +1189,10 @@ impl ReasoningLoop {
 
 struct ReasoningLoopBuilder {
     process: Option<ProcessState>,
-    access: ReasoningAccess,
     instructions: Option<String>,
     reasoner: Option<Reasoner>,
     max_iterations: Option<usize>,
-    builtins: Option<Builtins>,
+    ports: Option<Ports>,
 }
 
 impl ReasoningLoopBuilder {
@@ -1146,11 +1203,10 @@ impl ReasoningLoopBuilder {
     fn detached() -> Self {
         Self {
             process: None,
-            access: ReasoningAccess::Full,
             instructions: None,
             reasoner: None,
             max_iterations: None,
-            builtins: None,
+            ports: None,
         }
     }
 
@@ -1181,18 +1237,8 @@ impl ReasoningLoopBuilder {
         self
     }
 
-    fn allow_scripts<I, S>(mut self, scripts: I) -> Self
-    where
-        I: IntoIterator<Item = S>,
-        S: Into<String>,
-    {
-        self.access =
-            ReasoningAccess::ReadExec(Arc::new(scripts.into_iter().map(Into::into).collect()));
-        self
-    }
-
-    fn builtins(mut self, builtins: Builtins) -> Self {
-        self.builtins = Some(builtins);
+    fn ports(mut self, ports: Ports) -> Self {
+        self.ports = Some(ports);
         self
     }
 
@@ -1201,10 +1247,10 @@ impl ReasoningLoopBuilder {
         let reasoner = self.reasoner.ok_or(SvitError::MissingReasoner)?;
         let model = reasoner.model_spec();
         let provider = reasoner.provider().clone();
-        let builtins = self
-            .builtins
-            .map(|builtins| {
-                builtins
+        let ports = self
+            .ports
+            .map(|ports| {
+                ports
                     .resolve(&reasoner)
                     .map_err(|_| SvitError::HttpTransportUnavailable)
             })
@@ -1241,15 +1287,15 @@ impl ReasoningLoopBuilder {
             // or unrelated history; durable forks retain their immutable prefix.
             Some(_) => SessionId::new(),
         };
-        let builtin_catalog = builtins
+        let port_catalog = ports
             .as_ref()
-            .map(Builtins::catalog)
+            .map(Ports::catalog)
             .unwrap_or_else(|| json!({}));
-        // THREAT[TM-CAP-005]: `/bin` is refreshed from current host
+        // THREAT[TM-CAP-005]: `/ports` is refreshed from current host
         // configuration before Everruns can run a turn. Durable owners commit
         // both this projection and thread initialization before publication.
         process
-            .replace_builtins(Value::from_json(builtin_catalog)?)
+            .replace_ports(Value::from_json(port_catalog)?)
             .await?;
         initialize_thread_state_from(
             &process,
@@ -1263,8 +1309,7 @@ impl ReasoningLoopBuilder {
 
         let capability = ProcessCapability {
             process: process.clone(),
-            access: self.access,
-            builtins: builtins.clone(),
+            ports: ports.clone(),
         };
         let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
         let compaction_config = AgentCapabilityConfig::new("compaction").config(json!({
@@ -1313,8 +1358,8 @@ impl ReasoningLoopBuilder {
                     Some(max_iterations) => session
                         .agent_max_iterations(max_iterations)
                         .session_max_iterations(max_iterations),
-                    // Everruns owns loop policy. Svit only attenuates it when
-                    // the embedding host explicitly requests an override.
+                    // Everruns owns loop policy. Svit forwards an explicit
+                    // embedding-host iteration limit without redefining it.
                     None => session,
                 }
             })
@@ -1327,7 +1372,7 @@ impl ReasoningLoopBuilder {
             runtime,
             session_id,
             messages: Vec::new(),
-            builtins,
+            ports,
         })
     }
 }
@@ -1346,16 +1391,9 @@ fn compose_system_prompt(process_id: &ProcessId, instructions: Option<&str>) -> 
 }
 
 #[derive(Clone)]
-enum ReasoningAccess {
-    Full,
-    ReadExec(Arc<BTreeSet<String>>),
-}
-
-#[derive(Clone)]
 struct ProcessCapability {
     process: ProcessState,
-    access: ReasoningAccess,
-    builtins: Option<Builtins>,
+    ports: Option<Ports>,
 }
 
 #[async_trait]
@@ -1373,35 +1411,23 @@ impl Capability for ProcessCapability {
     }
 
     async fn system_prompt_contribution(&self, _context: &SystemPromptContext) -> Option<String> {
-        let mut contribution = match &self.access {
-            ReasoningAccess::Full => {
-                "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, stat, write, remove, and exec. Discover built-in manuals \
-                 under /bin; run /bin built-ins or /lib scripts through exec. External resources \
-                 appear under /mounts and are resolved one node at a time: discover a mount \
-                 directory, stat a node to learn its kind, granted access, and locality (cache, \
-                 local, or remote), then read the leaf you need. /thread contains bounded \
-                 host-managed session metadata; canonical conversation history is not mutable \
-                 process memory."
-                    .into()
-            }
-            ReasoningAccess::ReadExec(allowed_scripts) => format!(
-                "Your durable thread and workspace belong to one Svit process. Use absolute paths \
-                 with discover, read, stat, and exec. Discover built-in manuals under /bin. \
-                 External resources appear under /mounts and are resolved one node at a time \
-                 through discover, stat, and read. Run only these /lib scripts through exec: {}. \
-                 /thread contains bounded host-managed session metadata; canonical conversation \
-                 history is not mutable process memory.",
-                allowed_scripts
-                    .iter()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        };
-        if self.builtins.is_some() {
+        let mut contribution =
+            "Your durable thread and workspace belong to one Svit process. Use absolute paths \
+             with discover, read, stat, write, remove, and exec. Reusable Lisp scripts live \
+             under /lib: write a source/documentation record there, then call exec with its \
+             path when the operation is reusable. For a one-off operation, provide source \
+             directly to exec; either form can call ports and write durable state. Discover host ports under \
+             /ports and invoke them from Svit Lisp with port-call; reduce a large port \
+             response with jq before writing or returning its small result. External resources \
+             appear under /mounts and are resolved one node at a time: discover a mount \
+             directory, stat a node to learn its kind, granted access, and locality (cache, \
+             local, or remote), then read the leaf you need. /thread contains bounded \
+             host-managed session metadata; canonical conversation history is not mutable \
+             process memory."
+                .to_owned();
+        if self.ports.is_some() {
             contribution.push_str(
-                " Built-ins are listed under /bin and invoked only through exec(path, input).",
+                " Ports are listed under /ports and invoked only through Svit Lisp port-call.",
             );
         }
         Some(contribution)
@@ -1501,67 +1527,52 @@ fn process_tools(capability: &ProcessCapability) -> Vec<FunctionTool> {
     );
 
     let exec_process = capability.process.clone();
-    let builtins = capability.builtins.clone();
-    let allowed_scripts = match &capability.access {
-        ReasoningAccess::Full => None,
-        ReasoningAccess::ReadExec(scripts) => Some(Arc::clone(scripts)),
-    };
+    let ports = capability.ports.clone();
     let exec = FunctionTool::new(
         "exec",
-        "Execute an absolute /lib script or host-attached /bin built-in path. Inside Svit Lisp, \
-         use `(exec \"/bin/name\" input)` or `(exec \"/lib/name\" input)`, with the path first.",
+        "Execute Svit Lisp through the interpreter. Use a /lib path for reusable scripts, or \
+         provide source for a one-off script; both forms may call ports and write durable state. \
+         Source must define `main(input)`. Inside Lisp, \
+         use `(port-call \"name\" input)` for a host integration, `(exec \"/lib/name\" input)` \
+         for another script, `(jq filter value)` for JSON transformation, and `(search path pattern)` \
+         for process-tree search.",
         json!({
             "type": "object",
-            "properties": {"path": {"type": "string"}, "input": {}},
-            "required": ["path", "input"]
+            "properties": {"source": {"type": "string"}, "path": {"type": "string"}, "input": {}},
+            "required": ["input"]
         }),
         move |arguments| {
             let process = exec_process.clone();
-            let allowed_scripts = allowed_scripts.clone();
-            let builtins = builtins.clone();
+            let ports = ports.clone();
             async move {
-                let path = arguments["path"].as_str().unwrap_or_default();
-                if let Some(name) = path.strip_prefix("/bin/") {
-                    let Some(builtins) = builtins else {
-                        return tool_error("built-in not found");
-                    };
-                    return builtins
-                        .execute(name, arguments["input"].clone(), process.view())
-                        .await;
-                }
-                let Some(script) = path.strip_prefix("/lib/") else {
-                    return tool_error("exec path must be under /lib or /bin");
+                let target = if let Some(source) = arguments["source"].as_str() {
+                    crate::process::inline_script_path(source)
+                } else {
+                    let path = arguments["path"].as_str().unwrap_or_default();
+                    if path.strip_prefix("/lib/").is_none() {
+                        return tool_error("exec requires source or a /lib path");
+                    }
+                    path.into()
                 };
-                // THREAT[TM-CAP-002]: Check host-selected script authority
-                // before guest input conversion or process activation.
-                if allowed_scripts
-                    .as_ref()
-                    .is_some_and(|scripts| !scripts.contains(script))
-                {
-                    return tool_error(format!("script is not allowed: {script}"));
-                }
                 execute_script(
                     &process,
-                    path,
+                    &target,
                     arguments["input"].clone(),
-                    builtins.as_ref(),
+                    ports.as_ref(),
                 )
                 .await
             }
         },
     );
 
-    if matches!(capability.access, ReasoningAccess::ReadExec(_)) {
-        return vec![discover, read, stat, exec];
-    }
-
     let write_process = capability.process.clone();
     let write = FunctionTool::new(
         "write",
-        "Transactionally write process memory or one named Svit Lisp script. A /lib value is \
+        "Transactionally write process memory or one named reusable Svit Lisp script. A /lib \
+         value is \
          `{\"source\": \"(define (main input) ...)\", \"documentation\": \"...\"}`. \
-         Scripts compose executables with `(exec \"/bin/name\" input)` or \
-         `(exec \"/lib/name\" input)`, with the path first.",
+         Scripts invoke host ports with `(port-call \"name\" input)` and compose /lib scripts \
+         with `(exec \"/lib/name\" input)`, with the path first.",
         json!({
             "type": "object",
             "properties": {"path": {"type": "string"}, "value": {}},
@@ -1623,13 +1634,13 @@ async fn execute_script(
     process: &ProcessState,
     path: &str,
     input: JsonValue,
-    builtins: Option<&Builtins>,
+    ports: Option<&Ports>,
 ) -> ToolExecutionResult {
     let input = match Value::from_json(input) {
         Ok(input) => input,
         Err(error) => return tool_error(error.to_string()),
     };
-    let activation = match process.exec(path, input, builtins).await {
+    let activation = match process.exec(path, input, ports).await {
         Ok(activation) => activation,
         Err(error) => return tool_error(error.to_string()),
     };

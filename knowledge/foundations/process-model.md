@@ -26,7 +26,7 @@ The initial process exposes one conventional namespace:
 │   ├── system_prompt       Svit-owned prompt composed for this address
 │   ├── messages            conversation projected from events
 │   └── events              canonical Everruns event stream
-├── bin/                    host-managed built-in manuals
+├── ports/                  host-managed port descriptors
 ├── memory/                 process-owned durable values
 ├── lib/                    named scripts
 ├── tasks/                  reserved; empty in this slice
@@ -49,15 +49,15 @@ one committed logical root. Building a `Svit` replaces the bare process's null
 and its owning process address. The process address is the Svit
 identity; Svit does not accept a second runtime name. Instructions are wrapped in
 an `<instructions>` block. Restore retains them, while fork recomposes the base
-prompt for the child address. Construction also refreshes `/bin` from the
-attached built-in registry.
+prompt for the child address. Construction also refreshes `/ports` from the
+attached port registry.
 Canonical events are stored in a paged host `EventLog` partitioned by process
 and session. `/thread` is bounded metadata, so snapshots and restore never
 decode conversation history. Everruns compaction checkpoints replace older
 model context with a compact payload plus a raw suffix while leaving canonical
 events queryable.
-Each `/bin/<name>` record contains a description, input schema, output contract,
-effect class, and limits. `/thread` and `/bin` are guest-readable but writable only through the
+Each `/ports/<name>` record contains a contract version, description, input schema,
+output contract, effect class, and limits. `/thread` and `/ports` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
 through host APIs; `/tasks` and `/children` remain reserved and empty.
 ### Mounts
@@ -147,28 +147,28 @@ mount directories, reserved nodes, and system state at every map or array
 depth. `read` returns a value. `stat` returns the facts record for one node.
 `write` and `remove` modify `/memory`, one typed `/lib/<name>` entry, or a leaf
 below a mount whose descriptor grants writes. The `/mounts` descriptor map
-itself and `/bin` are read-only. The model-facing `exec` resolves
-`/lib/<name>` to a transactional script activation or `/bin/<name>` to an
-attached built-in. Svit-hosted Lisp resolves the same two namespaces; bare
-`Process::exec` accepts only `/lib` because a serializable process does not own
-host built-in authority. `/bin` entries are descriptive and never grant
-authority.
+itself and `/ports` are read-only. The model-facing `exec` resolves only
+`/lib/<name>` to a transactional script activation. Svit Lisp uses
+`(exec "/lib/name" input)` and `(port-call "name" input)` respectively.
+Bare `Process::exec` accepts only
+`/lib` because a serializable process does not own host port authority.
+`/ports` entries are descriptive and never grant authority.
 
-When Lisp reaches `/bin`, Svit suspends the guest, executes the exact
-host-attached built-in once, and restarts the script with prior built-in results
+When Lisp reaches `port-call`, Svit suspends the guest, executes the exact
+host-attached port once, and restarts the script with prior port results
 recorded for deterministic replay. Guest execution segments share one
-wall-time budget, while time awaiting the external built-in does not consume
+wall-time budget, while time awaiting the external port does not consume
 that VM budget. Successful completion commits the final transactional working
 copy once. A later script failure rolls back memory, scripts, mounts, messages,
 and version, but cannot roll back the already completed external effect.
 Nested `/lib` execution continues to share its transaction, deadline, output
-limits, and independent nesting-depth limit. Built-in calls share the same
+limits, and independent nesting-depth limit. Port calls share the same
 bounded call count.
-Builders, snapshot, restore, and fork are
-lifecycle operations outside this process contract. `svit::Svit` preserves
-these names and semantics rather than introducing another vocabulary. A host
-may attenuate a model to a subset of operations and named scripts; that host
-policy is not stored in or forgeable through process memory.
+Builders, snapshot, restore, and fork are lifecycle operations outside this
+process contract. `svit::Svit` preserves these names and semantics rather than
+introducing another vocabulary. Svit exposes the complete process surface to
+its reasoning loop; host authority enters only through explicitly attached
+ports and mounts.
 
 Addresses are validated identifiers. In the initial local-only slice they name
 message destinations and fork identities but do not imply global routing,
@@ -179,40 +179,48 @@ authentication, reachability, or delivery.
 capability. A fork replaces this address and records its parent's address under
 `/system/lineage/parent` without mutating the parent.
 
-## Built-ins
+## Ports
 
-A host may attach `Builtins` to the process-owned runtime. The default
-registry installs `/bin/search` and `/bin/jq`. `search` traverses text values
-below one committed process path with bounded regular-expression matching.
-`jq` evaluates a bounded filter over explicit JSON supplied to `exec`.
-Neither built-in has a filesystem, environment, process launcher, or ambient
-network interface. Hosts can register one `Builtin` by name or contribute a
-bundle through `BuiltinExtension`; later registrations replace earlier
+A host may attach `Ports` to the process-owned runtime. The default registry is
+empty. Hosts can register one `Port` by name or contribute a
+bundle through `PortExtension`; later registrations replace earlier
 entries of the same name. The frozen registry generates both dispatch and the
-catalog, so no separate name switch or manual table can drift.
+catalog, so no separate name switch or descriptor table can drift.
 
-When Svit is built, it derives `/bin` from the exact built-in implementations
+## Standard library
+
+Svit Lisp owns local deterministic data functions rather than projecting them as
+host capabilities. `(jq filter value)` evaluates a bounded jq filter and returns
+an array containing every value emitted by that filter. `(search path pattern)`
+uses bounded regular-expression matching over the activation's process tree,
+walking mounts lazily. `jq` accepts structured JSON, JSON text, and the JSON
+response envelope returned by the HTTP port; for the envelope form it evaluates
+the body when that body is JSON. `value-map`, `value-array`, `value-get`, and
+Ketos arithmetic follow the same rule: they are part of the interpreter surface,
+are available in every activation, and do not appear under `/ports`.
+
+When Svit is built, it derives `/ports` from the exact port implementations
 attached by the host. A snapshot records the last catalog for
 inspection, but resume refreshes it from current host configuration before a
 turn; catalog values never authorize execution. Generic operations such as
-`discover`, `read`, and `exec` are API operations and do not appear under `/bin`.
-Every implementation receives bounded explicit JSON and a `BuiltinContext`
+`discover`, `read`, and `exec` are API operations and do not appear under `/ports`.
+Every implementation receives bounded explicit JSON and a `PortContext`
 exposing committed reads and discovery without process
 mutation. Extension implementations are trusted native host code and may use
 only additional capabilities deliberately captured during registration.
 
-`Builtins::standard()` selects the complete set through the same `builtins`
+`Ports::standard()` selects the complete set through the same `ports`
 builder operation used for every host registry. Selecting the standard set is
 an explicit unrestricted HTTP-destination grant; `with_http_allowlist`
-attenuates it. At Svit construction it installs `search` and `jq`, derives
-`llm` and `spawn` from the same instance `Reasoner`, and resolves `http` with
-Svit's bounded transport. Later built-in registrations win, including a
+attenuates it. At Svit construction it derives `llm` and `spawn` from the same
+instance `Reasoner`, and resolves `http` with
+Svit's bounded transport. Later port registrations win, including a
 specialized host's explicit `http` adapter. Presentation hosts do not
 reconstruct this registry after the Svit instance is built.
 
-Hosts choosing a smaller built-in set have no HTTP authority unless they add
-it explicitly with an allowlist and transport. `/bin/llm` uses one
-host-selected model and driver. A built-in remains a host dispatch rather than
+Hosts choosing a smaller port set have no HTTP authority unless they add
+it explicitly with an allowlist and transport. `/ports/llm` uses one
+host-selected model and driver. A port remains a host dispatch rather than
 a nested activation, even when Lisp invokes it, and its external effects cannot
 be rolled back with process state.
 
@@ -221,7 +229,7 @@ notification that state changed; it does not expose the process root. The host
 may then obtain an owned value and its version atomically through the Svit
 contract. The shared process-state transition boundary publishes exactly once
 after refreshing its read projection, so host writes, reasoning-tool writes,
-inbox transitions, Lisp activations, reasoning events, metadata, and built-in
+inbox transitions, Lisp activations, reasoning events, metadata, and port
 catalog changes follow the same observer contract. A failure event contains
 only a sanitized diagnostic. These transient notifications do not replace the
 durable process event log or outbox. Each `events` or `outbox` call creates an
@@ -230,12 +238,12 @@ underlying channel implementation.
 
 `Svit::persisted` accepts any `DurableProcessHandle`. One serialized owner
 routes host writes, removals, Lisp activations, inbox transitions, reasoning
-events, and built-in catalog refresh through that handle. The owner publishes a
+events, and port catalog refresh through that handle. The owner publishes a
 new cloned read projection only after the adapter accepts the transition, so a
 CAS conflict cannot leak an uncommitted candidate into Svit reads or tools.
 
-The child executable is named `spawn`, distinguishing process creation from
-executing an existing `/bin` or `/lib` path. It takes a child address and task,
+The child port is named `spawn`, distinguishing process creation from
+executing a `/lib` script. It takes a child address and task,
 forks the last committed parent state, uses a separately supplied child model driver, runs one child turn, and
 retains the completed child in the parent runtime's local registry. `child_ids` and
 `child_snapshot` expose that registry to the Rust host. It is not stored under
@@ -340,7 +348,7 @@ memory contents.
 one process. Everruns implements the current loop behind the Svit API. Each
 durable Everruns event is validated and committed through Svit's paired paged
 `EventLog`; callers do not construct an external Everruns runtime and attach
-Svit as a tool. `/thread` is session metadata only. `/bin` is refreshed from the currently attached built-in registry, so
+Svit as a tool. `/thread` is session metadata only. `/ports` is refreshed from the currently attached port registry, so
 a restored process does not retain execution authority omitted by the new host.
 The model can inspect manuals through ordinary `discover` and `read` operations.
 

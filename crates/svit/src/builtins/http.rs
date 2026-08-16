@@ -6,14 +6,11 @@ use async_trait::async_trait;
 use serde_json::{Value as JsonValue, json};
 use url::Url;
 
-use super::{
-    Builtin, BuiltinContext, BuiltinManual, BuiltinResult, MAX_TOOL_INPUT_BYTES,
-    MAX_TOOL_OUTPUT_BYTES,
-};
+use super::{MAX_PORT_INPUT_BYTES, Port, PortContext, PortDescriptor, PortResult};
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// An outbound HTTP request after built-in policy validation.
+/// An outbound HTTP request after port policy validation.
 ///
 /// This type intentionally does not implement `Debug`: headers may contain
 /// credentials supplied by the model or embedding host.
@@ -27,8 +24,6 @@ pub struct HttpRequest {
     pub headers: BTreeMap<String, String>,
     /// Optional request body.
     pub body: Option<Vec<u8>>,
-    /// Maximum accepted response body size.
-    pub max_response_bytes: usize,
 }
 
 /// A response returned by a host-owned HTTP transport.
@@ -51,7 +46,7 @@ pub enum HttpTransportError {
     /// The request timed out.
     #[error("request timed out")]
     Timeout,
-    /// The response exceeded its configured bound.
+    /// The host transport declined an oversized response.
     #[error("response too large")]
     TooLarge,
     /// Connectivity failed without exposing dependency diagnostics.
@@ -59,7 +54,7 @@ pub enum HttpTransportError {
     Transport,
 }
 
-/// Host-owned connectivity for `/bin/http`.
+/// Host-owned connectivity for `/ports/http`.
 ///
 /// Custom implementations are trusted policy code. They must not follow a
 /// redirect without enforcing authority equivalent to the original allowlist.
@@ -69,7 +64,7 @@ pub trait HttpTransport: Send + Sync {
     async fn send(&self, request: HttpRequest) -> Result<HttpResponse, HttpTransportError>;
 }
 
-/// Reusable bounded HTTP transport for the `/bin/http` built-in.
+/// Reusable HTTP transport for the `/ports/http` port.
 ///
 /// Redirects are returned to the caller rather than followed so a validated
 /// URL cannot redirect outside its host-selected allowlist.
@@ -129,13 +124,6 @@ impl HttpTransport for ReqwestHttpTransport {
             .await
             .map_err(|_| HttpTransportError::Transport)?
         {
-            if body
-                .len()
-                .checked_add(chunk.len())
-                .is_none_or(|size| size > request.max_response_bytes)
-            {
-                return Err(HttpTransportError::TooLarge);
-            }
             body.extend_from_slice(&chunk);
         }
 
@@ -147,7 +135,7 @@ impl HttpTransport for ReqwestHttpTransport {
     }
 }
 
-/// URL allowlist for hosts that attenuate `/bin/http`.
+/// URL allowlist for hosts that attenuate `/ports/http`.
 #[derive(Clone, Default)]
 pub struct HttpAllowlist {
     roots: Vec<Url>,
@@ -199,12 +187,12 @@ impl HttpPolicy {
     }
 }
 
-pub(super) struct HttpBuiltin {
+pub(super) struct HttpPort {
     policy: HttpPolicy,
     transport: Arc<dyn HttpTransport>,
 }
 
-impl HttpBuiltin {
+impl HttpPort {
     pub(super) fn new(allowlist: HttpAllowlist, transport: impl HttpTransport + 'static) -> Self {
         Self {
             policy: HttpPolicy::Allowlist(allowlist),
@@ -221,9 +209,9 @@ impl HttpBuiltin {
 }
 
 #[async_trait]
-impl Builtin for HttpBuiltin {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new(
+impl Port for HttpPort {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new(
             "Make one HTTP request through the configured host transport.",
             json!({
                 "type": "object",
@@ -241,54 +229,50 @@ impl Builtin for HttpBuiltin {
         .limits([
             "Host HTTP policy and transport apply.",
             "30 second timeout.",
-            "256 KiB request and response bodies.",
+            "256 KiB request body; response remains activation-local until the script reduces it.",
         ])
     }
 
-    async fn execute(&self, _context: BuiltinContext, arguments: JsonValue) -> BuiltinResult {
+    async fn execute(&self, _context: PortContext, arguments: JsonValue) -> PortResult {
         let method = arguments["method"].as_str().unwrap_or_default();
         if !matches!(method, "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD") {
-            return BuiltinResult::error("unsupported HTTP method");
+            return PortResult::error("unsupported HTTP method");
         }
         let raw_url = arguments["url"].as_str().unwrap_or_default();
         let url = match Url::parse(raw_url) {
             Ok(url) if matches!(url.scheme(), "http" | "https") => url,
-            _ => return BuiltinResult::error("invalid HTTP URL"),
+            _ => return PortResult::error("invalid HTTP URL"),
         };
         // THREAT[TM-CAP-004]: The host selects unrestricted or attenuated HTTP
-        // when it constructs the built-in registry; model input cannot widen it.
+        // when it constructs the port registry; model input cannot widen it.
         if !self.policy.allows(&url) {
-            return BuiltinResult::error("HTTP URL is not allowed");
+            return PortResult::error("HTTP URL is not allowed");
         }
         let headers = match parse_headers(arguments.get("headers")) {
             Ok(headers) => headers,
-            Err(error) => return BuiltinResult::error(error),
+            Err(error) => return PortResult::error(error),
         };
         let body = arguments["body"]
             .as_str()
             .map(|body| body.as_bytes().to_vec());
         if body
             .as_ref()
-            .is_some_and(|body| body.len() > MAX_TOOL_INPUT_BYTES)
+            .is_some_and(|body| body.len() > MAX_PORT_INPUT_BYTES)
         {
-            return BuiltinResult::error("HTTP request body limit exceeded");
+            return PortResult::error("HTTP request body limit exceeded");
         }
         let request = HttpRequest {
             method: method.to_owned(),
             url: url.to_string(),
             headers,
             body,
-            max_response_bytes: MAX_TOOL_OUTPUT_BYTES,
         };
         let response = match tokio::time::timeout(HTTP_TIMEOUT, self.transport.send(request)).await
         {
             Ok(Ok(response)) => response,
-            Ok(Err(error)) => return BuiltinResult::error(error.to_string()),
-            Err(_) => return BuiltinResult::error(HttpTransportError::Timeout.to_string()),
+            Ok(Err(error)) => return PortResult::error(error.to_string()),
+            Err(_) => return PortResult::error(HttpTransportError::Timeout.to_string()),
         };
-        if response.body.len() > MAX_TOOL_OUTPUT_BYTES {
-            return BuiltinResult::error(HttpTransportError::TooLarge.to_string());
-        }
         let response_header_bytes = response
             .headers
             .iter()
@@ -297,12 +281,11 @@ impl Builtin for HttpBuiltin {
             });
         if response.headers.len() > 64 || response_header_bytes.is_none_or(|size| size > 64 * 1024)
         {
-            return BuiltinResult::error(HttpTransportError::TooLarge.to_string());
+            return PortResult::error(HttpTransportError::TooLarge.to_string());
         }
         let body = String::from_utf8_lossy(&response.body);
-        BuiltinResult::text(
-            json!({"status": response.status, "headers": response.headers, "body": body})
-                .to_string(),
+        PortResult::success(
+            json!({"status": response.status, "headers": response.headers, "body": body}),
         )
     }
 }
@@ -364,25 +347,25 @@ mod tests {
         assert!(policy.allows(&Url::parse("http://127.0.0.1:8080/status").unwrap()));
     }
 
-    fn serve_once(response: &'static [u8]) -> (String, JoinHandle<()>) {
+    fn serve_once(response: impl Into<Vec<u8>>) -> (String, JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let response = response.into();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
             let mut request = [0; 1024];
             assert!(stream.read(&mut request).unwrap() > 0);
-            stream.write_all(response).unwrap();
+            stream.write_all(&response).unwrap();
         });
         (format!("http://{address}/"), server)
     }
 
-    fn request(url: String, max_response_bytes: usize) -> HttpRequest {
+    fn request(url: String) -> HttpRequest {
         HttpRequest {
             method: "GET".into(),
             url,
             headers: BTreeMap::new(),
             body: None,
-            max_response_bytes,
         }
     }
 
@@ -394,7 +377,7 @@ mod tests {
 
         let response = ReqwestHttpTransport::new()
             .unwrap()
-            .send(request(url, 1024))
+            .send(request(url))
             .await
             .unwrap();
         server.join().unwrap();
@@ -403,17 +386,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reqwest_transport_rejects_oversized_streamed_response() {
-        let (url, server) =
-            serve_once(b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\nConnection: close\r\n\r\nabcdef");
+    async fn reqwest_transport_accepts_response_larger_than_a_process_value() {
+        let body = "x".repeat(2 * 1024 * 1024);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .into_bytes();
+        let (url, server) = serve_once(response);
 
-        let error = ReqwestHttpTransport::new()
+        let response = ReqwestHttpTransport::new()
             .unwrap()
-            .send(request(url, 5))
+            .send(request(url))
             .await
-            .unwrap_err();
+            .unwrap();
         server.join().unwrap();
 
-        assert_eq!(error, HttpTransportError::TooLarge);
+        assert_eq!(response.body.len(), 2 * 1024 * 1024);
     }
 }

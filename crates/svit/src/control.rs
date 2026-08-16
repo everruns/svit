@@ -475,7 +475,7 @@ fn failure(error: Error) -> ControlFailure {
         Error::ControlUnavailable => "control_unavailable",
         Error::InboxConflict => "inbox_conflict",
         Error::ChildUnavailable => "child_unavailable",
-        Error::BuiltinContextUnavailable => "builtin_context_unavailable",
+        Error::PortContextUnavailable => "port_context_unavailable",
         Error::PersistenceNotFound(_) => "persistence_not_found",
         Error::PersistenceAlreadyExists(_) => "persistence_already_exists",
         Error::PersistenceConflict => "persistence_conflict",

@@ -376,14 +376,14 @@ rather than raw interpreter internals:
 - `discover(path)` and `find(path, query)` for state and scripts;
 - `describe(value_or_function)` for schema, documentation, effects, cost, and
   required capabilities;
-- `/system/api` as a read-only machine-readable catalog of built-ins;
+- `/system/api` as a read-only machine-readable catalog of ports;
 - `/system/capabilities` showing usable handles, scope, expiry, and provenance
   without secret material;
 - `/system/limits` showing current and remaining budgets;
 - `/system/lineage` showing snapshot and fork ancestry;
 - source-level stack traces and script hashes on failure.
 
-Raw pointer access, arbitrary bytecode inspection, mutation of built-in
+Raw pointer access, arbitrary bytecode inspection, mutation of port
 metatables, and private-key reflection are not useful forms of self-awareness.
 
 ## 7. Execution and effect protocol
@@ -537,7 +537,7 @@ snapshots, fork references, and cuts. A deterministic reducer
 reconstructs process state without re-executing guest code or external effects.
 The core `DurableProcess` slice and runnable reasoning persistence are
 implemented. Inbox transitions, canonical reasoning events, their message
-projection, built-in refresh, and acknowledgements use ordinary process-tree
+projection, port refresh, and acknowledgements use ordinary process-tree
 transactions. Durable control receipts remain under implementation.
 
 Each event carries its address, stable position, previous record hash, process
@@ -683,10 +683,9 @@ current `InProcessRuntime` executes that composition behind the Svit contract;
 it is an implementation mechanism, not Svit's public runtime abstraction.
 Forking is allowed only at compatible committed boundaries.
 
-Domain workflows may receive an attenuated view of the same vocabulary. The
-support workflow exposes discovery, reads, and `exec` for a host-selected
-script allowlist; generic writes, removes, and unintended scripts remain
-unavailable to the model.
+Domain workflows use the same complete process vocabulary. The support
+workflow relies on its instructions and named scripts for behavior; Svit does
+not add a separate model-operation or script allowlist.
 
 The executable integration lives directly in `svit`. It maps those six generic
 tools to volatile or locally persisted process state and uses an Everruns model

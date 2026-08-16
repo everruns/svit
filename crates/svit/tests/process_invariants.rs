@@ -24,7 +24,7 @@ fn builder_exposes_the_conventional_namespace_and_non_authoritative_identity() {
     assert_eq!(
         process.discover("/").unwrap(),
         [
-            "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks", "thread"
+            "children", "inbox", "lib", "memory", "mounts", "ports", "system", "tasks", "thread"
         ]
     );
     assert_eq!(
@@ -551,12 +551,12 @@ fn nested_exec_depth_is_bounded_without_resetting_the_transaction() {
 }
 
 #[test]
-fn nested_exec_explains_reversed_arguments_and_requires_a_svit_host_for_builtins() {
+fn nested_exec_explains_reversed_arguments_and_port_calls_require_a_svit_host() {
     let mut reversed = Process::builder("svit://local/tests/reversed-exec")
         .unwrap()
         .library(
             "fetch",
-            svit::Script::new("(define (main input) (exec input \"/bin/http\"))"),
+            svit::Script::new("(define (main input) (exec input \"/lib/other\"))"),
         )
         .build()
         .unwrap();
@@ -566,11 +566,11 @@ fn nested_exec_explains_reversed_arguments_and_requires_a_svit_host_for_builtins
         .to_string();
     assert!(error.contains("exec expects (exec path input); arguments appear reversed"));
 
-    let mut host_builtin = Process::builder("svit://local/tests/host-builtin-exec")
+    let mut host_builtin = Process::builder("svit://local/tests/host-port-exec")
         .unwrap()
         .library(
             "fetch",
-            svit::Script::new("(define (main input) (exec \"/bin/http\" input))"),
+            svit::Script::new("(define (main input) (port-call \"http\" input))"),
         )
         .build()
         .unwrap();
@@ -578,7 +578,7 @@ fn nested_exec_explains_reversed_arguments_and_requires_a_svit_host_for_builtins
         .exec("/lib/fetch", value!({"method": "GET"}))
         .unwrap_err()
         .to_string();
-    assert!(error.contains("Svit Lisp /bin execution requires a Svit host"));
+    assert!(error.contains("Svit Lisp port calls require a Svit host"));
 }
 
 #[test]

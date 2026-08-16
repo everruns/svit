@@ -3,16 +3,16 @@ use everruns_test_support::{
 };
 use serde_json::json;
 use svit::{
-    Builtin, BuiltinContext, BuiltinExtension, BuiltinManual, BuiltinResult, Builtins, Message,
-    MessageRole, Reasoner, Svit, SvitResult, value,
+    Message, MessageRole, Port, PortContext, PortDescriptor, PortExtension, PortResult, Ports,
+    Reasoner, Svit, SvitResult, value,
 };
 
 struct ReadCommitted;
 
 #[svit::async_trait]
-impl Builtin for ReadCommitted {
-    fn manual(&self) -> BuiltinManual {
-        BuiltinManual::new(
+impl Port for ReadCommitted {
+    fn descriptor(&self) -> PortDescriptor {
+        PortDescriptor::new(
             "Read one committed process value.",
             json!({
                 "type": "object",
@@ -24,20 +24,20 @@ impl Builtin for ReadCommitted {
         .output("The committed JSON value at path.")
     }
 
-    async fn execute(&self, context: BuiltinContext, input: serde_json::Value) -> BuiltinResult {
+    async fn execute(&self, context: PortContext, input: serde_json::Value) -> PortResult {
         let path = input["path"].as_str().unwrap_or_default();
         match context.read(path) {
-            Ok(Some(value)) => BuiltinResult::success(value.to_json()),
-            Ok(None) => BuiltinResult::error("path not found"),
-            Err(error) => BuiltinResult::error(error.to_string()),
+            Ok(Some(value)) => PortResult::success(value.to_json()),
+            Ok(None) => PortResult::error("path not found"),
+            Err(error) => PortResult::error(error.to_string()),
         }
     }
 }
 
 struct ProcessReaders;
 
-impl BuiltinExtension for ProcessReaders {
-    fn builtins(&self) -> Vec<(String, Box<dyn Builtin>)> {
+impl PortExtension for ProcessReaders {
+    fn ports(&self) -> Vec<(String, Box<dyn Port>)> {
         vec![("read-committed".into(), Box::new(ReadCommitted))]
     }
 }
@@ -55,7 +55,7 @@ fn scripted_reasoner(turns: Vec<SimTurn>) -> Reasoner {
 
 #[tokio::main]
 async fn main() -> SvitResult<()> {
-    let mut svit = Svit::builder("svit://local/example/builtins")?
+    let mut svit = Svit::builder("svit://local/example/ports")?
         .memory(
             "releases",
             value!([
@@ -63,34 +63,31 @@ async fn main() -> SvitResult<()> {
                 {"version": "0.2", "ready": true}
             ]),
         )
-        .builtins(Builtins::new().extension(ProcessReaders))
+        .ports(Ports::new().extension(ProcessReaders))
         .reasoner(scripted_reasoner(vec![
             SimTurn::ToolCalls(vec![SimToolCall {
                 name: "exec".into(),
                 arguments: json!({
-                    "path": "/bin/search",
-                    "input": {"path": "/memory/releases", "pattern": "^0\\.2$"}
+                    "source": "(define (main input) (search \"/memory/releases\" \"0.2\"))",
+                    "input": null
                 }),
                 id: None,
             }]),
             SimTurn::ToolCalls(vec![SimToolCall {
                 name: "exec".into(),
                 arguments: json!({
-                    "path": "/bin/jq",
-                    "input": {
-                        "filter": ".[] | select(.ready) | .version",
-                        "input": [
-                            {"version": "0.1", "ready": false},
-                            {"version": "0.2", "ready": true}
-                        ]
-                    }
+                    "source": "(define (main input) (jq \".[] | select(.ready) | .version\" input))",
+                    "input": [
+                        {"version": "0.1", "ready": false},
+                        {"version": "0.2", "ready": true}
+                    ]
                 }),
                 id: None,
             }]),
             SimTurn::ToolCalls(vec![SimToolCall {
                 name: "exec".into(),
                 arguments: json!({
-                    "path": "/bin/read-committed",
+                    "source": "(define (main input) (port-call \"read-committed\" input))",
                     "input": {"path": "/memory/releases/1/version"}
                 }),
                 id: None,
@@ -124,6 +121,6 @@ async fn main() -> SvitResult<()> {
         svit.messages()?.last().expect("assistant response").text(),
         Some("release 0.2 is ready")
     );
-    println!("builtins ready_release=0.2");
+    println!("ports ready_release=0.2");
     Ok(())
 }

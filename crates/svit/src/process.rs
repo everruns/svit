@@ -17,6 +17,7 @@ use ketos::{
     Integer as KetosInteger, Interpreter as KetosInterpreter, RestrictConfig, RestrictError,
     Value as KetosValue,
 };
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -26,13 +27,18 @@ use crate::hooks::{
 };
 use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView};
 use crate::persistence::Mutation;
-use crate::{Builtins, Error, Limits, Result, Script, Value};
+use crate::{Error, Limits, Ports, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 7;
+const SNAPSHOT_FORMAT: u32 = 8;
+const INLINE_SCRIPT_PREFIX: &str = "\0svit:inline:";
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
 const MAX_THREAD_BYTES: usize = 64 * 1024 * 1024;
 const MAX_THREAD_RECORDS: usize = 100_000;
+const MAX_SEARCH_PATTERN_BYTES: usize = 4 * 1024;
+const MAX_SEARCH_RESULTS: usize = 100;
+const MAX_SEARCH_OUTPUT_BYTES: usize = 256 * 1024;
+const MAX_SEARCH_MOUNT_NODES: usize = 2048;
 
 /// Stable logical address of one Svit process.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -606,22 +612,22 @@ impl Process {
         )
     }
 
-    /// Replaces the host-managed built-in catalog under `/bin`.
-    pub(crate) fn replace_builtins(&mut self, value: Value) -> Result<Change> {
-        let builtins = root_map(&value)?;
-        for name in builtins.keys() {
+    /// Replaces the host-managed port catalog under `/ports`.
+    pub(crate) fn replace_ports(&mut self, value: Value) -> Result<Change> {
+        let ports = root_map(&value)?;
+        for name in ports.keys() {
             validate_script_name(name)?;
         }
         value.validate(&self.limits, false)?;
         let mut root = root_map(self.root.as_ref())?.clone();
-        if root.get("bin") == Some(&value) {
+        if root.get("ports") == Some(&value) {
             return Ok(Change::notification(self.version, Vec::new()));
         }
-        root.insert("bin".into(), value.clone());
+        root.insert("ports".into(), value.clone());
         self.commit(
             Value::Map(root),
             vec![Mutation::Set {
-                path: "/bin".into(),
+                path: "/ports".into(),
                 value,
             }],
             Vec::new(),
@@ -650,9 +656,7 @@ impl Process {
     }
 
     pub(crate) fn prepare_exec(&self, path: &str, input: Value) -> Result<PreparedActivation> {
-        let script = library_path(path)?
-            .ok_or_else(|| Error::InvalidPath(path.into()))?
-            .to_owned();
+        let (script, event_script) = activation_script(path, &self.limits)?;
         let version_before = self.version;
         let mut request = Ok(ActivationRequest {
             script: script.clone(),
@@ -674,8 +678,8 @@ impl Process {
 
         let event_script = request
             .as_ref()
-            .map(|request| request.script.clone())
-            .unwrap_or_else(|_| script);
+            .map(|request| display_script(&request.script))
+            .unwrap_or(event_script);
         let result = request.and_then(|request| {
             let mut candidate = self.clone();
             candidate
@@ -708,16 +712,14 @@ impl Process {
         result
     }
 
-    pub(crate) async fn prepare_exec_with_builtins(
+    pub(crate) async fn prepare_exec_with_ports(
         &self,
         path: &str,
         input: Value,
-        builtins: &Builtins,
+        ports: &Ports,
         context: Arc<Mutex<Process>>,
     ) -> Result<PreparedActivation> {
-        let script = library_path(path)?
-            .ok_or_else(|| Error::InvalidPath(path.into()))?
-            .to_owned();
+        let (script, event_script) = activation_script(path, &self.limits)?;
         let version_before = self.version;
         let mut request = Ok(ActivationRequest {
             script: script.clone(),
@@ -736,8 +738,8 @@ impl Process {
 
         let event_script = request
             .as_ref()
-            .map(|request| request.script.clone())
-            .unwrap_or_else(|_| script);
+            .map(|request| display_script(&request.script))
+            .unwrap_or(event_script);
         let result = async {
             let request = request?;
             let mut replay = Vec::new();
@@ -756,28 +758,28 @@ impl Process {
                             version_before,
                         });
                     }
-                    ExecStep::Builtin(call, elapsed) => {
+                    ExecStep::Port(call, elapsed) => {
                         execution_time = execution_time
                             .checked_sub(elapsed)
                             .ok_or(Error::ExecutionLimitExceeded)?;
-                        let Some(name) = call.path.strip_prefix("/bin/") else {
+                        let Some(name) = call.path.strip_prefix("/ports/") else {
                             return Err(Error::InvalidPath(call.path));
                         };
                         // THREAT[TM-CAP-004] THREAT[TM-EFF-005]: The guest can
-                        // select only a built-in installed by this Svit host.
+                        // select only a port installed by this Svit host.
                         // The call is immediate and recorded for deterministic
                         // replay of the remaining pure script segments; it is
                         // never represented as committed or restorable authority.
-                        let output = builtins
+                        let output = ports
                             .execute_value(name, call.input.to_json(), context.clone())
                             .await
                             .map_err(|error| {
                                 Error::Script(sanitize_diagnostic(format!(
-                                    "built-in {} failed: {error}",
+                                    "port {} failed: {error}",
                                     call.path
                                 )))
                             })?;
-                        replay.push(BuiltinReplay {
+                        replay.push(PortReplay {
                             path: call.path,
                             input: call.input,
                             output: Value::from_json(output)?,
@@ -1012,8 +1014,8 @@ impl Process {
             Duration::from_millis(self.limits.max_execution_millis),
         )? {
             ExecStep::Complete(activation, mutations) => Ok((activation, mutations)),
-            ExecStep::Builtin(_, _) => Err(Error::Script(
-                "Svit Lisp /bin execution requires a Svit host".into(),
+            ExecStep::Port(_, _) => Err(Error::Script(
+                "Svit Lisp port calls require a Svit host".into(),
             )),
         }
     }
@@ -1021,7 +1023,7 @@ impl Process {
     fn exec_inner_step(
         &mut self,
         request: ActivationRequest,
-        builtin_replay: Vec<BuiltinReplay>,
+        port_replay: Vec<PortReplay>,
         execution_time: Duration,
     ) -> Result<ExecStep> {
         request.input.validate(&self.limits, false)?;
@@ -1036,7 +1038,7 @@ impl Process {
             Arc::clone(&self.mounts),
             self.limits.clone(),
             execution_time,
-            builtin_replay,
+            port_replay,
         );
         let execution_started = Instant::now();
         let execution = catch_unwind(AssertUnwindSafe(|| {
@@ -1051,14 +1053,14 @@ impl Process {
         .map_err(|_| Error::Script("Lisp interpreter failed".into()))?;
         let output = match execution {
             Ok(output) => {
-                if !state.builtin_replay_complete()? {
-                    return Err(Error::Script("built-in replay diverged".into()));
+                if !state.port_replay_complete()? {
+                    return Err(Error::Script("port replay diverged".into()));
                 }
                 output
             }
-            Err(error) => match state.pending_builtin()? {
+            Err(error) => match state.pending_port()? {
                 Some(call) => {
-                    return Ok(ExecStep::Builtin(call, execution_started.elapsed()));
+                    return Ok(ExecStep::Port(call, execution_started.elapsed()));
                 }
                 None => return Err(error),
             },
@@ -1159,7 +1161,7 @@ impl Process {
 
 enum ExecStep {
     Complete(Activation, Vec<Mutation>),
-    Builtin(BuiltinCall, Duration),
+    Port(PortCall, Duration),
 }
 
 #[cfg_attr(not(feature = "persistence-turso"), allow(dead_code))]
@@ -1208,7 +1210,7 @@ fn initial_root(
 ) -> Value {
     Value::Map(BTreeMap::from([
         ("thread".into(), Value::Null),
-        ("bin".into(), Value::empty_map()),
+        ("ports".into(), Value::empty_map()),
         ("children".into(), Value::empty_map()),
         ("inbox".into(), Value::Array(Vec::new())),
         (
@@ -1239,7 +1241,7 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
         != BTreeSet::from([
-            "thread", "bin", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
+            "thread", "ports", "children", "inbox", "lib", "memory", "mounts", "system", "tasks",
         ])
     {
         return Err(Error::InvalidSnapshot(
@@ -1267,14 +1269,14 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
         limits,
     )?;
 
-    let bin = root_map(
-        root.get("bin")
-            .ok_or_else(|| Error::InvalidSnapshot("missing /bin".into()))?,
+    let ports = root_map(
+        root.get("ports")
+            .ok_or_else(|| Error::InvalidSnapshot("missing /ports".into()))?,
     )?;
-    for name in bin.keys() {
+    for name in ports.keys() {
         validate_script_name(name)?;
     }
-    Value::Map(bin.clone()).validate(limits, false)?;
+    Value::Map(ports.clone()).validate(limits, false)?;
 
     let memory = root
         .get("memory")
@@ -1620,6 +1622,31 @@ fn library_path(path: &str) -> Result<Option<&str>> {
     Ok(Some(name))
 }
 
+/// Resolves either a durable `/lib` entry or transient source passed through
+/// the Svit execution boundary. Inline source never enters the process root.
+fn activation_script(path: &str, limits: &Limits) -> Result<(String, String)> {
+    if let Some(source) = path.strip_prefix(INLINE_SCRIPT_PREFIX) {
+        validate_script_source("inline", source, limits)?;
+        return Ok((format!("{INLINE_SCRIPT_PREFIX}{source}"), "<inline>".into()));
+    }
+    let script = library_path(path)?
+        .ok_or_else(|| Error::InvalidPath(path.into()))?
+        .to_owned();
+    Ok((script.clone(), script))
+}
+
+pub(crate) fn inline_script_path(source: &str) -> String {
+    format!("{INLINE_SCRIPT_PREFIX}{source}")
+}
+
+fn display_script(script: &str) -> String {
+    if script.starts_with(INLINE_SCRIPT_PREFIX) {
+        "<inline>".into()
+    } else {
+        script.into()
+    }
+}
+
 fn script_from_write_value(value: Value) -> Result<Script> {
     match value {
         Value::Script(script) => Ok(script),
@@ -1721,7 +1748,7 @@ struct RuntimeState {
     messages: Arc<Mutex<Vec<StagedMessage>>>,
     library_changes: Arc<Mutex<LibraryChanges>>,
     mount_writes: Arc<Mutex<Vec<MountWrite>>>,
-    builtin_replay: Arc<Mutex<BuiltinReplayState>>,
+    port_replay: Arc<Mutex<PortReplayState>>,
     mounts: Arc<MountRegistry>,
     limits: Limits,
     deadline: Instant,
@@ -1736,25 +1763,25 @@ struct MountWrite {
 }
 
 #[derive(Clone)]
-struct BuiltinReplay {
+struct PortReplay {
     path: String,
     input: Value,
     output: Value,
 }
 
-struct BuiltinReplayState {
-    completed: Vec<BuiltinReplay>,
+struct PortReplayState {
+    completed: Vec<PortReplay>,
     cursor: usize,
-    pending: Option<BuiltinCall>,
+    pending: Option<PortCall>,
 }
 
 #[derive(Clone)]
-struct BuiltinCall {
+struct PortCall {
     path: String,
     input: Value,
 }
 
-enum BuiltinResolution {
+enum PortResolution {
     Output(Value),
     Pending,
 }
@@ -1766,7 +1793,7 @@ impl RuntimeState {
         mounts: Arc<MountRegistry>,
         limits: Limits,
         execution_time: Duration,
-        builtin_replay: Vec<BuiltinReplay>,
+        port_replay: Vec<PortReplay>,
     ) -> Self {
         Self {
             committed_root: Arc::new(committed_root),
@@ -1776,8 +1803,8 @@ impl RuntimeState {
             messages: Arc::new(Mutex::new(Vec::new())),
             library_changes: Arc::new(Mutex::new(Vec::new())),
             mount_writes: Arc::new(Mutex::new(Vec::new())),
-            builtin_replay: Arc::new(Mutex::new(BuiltinReplayState {
-                completed: builtin_replay,
+            port_replay: Arc::new(Mutex::new(PortReplayState {
+                completed: port_replay,
                 cursor: 0,
                 pending: None,
             })),
@@ -1787,28 +1814,28 @@ impl RuntimeState {
         }
     }
 
-    fn resolve_builtin(&self, path: String, input: Value) -> Result<BuiltinResolution> {
-        let mut replay = lock(&self.builtin_replay)?;
+    fn resolve_port(&self, path: String, input: Value) -> Result<PortResolution> {
+        let mut replay = lock(&self.port_replay)?;
         if let Some(completed) = replay.completed.get(replay.cursor).cloned() {
             if completed.path != path || completed.input != input {
-                return Err(Error::Script("built-in replay diverged".into()));
+                return Err(Error::Script("port replay diverged".into()));
             }
             replay.cursor += 1;
-            return Ok(BuiltinResolution::Output(completed.output));
+            return Ok(PortResolution::Output(completed.output));
         }
         if replay.completed.len() >= self.limits.max_exec_depth {
-            return Err(Error::ResourceLimitExceeded("built-in calls"));
+            return Err(Error::ResourceLimitExceeded("port calls"));
         }
-        replay.pending = Some(BuiltinCall { path, input });
-        Ok(BuiltinResolution::Pending)
+        replay.pending = Some(PortCall { path, input });
+        Ok(PortResolution::Pending)
     }
 
-    fn pending_builtin(&self) -> Result<Option<BuiltinCall>> {
-        Ok(lock(&self.builtin_replay)?.pending.clone())
+    fn pending_port(&self) -> Result<Option<PortCall>> {
+        Ok(lock(&self.port_replay)?.pending.clone())
     }
 
-    fn builtin_replay_complete(&self) -> Result<bool> {
-        let replay = lock(&self.builtin_replay)?;
+    fn port_replay_complete(&self) -> Result<bool> {
+        let replay = lock(&self.port_replay)?;
         Ok(replay.cursor == replay.completed.len())
     }
 
@@ -2015,7 +2042,7 @@ impl ForeignValue for GuestPersistent {
 
 #[derive(Clone, Debug)]
 enum GuestFailure {
-    BuiltinPending,
+    PortPending,
     Execution,
     InvalidPath(String),
     InvalidValue(String),
@@ -2026,7 +2053,7 @@ enum GuestFailure {
 impl fmt::Display for GuestFailure {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BuiltinPending => formatter.write_str("built-in execution suspended"),
+            Self::PortPending => formatter.write_str("port execution suspended"),
             Self::Execution => formatter.write_str("activation execution limit exceeded"),
             Self::InvalidPath(message) | Self::InvalidValue(message) | Self::Script(message) => {
                 formatter.write_str(message)
@@ -2045,17 +2072,25 @@ fn run_guest_script(
     limits: &Limits,
     remaining_exec_depth: usize,
 ) -> Result<Value> {
-    validate_script_name(name)?;
-    let script = state
-        .script(name)?
-        .ok_or_else(|| Error::ScriptNotFound(name.into()))?;
+    let (source, source_path) = match name.strip_prefix(INLINE_SCRIPT_PREFIX) {
+        Some(source) => (source.to_owned(), "/activation/inline.svit-script".into()),
+        None => {
+            validate_script_name(name)?;
+            let script = state
+                .script(name)?
+                .ok_or_else(|| Error::ScriptNotFound(name.into()))?;
+            (
+                script.source().to_owned(),
+                format!("/lib/{name}.svit-script"),
+            )
+        }
+    };
     let interpreter = secure_lisp(state, input, limits, remaining_exec_depth)?;
     // Svit owns the language contract and virtual source identity; Ketos is
     // an interpreter implementation detail.
-    let source_path = format!("/lib/{name}.svit-script");
     let execution = (|| {
         interpreter
-            .run_code(script.source(), Some(source_path.clone()))
+            .run_code(&source, Some(source_path.clone()))
             .map_err(|error| map_ketos_error(&interpreter, error))?;
         if interpreter.get_value("main").is_none() {
             return Err(Error::Script("script must define main(input)".into()));
@@ -2173,6 +2208,29 @@ fn install_guest_api(
         persistent_to_ketos(&found).map_err(guest_from_svit)
     });
 
+    let jq_limits = limits.clone();
+    install_guest_function(interpreter, "jq", move |_, args| {
+        expect_arity(args, 2, "jq")?;
+        let filter = guest_string(&args[0], "jq filter")?;
+        // A port response can be larger than the durable value envelope. Jq is
+        // a reduction boundary: it may inspect that activation-local value,
+        // but its result still validates before it can cross into guest state.
+        let input = jq_input_from_ketos(&args[1], &jq_limits).map_err(guest_from_svit)?;
+        let output = crate::stdlib::jq(&filter, &input, &jq_limits).map_err(guest_from_svit)?;
+        persistent_to_ketos(&output).map_err(guest_from_svit)
+    });
+
+    let search_state = state.clone();
+    let search_limits = limits.clone();
+    install_guest_function(interpreter, "search", move |_, args| {
+        expect_arity(args, 2, "search")?;
+        let path = guest_string(&args[0], "search path")?;
+        let pattern = guest_string(&args[1], "search pattern")?;
+        let output = search_runtime(&search_state, &path, &pattern, &search_limits)
+            .map_err(guest_from_svit)?;
+        persistent_to_ketos(&output).map_err(guest_from_svit)
+    });
+
     let state_for_discover = state.clone();
     install_guest_function(interpreter, "discover", move |_, args| {
         expect_arity(args, 1, "discover")?;
@@ -2281,18 +2339,6 @@ fn install_guest_api(
             }
             Err(error) => return Err(error),
         };
-        if path.starts_with("/bin/") {
-            let input = persistent_from_ketos(&args[1], &exec_limits).map_err(guest_from_svit)?;
-            return match state_for_exec
-                .resolve_builtin(path, input)
-                .map_err(guest_from_svit)?
-            {
-                BuiltinResolution::Output(output) => {
-                    persistent_to_ketos(&output).map_err(guest_from_svit)
-                }
-                BuiltinResolution::Pending => Err(KetosError::custom(GuestFailure::BuiltinPending)),
-            };
-        }
         let name = library_path(&path)
             .map_err(guest_from_svit)?
             .ok_or_else(|| guest_from_svit(Error::InvalidPath(path.clone())))?;
@@ -2312,6 +2358,24 @@ fn install_guest_api(
                     .map_err(guest_from_svit)?;
                 Err(guest_from_svit(error))
             }
+        }
+    });
+
+    let state_for_port = state.clone();
+    let port_limits = limits.clone();
+    install_guest_function(interpreter, "port-call", move |_, args| {
+        expect_arity(args, 2, "port-call")?;
+        let name = guest_string(&args[0], "port-call name")?;
+        if name.is_empty() || name.contains('/') {
+            return guest_error("port-call name must name one port");
+        }
+        let input = persistent_from_ketos(&args[1], &port_limits).map_err(guest_from_svit)?;
+        match state_for_port
+            .resolve_port(format!("/ports/{name}"), input)
+            .map_err(guest_from_svit)?
+        {
+            PortResolution::Output(output) => persistent_to_ketos(&output).map_err(guest_from_svit),
+            PortResolution::Pending => Err(KetosError::custom(GuestFailure::PortPending)),
         }
     });
 
@@ -2375,6 +2439,157 @@ where
         .add_value_with_name(name, |name| KetosValue::new_foreign_fn(name, function));
 }
 
+/// Searches the activation's process view without crossing the host boundary.
+fn search_runtime(
+    state: &RuntimeState,
+    path: &str,
+    pattern: &str,
+    limits: &Limits,
+) -> Result<Value> {
+    if pattern.len() > MAX_SEARCH_PATTERN_BYTES {
+        return Err(Error::Script("search pattern limit exceeded".into()));
+    }
+    let regex = RegexBuilder::new(pattern)
+        .size_limit(1 << 20)
+        .build()
+        .map_err(|_| Error::Script("invalid search pattern".into()))?;
+    // THREAT[TM-DOS-008] THREAT[TM-DOS-010]: Search uses Rust's linear-time
+    // regex engine and bounds pattern size, output, results, and lazy mount
+    // traversal. It is a runtime function, never a host port.
+    let mut matches = Vec::new();
+    let mut output_bytes = 0;
+    let complete = if path == "/mounts" || path.starts_with("/mounts/") {
+        let mut budget = MAX_SEARCH_MOUNT_NODES;
+        collect_mount_search_matches(
+            state,
+            path,
+            &regex,
+            &mut matches,
+            &mut output_bytes,
+            &mut budget,
+        )?
+    } else {
+        let view = state.view()?;
+        let value = read_value_path(&view, path)
+            .map_err(|_| Error::Script("invalid search path".into()))?
+            .ok_or_else(|| Error::InvalidPath(path.into()))?;
+        collect_search_matches(path, value, &regex, &mut matches, &mut output_bytes);
+        matches.len() < MAX_SEARCH_RESULTS && output_bytes < MAX_SEARCH_OUTPUT_BYTES
+    };
+    let output = Value::Map(BTreeMap::from([
+        ("matches".into(), Value::Array(matches)),
+        ("truncated".into(), Value::Bool(!complete)),
+    ]));
+    output.validate(limits, false)?;
+    Ok(output)
+}
+
+fn collect_mount_search_matches(
+    state: &RuntimeState,
+    path: &str,
+    regex: &Regex,
+    matches: &mut Vec<Value>,
+    output_bytes: &mut usize,
+    budget: &mut usize,
+) -> Result<bool> {
+    if matches.len() >= MAX_SEARCH_RESULTS {
+        return Ok(false);
+    }
+    let Some(remaining) = budget.checked_sub(1) else {
+        return Ok(false);
+    };
+    *budget = remaining;
+    let Some((mount, mount_path)) = mount_target(path)? else {
+        return Err(Error::InvalidPath(path.into()));
+    };
+    let facts = match state.mount_view().stat(&mount, &mount_path) {
+        Ok(Some(facts)) => facts,
+        // A node may disappear between listing and stat because the source is
+        // external. It is absent from this search rather than a process error.
+        Ok(None) | Err(_) => return Ok(true),
+    };
+    let directory = matches!(
+        facts,
+        Value::Map(ref values) if values.get("kind") == Some(&Value::String("directory".into()))
+    );
+    if !directory {
+        if let Ok(Some(value)) = state.mount_view().read(&mount, &mount_path) {
+            collect_search_matches(path, &value, regex, matches, output_bytes);
+        }
+        return Ok(matches.len() < MAX_SEARCH_RESULTS && *output_bytes < MAX_SEARCH_OUTPUT_BYTES);
+    }
+    let children = match state.mount_view().discover(&mount, &mount_path) {
+        Ok(children) => children,
+        Err(_) => return Ok(true),
+    };
+    for child in children {
+        let child_path = format!("{path}/{child}");
+        if !collect_mount_search_matches(state, &child_path, regex, matches, output_bytes, budget)?
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn collect_search_matches(
+    path: &str,
+    value: &Value,
+    regex: &Regex,
+    matches: &mut Vec<Value>,
+    output_bytes: &mut usize,
+) {
+    if matches.len() >= MAX_SEARCH_RESULTS {
+        return;
+    }
+    match value {
+        Value::String(text) => {
+            for (line_index, line) in text.lines().enumerate() {
+                if regex.is_match(line) {
+                    let Some(next_size) = output_bytes.checked_add(path.len() + line.len()) else {
+                        return;
+                    };
+                    if next_size > MAX_SEARCH_OUTPUT_BYTES {
+                        return;
+                    }
+                    matches.push(Value::Map(BTreeMap::from([
+                        ("path".into(), Value::String(path.into())),
+                        ("line".into(), Value::Integer((line_index + 1) as i64)),
+                        ("text".into(), Value::String(line.into())),
+                    ])));
+                    *output_bytes = next_size;
+                    if matches.len() >= MAX_SEARCH_RESULTS {
+                        return;
+                    }
+                }
+            }
+        }
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                collect_search_matches(
+                    &format!("{path}/{index}"),
+                    value,
+                    regex,
+                    matches,
+                    output_bytes,
+                );
+            }
+        }
+        Value::Map(values) => {
+            for (name, value) in values {
+                collect_search_matches(
+                    &format!("{path}/{name}"),
+                    value,
+                    regex,
+                    matches,
+                    output_bytes,
+                );
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Integer(_) | Value::Number(_) | Value::Script(_) => {}
+    }
+}
+
 fn persistent_to_ketos(value: &Value) -> Result<KetosValue> {
     match value {
         Value::Bool(value) => Ok(KetosValue::Bool(*value)),
@@ -2422,6 +2637,15 @@ fn persistent_from_ketos(value: &KetosValue, limits: &Limits) -> Result<Value> {
     };
     result.validate(limits, false)?;
     Ok(result)
+}
+
+fn jq_input_from_ketos(value: &KetosValue, limits: &Limits) -> Result<Value> {
+    if let KetosValue::Foreign(value) = value
+        && let Some(value) = value.downcast_ref::<GuestPersistent>()
+    {
+        return Ok(value.0.clone());
+    }
+    persistent_from_ketos(value, limits)
 }
 
 fn read_value_path<'a>(value: &'a Value, path: &str) -> Result<Option<&'a Value>> {
@@ -2690,9 +2914,7 @@ fn map_ketos_error(interpreter: &KetosInterpreter, error: KetosError) -> Error {
             Error::ResourceLimitExceeded("syntax depth")
         }
         KetosError::Custom(error) => match error.downcast_ref::<GuestFailure>() {
-            Some(GuestFailure::BuiltinPending) => {
-                Error::Script("built-in execution suspended".into())
-            }
+            Some(GuestFailure::PortPending) => Error::Script("port execution suspended".into()),
             Some(GuestFailure::Execution) => Error::ExecutionLimitExceeded,
             Some(GuestFailure::InvalidPath(message)) => Error::InvalidPath(message.clone()),
             Some(GuestFailure::InvalidValue(message)) => Error::InvalidValue(message.clone()),
@@ -2789,6 +3011,7 @@ fn lock<T>(value: &Mutex<T>) -> Result<MutexGuard<'_, T>> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Mutex;
 
     use super::*;
@@ -2832,6 +3055,35 @@ mod tests {
             Some(Value::Integer(2))
         );
         assert_eq!(activation.version, 2);
+    }
+
+    #[test]
+    // THREAT[TM-DOS-008] THREAT[TM-DOS-010]
+    fn standard_library_search_walks_a_mount_one_node_at_a_time() {
+        let folder = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/mount-data");
+        let mut process = Process::builder("svit://local/test/search-mount")
+            .unwrap()
+            .mount("files", Mount::folder(folder).unwrap())
+            .build()
+            .unwrap();
+        write_script(
+            &mut process,
+            "find-checklist",
+            r#"(define (main input) (search "/mounts/files" "just check"))"#,
+        )
+        .unwrap();
+
+        let output = process
+            .exec("/lib/find-checklist", Value::Null)
+            .unwrap()
+            .output
+            .to_json();
+        assert_eq!(output["truncated"], false);
+        assert_eq!(
+            output["matches"][0]["path"],
+            "/mounts/files/notes/checklist.md"
+        );
+        assert_eq!(output["matches"][0]["line"], 2);
     }
 
     #[test]

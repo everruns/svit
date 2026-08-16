@@ -21,7 +21,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
              queued.",
         )
         .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
-        .allow_scripts(["search_support_docs", "commit_support_result"])
         .max_iterations(8)
         .build()
         .await?;

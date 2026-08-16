@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use svit::{
-    Builtins, DurableProcess, Error, Mount, OpenAI, Process, Reasoner, Svit, TursoProcessStore,
+    DurableProcess, Error, Mount, OpenAI, Ports, Process, Reasoner, Svit, TursoProcessStore,
 };
 
 mod tui;
@@ -64,7 +64,7 @@ async fn run() -> Result<(), String> {
             &options.model,
             OpenAI::from_env().map_err(|error| error.to_string())?,
         ))
-        .builtins(Builtins::standard())
+        .ports(Ports::standard())
         .build()
         .await
         .map_err(|error| error.to_string())?;

@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, Result};
 
+pub(crate) const DEFAULT_MAX_TEXT_BYTES: usize = 1024 * 1024;
+
 /// Resource and persistence limits applied to every activation.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,7 +57,7 @@ impl Default for Limits {
             max_integer_bits: 64,
             max_value_depth: 32,
             max_value_entries: 10_000,
-            max_text_bytes: 1024 * 1024,
+            max_text_bytes: DEFAULT_MAX_TEXT_BYTES,
             max_script_bytes: 64 * 1024,
             max_logs: 128,
             max_messages: 128,
