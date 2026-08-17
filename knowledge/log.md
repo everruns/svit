@@ -1,5 +1,23 @@
 # Svit Knowledge Update Log
 
+## 2026-08-17
+
+* **Runnable reasoning contract reconciliation**: Made the canonical knowledge
+  consistent with the implemented separation between bounded `/thread`
+  metadata and the paged EventLog. Process transactions describe process-root
+  changes only; canonical events, message presentation, recent-history reads,
+  and Everruns compaction checkpoints use the EventLog. Lampa's tree history
+  remains a bounded host overlay, not Svit state, a snapshot, or model context.
+* **Execution and trust boundaries**: Recorded that model-facing `exec` can run
+  transient inline source through the ordinary activation boundary, including
+  ports and durable writes, while named `/lib` scripts are reusable durable
+  source. Svit intentionally has no model-specific operation or script
+  allowlist, but every guest source, input, value, snapshot, and interpreter
+  boundary remains untrusted. The standard research HTTP transport is
+  redirect-denying and in-memory; large responses must be reduced before a
+  persistent or model-visible value boundary, with streaming and file-backed
+  transfer deferred.
+
 ## 2026-08-16
 
 * **Bounded thread-history presentation**: Canonical events remain in Svit's

@@ -59,7 +59,7 @@ the boundary.
 | --- | --- |
 | Value model | Bounded serializable guest values with deterministic encoding |
 | Process | Address, version, committed root, limits, and lifecycle operations |
-| Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with canonical events under host-managed `/thread` |
+| Reasoning loop | Everruns `Message`/`ContentPart` inbox and outbox with canonical events in a process-partitioned paged EventLog; `/thread` holds bounded metadata only |
 | Activation | Fresh guest execution, working state, output, logs, and intents |
 | Script library | Named source records stored with committed process state |
 | Mounts | Virtual external namespaces resolved lazily through host-attached providers, with committed descriptors, node facts, and granted access |
@@ -112,9 +112,9 @@ rebuilds a checkpoint plus its necessary event suffix. `InProcessRuntime` remain
 for advanced embedders; it is kept behind the Svit contract rather than exposed
 as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
-read projection only after storage accepts the process transaction. Reasoning
-events are appended values within those transactions, never a second
-persistence stream. Svit's standard port setup derives model-backed `llm` and
+read projection only after storage accepts the process transaction. Canonical
+reasoning events append through the separate EventLog, never as process-tree
+values or `ProcessTransaction` mutations. Svit's standard port setup derives model-backed `llm` and
 `spawn` from the instance
 configuration. Lampa selects that standard registry without additional HTTP
 policy; selecting the complete research registry explicitly grants unrestricted
@@ -143,9 +143,11 @@ classification as embedded JSON, source code, or Markdown. Formatted lines are
 cached by selection and width, and each frame gives the scroll view only its
 visible window. These presentation bounds prevent render work from scaling with
 the entire process tree and do not change committed process state.
-`SvitEvent::Committed` is deliberately notification-only. The atomic
-`Svit::read_versioned` operation returns an owned value/version observation and
-keeps the mutable process tree behind the Svit abstraction.
+`SvitEvent::Committed` is deliberately notification-only. `SvitEvent::CanonicalEvent`
+and `SvitEvent::Message` are likewise host observations over the paged event
+history, not process-tree nodes. The atomic `Svit::read_versioned` operation
+returns an owned value/version observation and keeps the mutable process tree
+behind the Svit abstraction.
 `svit::Svit` assembles the Everruns host internally and exposes one complete
 generic process surface. Everruns owns the public model, provider, and loop
 contracts; Svit owns process state and its canonical event-log adapter.

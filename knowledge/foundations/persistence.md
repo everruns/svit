@@ -17,8 +17,9 @@ tags:
 Design adopted. The local Turso `DurableProcess` slice is implemented for
 create, host write/remove, activation, inbox enqueue/acknowledgement, resume,
 fork, query, on-demand snapshot, and cut. Runnable `Svit` instances can now own
-that handle: reasoning events, derived messages, process tools, inbox handling,
-and port catalog refresh commit through it. Persisting control-protocol
+that handle: process tools, inbox handling, and port catalog refresh commit
+through it. Canonical reasoning events use the paired paged `EventLog`.
+Persisting control-protocol
 receipts remains under implementation, so full control-plane completeness is
 not yet claimed.
 
@@ -31,16 +32,18 @@ One persistence model must provide all of these properties:
 | Resumable | Load one base and the newest validated recovery checkpoint at or before the target, reduce its ordered newer tail, validate complete state and roots at bounded boundaries, then continue at the next position |
 | Forkable | Create a child base from an exact committed parent position without copying the full parent state |
 | Snapshot-capable | Materialize an on-demand state image for replay acceleration, migration, fork detachment, or a history cut |
-| Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the process root and runnable reasoning, but not receipts |
-| Uniform | Persist one `ProcessTransaction` type; reasoning is not a second persistence stream or special transaction kind |
+| Complete | Represent every committed change to the process root and retained control receipts; current implementation covers the process root, while runnable reasoning uses a paired EventLog, but not receipts |
+| Uniform | Persist one `ProcessTransaction` type for process state; canonical reasoning history has its own immutable EventLog contract |
 | Queryable | Stream retained transactions by position, process version, touched path, source metadata, receipt key, or hash without replaying guest code |
 | Cuttable | Replace a retained prefix with a validated base snapshot, keep positions stable, and delete old data only when no fork references it |
 
 ## Safety model and proof boundary
 
-For one address, define durable state as `(base, transactions, head)` today and
-as `(base, transactions, head, receipts, owner_epoch)` once control receipts
-and distributed ownership are implemented. A process commit is admissible only
+For one address, define durable process state as `(base, transactions, head)`
+today and as `(base, transactions, head, receipts, owner_epoch)` once control
+receipts and distributed ownership are implemented. Runnable Svit adds a
+process-partitioned immutable `EventLog` plus compaction checkpoints. A process
+commit is admissible only
 when its envelope is a valid successor of the observed head, its before-version
 matches the reconstructed process, and, on a distributed adapter, its fencing
 epoch is current. The linearization point is the atomic conditional update of
@@ -52,8 +55,8 @@ a deterministic validated reducer, the intended safety argument is:
 1. two commits from the same observed head cannot both become reachable;
 2. every reachable head names one hash-linked prefix with no gaps;
 3. replay of that prefix produces one process version and root hash;
-4. reasoning events and their message projection become reachable together because
-   both are mutations in one `ProcessTransaction`; and
+4. an EventLog append becomes observable as one canonical event before any
+   derived message presentation, without mutating the process root; and
 5. a runtime publishes a candidate only after the storage linearization point.
 
 These are specified obligations, not a completed mathematical proof. The local
@@ -65,11 +68,13 @@ same reachable state before the model covers complete control-plane retries.
 
 ## Decision
 
-Persist one Svit as an immutable base plus an append-only tail of uniform
-process transactions:
+Persist one process as an immutable base plus an append-only tail of uniform
+process transactions. Runnable Svit keeps its canonical reasoning history in a
+separate process-partitioned EventLog:
 
 ```text
-Svit(address) = Base(address, covered_through) + Transactions(covered_through + 1 ... head)
+ProcessState(address) = Base(address, covered_through) + Transactions(covered_through + 1 ... head)
+Svit(address) = ProcessState(address) + EventLog(address) + CompactionCheckpoints(address)
 ```
 
 The first durable adapter uses one local Turso database, partitioned by Svit
@@ -173,9 +178,9 @@ remains under implementation.
 
 ## One process transaction stream
 
-There are no separate memory, activation, inbox, thread, or reasoning-event
-kinds.
-Every tail record is one `ProcessTransaction`, encoded as a
+There are no separate memory, activation, inbox, or thread-metadata kinds
+within the process-state stream. Every tail record is one
+`ProcessTransaction`, encoded as a
 `svit-transaction@1` envelope:
 
 ```text
@@ -222,7 +227,7 @@ remove_front(path, expected_value_hash)
 
 `set` replaces or creates the value at a path using the live path contract.
 `remove` uses the same map or array semantics as the live process API. `append`
-avoids replacing growing arrays such as inbox, outbox, and thread history.
+avoids replacing growing arrays such as inbox and outbox.
 `remove_front` makes queue acknowledgement conditional on the exact observed
 head. Empty-container replacement is expressed as `set`.
 
@@ -233,8 +238,7 @@ The operations are sufficient to represent every current process change:
 - committed Lisp outbox intents;
 - host write and removal;
 - inbox enqueue and exact-head acknowledgement;
-- reasoning initialization and each canonical Everruns event;
-- the derived message projection for that Everruns event;
+- reasoning metadata initialization or refresh under bounded `/thread`;
 - descriptive port catalog refresh;
 - future changes to reserved nodes only after their path schemas are defined.
 
@@ -247,7 +251,7 @@ The live commit and replay path use the same reducer:
 
 1. Resolve and validate typed mutation values.
 2. Apply the ordered mutations to a private copy of the preceding root.
-3. Validate the complete root, scripts, thread projection, and limits. Receipt
+3. Validate the complete root, scripts, bounded thread metadata, and limits. Receipt
    validation remains under implementation.
 4. Require the version transition, derived touched paths, and resulting root
    hash to match the envelope.
@@ -267,9 +271,10 @@ hosts cannot observe a candidate that the store rejected.
 Svit owns a process-partitioned durable `EventLog`; process transactions and
 reasoning history have distinct integrity boundaries. `/thread` stores only
 session metadata. A successful append writes one immutable canonical event,
-then observers derive any message presentation from it. Initialization sets the
-metadata once. Reattaching unchanged host grants is a no-op rather than a fake
-catalog-refresh transaction.
+then observers derive any message presentation from it. Event history and its
+presentation never become mutations of the process root. Initialization sets
+the metadata once. Reattaching unchanged host grants is a no-op rather than a
+fake catalog-refresh transaction.
 
 Prior conversation state is never rewritten into later records. The Turso event
 table is indexed by process, session, and sequence. Everruns compaction

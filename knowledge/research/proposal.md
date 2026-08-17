@@ -536,9 +536,11 @@ transactions atomically maintain head CAS, event rows, path projections,
 snapshots, fork references, and cuts. A deterministic reducer
 reconstructs process state without re-executing guest code or external effects.
 The core `DurableProcess` slice and runnable reasoning persistence are
-implemented. Inbox transitions, canonical reasoning events, their message
-projection, port refresh, and acknowledgements use ordinary process-tree
-transactions. Durable control receipts remain under implementation.
+implemented. Inbox transitions, bounded thread metadata, port refresh, and
+acknowledgements use ordinary process-tree transactions. Canonical reasoning
+events use a paired paged EventLog, from which hosts derive message
+presentation; neither history nor presentation is materialized under
+`/thread`. Durable control receipts remain under implementation.
 
 Each event carries its address, stable position, previous record hash, process
 version transition, ordered mutations, optional atomic receipt delta, derived
@@ -675,9 +677,9 @@ Domain operations such as search and committing a result are named Svit
 scripts, discovered and invoked through this generic surface. The adapter
 maps these names one-to-one to the process API and records the resulting process
 version in the Everruns event stream. Svit supplies a process-backed Everruns
-`EventLog` through `HostBackends`: canonical events and their derived message
-projection commit under `/thread`, and Everruns rebuilds model history from the
-same log. The execution surface is a separate explicit `HostComposition`
+`EventLog` through `HostBackends`: canonical events append independently of the
+process root, hosts derive message presentation from them, and Everruns rebuilds
+model history from the same log. The execution surface is a separate explicit `HostComposition`
 containing only Svit's capability and its selected provider driver. Everruns'
 current `InProcessRuntime` executes that composition behind the Svit contract;
 it is an implementation mechanism, not Svit's public runtime abstraction.

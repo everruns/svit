@@ -66,8 +66,9 @@ The following scenarios execute with assertions and deterministic output under
 - Svit supplies a base prompt without host instructions, wraps optional
   instructions in an `<instructions>` block, persists them across restore, and
   recomposes a forked prompt for the child address.
-- the agent reads its projected instructions, composed system prompt, message
-  history, and canonical events through the runtime capability during a turn.
+- the agent reads its projected instructions and composed system prompt from
+  bounded `/thread` metadata, while Everruns reconstructs message history and
+  canonical events from the paged EventLog during a turn.
 - Svit Lisp `(search path pattern)` reads the transactional process tree and
   `(jq filter value)` filters explicit JSON; focused tests cover
   data limits, unrestricted standard HTTP,
@@ -90,10 +91,10 @@ The following scenarios execute with assertions and deterministic output under
 - a host `PortExtension` contributes a discoverable port that can
   read committed state through the restricted context; the common dispatcher
   rejects oversized extension output.
-- Lampa projects `http`, `llm`, and `spawn` under `/ports` by
-  selecting the standard registry without additional HTTP policy; Svit's
-  reusable reqwest transport rejects redirect escape and oversized streamed
-  responses.
+- Lampa projects `http`, `llm`, and `spawn` under `/ports` by selecting the
+  standard registry without additional HTTP policy; Svit's reusable reqwest
+  transport rejects redirect escape, while large in-memory responses must be
+  reduced before crossing a persistent or model-visible value boundary.
 - the Svit standard port setup derives the full catalog from one instance's
   `Reasoner`; commit events are notifications, and an atomic
   Svit contract read returns an owned value/version pair after inbox and

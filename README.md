@@ -19,8 +19,9 @@ implements the current reason/act loop behind the Svit API.
 
 ## Why Svit
 
-- **Durable Svit state.** Conversation, `/memory`, scripts, inbox state, and
-  runtime metadata commit into one process state root.
+- **Durable Svit state.** `/memory`, scripts, inbox state, and bounded runtime
+  metadata commit into one process state root; conversation is retained in a
+  separate paged EventLog.
 - **Transactional actions.** A bounded script activation commits memory,
   scripts, and buffered message intents together, or commits nothing.
 - **One inspectable memory tree.** Agents use the same absolute-path interface
@@ -105,9 +106,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 `Svit::builder` creates the process and reasoning loop as one Svit-owned
 instance. `Inbox::send` commits a message before waking the loop. `Outbox`
 publishes completed assistant messages, while `Events` publishes committed
-process changes and sanitized terminal failures. Hosts inspect state through
-owned reads such as `read` and `read_versioned`; they do not retain a mutable
-process-tree reference.
+process changes, canonical event-log appends, derived messages, and sanitized
+terminal failures. Hosts inspect state through owned reads such as `read` and
+`read_versioned`; they do not retain a mutable process-tree reference.
 
 See [`process_reasoning.rs`](crates/svit/examples/process_reasoning.rs) for a
 complete executable example.

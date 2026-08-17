@@ -32,6 +32,14 @@ interpreter, installs null I/O and a module loader that rejects every module,
 exposes explicit Svit functions, executes against a transactional memory copy,
 and converts all results to bounded Svit values before commit.
 
+The Svit model tool `exec` accepts either a `/lib/<name>` path or one transient
+`source` program. Inline source is interpreted through the same activation
+boundary, can call attached ports, and can write durable state, but is never
+stored in `/lib` or any other process node. A model uses a named script when it
+expects reuse or wants the source to remain inspectable; it uses inline source
+for a one-off operation. This is a tool-level form, distinct from Lisp's
+`(exec path input)`, which resolves named `/lib` scripts only.
+
 Rust hosts may write Lisp forms directly inside `svit_script!`, supply a source
 string literal, or embed a package-relative file. The macro invokes the Ketos
 compiler during the Rust build and then constructs the ordinary `Script`

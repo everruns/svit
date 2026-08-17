@@ -21,11 +21,12 @@ The initial process exposes one conventional namespace:
 
 ```text
 /
-├── thread/                 host-managed reasoning projection; null for a bare Process
+├── thread/                 bounded host-managed reasoning metadata; null for a bare Process
+│   ├── format              version of the thread metadata contract
+│   ├── process_id          owning Svit address
+│   ├── session_id          Everruns session identity
 │   ├── instructions        optional host instructions, or null
-│   ├── system_prompt       Svit-owned prompt composed for this address
-│   ├── messages            conversation projected from events
-│   └── events              canonical Everruns event stream
+│   └── system_prompt       Svit-owned prompt composed for this address
 ├── ports/                  host-managed port descriptors
 ├── memory/                 process-owned durable values
 ├── lib/                    named scripts
@@ -55,7 +56,9 @@ Canonical events are stored in a paged host `EventLog` partitioned by process
 and session. `/thread` is bounded metadata, so snapshots and restore never
 decode conversation history. Everruns compaction checkpoints replace older
 model context with a compact payload plus a raw suffix while leaving canonical
-events queryable.
+events queryable. A presentation host may overlay a bounded recent-event or
+message window below `/thread`, but that overlay is not a process value,
+snapshot content, or guest context.
 Each `/ports/<name>` record contains a contract version, description, input schema,
 output contract, effect class, and limits. `/thread` and `/ports` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only
@@ -147,11 +150,13 @@ mount directories, reserved nodes, and system state at every map or array
 depth. `read` returns a value. `stat` returns the facts record for one node.
 `write` and `remove` modify `/memory`, one typed `/lib/<name>` entry, or a leaf
 below a mount whose descriptor grants writes. The `/mounts` descriptor map
-itself and `/ports` are read-only. The model-facing `exec` resolves only
-`/lib/<name>` to a transactional script activation. Svit Lisp uses
-`(exec "/lib/name" input)` and `(port-call "name" input)` respectively.
-Bare `Process::exec` accepts only
-`/lib` because a serializable process does not own host port authority.
+itself and `/ports` are read-only. Svit's model-facing `exec` runs either a
+named `/lib/<name>` script or transient source passed directly to the tool.
+Inline source is interpreted as one activation and never enters the process
+root; named `/lib` scripts are the reusable, inspectable form. Svit Lisp uses
+`(exec "/lib/name" input)` and `(port-call "name" input)` respectively. Bare
+`Process::exec` accepts only `/lib` because a serializable process does not own
+host port authority.
 `/ports` entries are descriptive and never grant authority.
 
 When Lisp reaches `port-call`, Svit suspends the guest, executes the exact
@@ -214,7 +219,10 @@ builder operation used for every host registry. Selecting the standard set is
 an explicit unrestricted HTTP-destination grant; `with_http_allowlist`
 attenuates it. At Svit construction it derives `llm` and `spawn` from the same
 instance `Reasoner`, and resolves `http` with
-Svit's bounded transport. Later port registrations win, including a
+Svit's redirect-denying in-memory HTTP transport. The research transport does
+not impose a response-size cap; a script must reduce a large response before
+it crosses the persistent or model-visible value boundary. Later port
+registrations win, including a
 specialized host's explicit `http` adapter. Presentation hosts do not
 reconstruct this registry after the Svit instance is built.
 
@@ -224,15 +232,16 @@ host-selected model and driver. A port remains a host dispatch rather than
 a nested activation, even when Lisp invokes it, and its external effects cannot
 be rolled back with process state.
 
-A running Svit publishes host-only operational events. A commit event is a
-notification that state changed; it does not expose the process root. The host
-may then obtain an owned value and its version atomically through the Svit
-contract. The shared process-state transition boundary publishes exactly once
-after refreshing its read projection, so host writes, reasoning-tool writes,
-inbox transitions, Lisp activations, reasoning events, metadata, and port
-catalog changes follow the same observer contract. A failure event contains
-only a sanitized diagnostic. These transient notifications do not replace the
-durable process event log or outbox. Each `events` or `outbox` call creates an
+A running Svit publishes host-only operational events. `Committed` is a
+notification that process state changed; it does not expose the process root.
+`CanonicalEvent` reports one newly appended EventLog record, and `Message`
+reports one message derived from that record. The host may obtain an owned
+value and its version atomically through the Svit contract. The shared
+process-state transition boundary publishes `Committed` exactly once after
+refreshing its read projection, while EventLog append observers publish the
+canonical event before its derived message. A failure event contains only a
+sanitized diagnostic. These transient notifications do not replace the durable
+process event log or outbox. Each `events` or `outbox` call creates an
 independent observer behind the Svit contract; consumers do not receive the
 underlying channel implementation.
 
