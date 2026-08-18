@@ -95,8 +95,18 @@ shared staleness predicate: a path is affected when it is at, below, or above
 a changed path, because a write below a node changes that node's value and can
 change its child listing.
 
+A `Change` also publishes the content hash each reported path and its
+ancestors now have, and `None` for a path the transition removed.
+`Change::touches` answers what a client *may* need to re-read; the hash
+answers what it *must*. A cached node whose published hash matches what the
+client holds is current, whatever the path overlap says, so a client
+revalidates by content instead of discarding a subtree on every commit.
+`Process::node_hash` reads the same hash outside a transition.
+
 Two deliberate asymmetries:
 
+- Mount paths carry no hash. Their content lives outside the committed root,
+  so a client re-reads them rather than comparing a committed hash.
 - A granted mount write reports its path but carries no mutation. It changed an
   external source, not committed state, so there is nothing to persist or
   replay, but a client caching that node must still read it again.
@@ -315,8 +325,14 @@ process is a committed state transition that increments its version.
 ## Snapshots and restore
 
 A snapshot contains a versioned deterministic representation of all committed
-process state and a SHA-256 root integrity hash. It never contains an executing stack,
-host pointers, capabilities, interpreter globals, or uncommitted work.
+process state and a SHA-256 root integrity hash. That hash is the root of the
+content-hash tree every committed node publishes: a node hashes a type tag and
+then its own leaf bytes or its children's digests, so a hash covers one
+subtree and nothing above it. An unchanged subtree keeps its hash across
+commits, forks, and snapshots, and a mount node hashes its committed
+descriptor rather than the external source it resolves through. A snapshot
+never contains an executing stack, host pointers, capabilities, interpreter
+globals, or uncommitted work.
 
 Restore treats bytes as untrusted, validates format version and all value
 invariants, and reconstructs a committed process. Snapshot integrity is not

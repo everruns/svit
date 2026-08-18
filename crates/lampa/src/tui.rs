@@ -376,6 +376,8 @@ struct Node {
     locality: String,
     /// The `content` fact, such as `object`, `array`, or `text/plain`.
     content: String,
+    /// Committed content hash, absent for a mount node or an unreachable one.
+    hash: Option<String>,
 }
 
 impl Node {
@@ -395,6 +397,7 @@ impl Node {
             directory: text(fields, "kind").as_deref() == Some("directory"),
             locality: text(fields, "locality").unwrap_or_else(|| "remote".into()),
             content,
+            hash: text(fields, "hash"),
         }
     }
 
@@ -403,6 +406,7 @@ impl Node {
             directory: false,
             locality: "cache".into(),
             content: String::new(),
+            hash: None,
         }
     }
 
@@ -411,6 +415,7 @@ impl Node {
             directory: false,
             locality: "remote".into(),
             content: String::new(),
+            hash: None,
         }
     }
 
@@ -434,6 +439,12 @@ struct MemoryTree {
     children: BTreeMap<String, Vec<String>>,
     values: BTreeMap<String, Value>,
     truncated: BTreeSet<String>,
+    /// Entries a commit could have made stale, kept until read again.
+    stale_nodes: BTreeSet<String>,
+    stale_children: BTreeSet<String>,
+    stale_values: BTreeSet<String>,
+    /// Bumped whenever a resolution replaces an entry.
+    revision: u64,
 }
 
 impl MemoryTree {
@@ -442,18 +453,68 @@ impl MemoryTree {
         self.children.clear();
         self.values.clear();
         self.truncated.clear();
+        self.stale_nodes.clear();
+        self.stale_children.clear();
+        self.stale_values.clear();
+        self.revision = self.revision.wrapping_add(1);
     }
 
-    /// Forgets every entry the change could have made stale.
+    /// Marks every entry the change could have made stale.
+    ///
+    /// A commit never blanks the console. Any change reaches the root, because
+    /// a write below a node changes that node's value and can change its child
+    /// listing, so discarding the touched entries would leave nothing to paint
+    /// until the next resolution. The last resolved facts stay on screen and
+    /// each one is replaced when it is read again.
     fn invalidate(&mut self, change: &Change) {
-        self.nodes.retain(|path, _| !change.touches(path));
-        self.children.retain(|path, _| !change.touches(path));
-        self.values.retain(|path, _| !change.touches(path));
-        self.truncated.retain(|path| !change.touches(path));
+        // A published content hash equal to the cached one settles the
+        // question: that subtree is the one already on screen, whatever the
+        // path overlap says.
+        let current = |path: &String| match (change.hash(path), self.nodes.get(path)) {
+            (Some(Some(published)), Some(node)) => node.hash.as_deref() == Some(published),
+            _ => false,
+        };
+        let stale = |path: &String| change.touches(path) && !current(path);
+        let nodes = self.nodes.keys().filter(|path| stale(path)).cloned();
+        let children = self.children.keys().filter(|path| stale(path)).cloned();
+        let values = self.values.keys().filter(|path| stale(path)).cloned();
+        let (nodes, children, values) = (
+            nodes.collect::<Vec<_>>(),
+            children.collect::<Vec<_>>(),
+            values.collect::<Vec<_>>(),
+        );
+        self.stale_nodes.extend(nodes);
+        self.stale_children.extend(children);
+        self.stale_values.extend(values);
     }
 
-    fn resolved(&self) -> usize {
-        self.nodes.len() + self.children.len() + self.values.len()
+    /// Marks one host overlay subtree stale without claiming a process commit.
+    ///
+    /// Lampa owns the bounded thread projection under `/thread`, so appending
+    /// to it changes nothing the process committed and must not invalidate
+    /// the committed tree around it.
+    fn invalidate_overlay(&mut self, path: &str) {
+        let below = |candidate: &String| {
+            candidate == path
+                || candidate
+                    .strip_prefix(path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        let nodes = self.nodes.keys().filter(|p| below(p)).cloned();
+        let children = self.children.keys().filter(|p| below(p)).cloned();
+        let values = self.values.keys().filter(|p| below(p)).cloned();
+        let (nodes, children, values) = (
+            nodes.collect::<Vec<_>>(),
+            children.collect::<Vec<_>>(),
+            values.collect::<Vec<_>>(),
+        );
+        self.stale_nodes.extend(nodes);
+        self.stale_children.extend(children);
+        self.stale_values.extend(values);
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
     }
 
     fn node(&self, path: &str) -> Option<&Node> {
@@ -473,7 +534,7 @@ impl MemoryTree {
     }
 
     fn resolve_node(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.nodes.contains_key(path) {
+        if self.nodes.contains_key(path) && !self.stale_nodes.contains(path) {
             return;
         }
         let node = match view.stat(path) {
@@ -483,14 +544,18 @@ impl MemoryTree {
                 // An unreachable node still occupies a row; its failure becomes
                 // the value the preview shows.
                 self.values.insert(path.to_owned(), Value::String(error));
+                self.stale_values.remove(path);
                 Node::unreachable()
             }
         };
         self.nodes.insert(path.to_owned(), node);
+        self.stale_nodes.remove(path);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn resolve_children(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.children.contains_key(path) || !self.is_directory(path) {
+        let listed = self.children.contains_key(path) && !self.stale_children.contains(path);
+        if listed || !self.is_directory(path) {
             return;
         }
         let mut names = match view.discover(path) {
@@ -498,11 +563,15 @@ impl MemoryTree {
             Err(error) => {
                 self.children.insert(path.to_owned(), Vec::new());
                 self.values.insert(path.to_owned(), Value::String(error));
+                self.stale_children.remove(path);
+                self.stale_values.remove(path);
+                self.revision = self.revision.wrapping_add(1);
                 return;
             }
         };
         // A directory has no committed size, so one listing is bounded here
         // rather than trusting the source.
+        self.truncated.remove(path);
         if names.len() > MAX_TREE_CHILDREN {
             names.truncate(MAX_TREE_CHILDREN);
             self.truncated.insert(path.to_owned());
@@ -510,11 +579,21 @@ impl MemoryTree {
         for name in &names {
             self.resolve_node(view, &child_path(path, name));
         }
-        self.children.insert(path.to_owned(), names);
+        // A refreshed listing drops the rows the process no longer reports.
+        if let Some(previous) = self.children.insert(path.to_owned(), names) {
+            let retained = self.children[path].clone();
+            for name in previous {
+                if !retained.contains(&name) {
+                    self.forget(&child_path(path, &name));
+                }
+            }
+        }
+        self.stale_children.remove(path);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn resolve_value(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.values.contains_key(path) {
+        if self.values.contains_key(path) && !self.stale_values.contains(path) {
             return;
         }
         let value = match view.read(path) {
@@ -523,6 +602,25 @@ impl MemoryTree {
             Err(error) => Value::String(error),
         };
         self.values.insert(path.to_owned(), value);
+        self.stale_values.remove(path);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Drops one path and its descendants once the process stops reporting it.
+    fn forget(&mut self, path: &str) {
+        let below = |candidate: &String| {
+            candidate == path
+                || candidate
+                    .strip_prefix(path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        self.nodes.retain(|candidate, _| !below(candidate));
+        self.children.retain(|candidate, _| !below(candidate));
+        self.values.retain(|candidate, _| !below(candidate));
+        self.truncated.retain(|candidate| !below(candidate));
+        self.stale_nodes.retain(|candidate| !below(candidate));
+        self.stale_children.retain(|candidate| !below(candidate));
+        self.stale_values.retain(|candidate| !below(candidate));
     }
 }
 
@@ -645,7 +743,7 @@ impl App {
     /// operations, so a mounted folder and committed memory are browsed the
     /// same way.
     fn resolve(&mut self, view: &dyn MemoryView) {
-        let before = self.nodes.resolved();
+        let before = self.nodes.revision();
         self.nodes.resolve_node(view, "/");
         // Expanded paths iterate parent before child, so a directory's kind is
         // known by the time its own listing is requested.
@@ -680,7 +778,7 @@ impl App {
         let selected = self.selected().id.clone();
         self.nodes.resolve_value(view, &selected);
 
-        if before != self.nodes.resolved() {
+        if before != self.nodes.revision() {
             self.preview_cache = None;
             self.reconcile_tree();
         }
@@ -757,10 +855,13 @@ impl App {
     }
 
     fn refresh_thread_history(&mut self) {
-        self.refresh_process(&Change::notification(
-            self.version,
-            vec!["/thread/events".into(), "/thread/messages".into()],
-        ));
+        // The thread projection is a host overlay, not committed state: the
+        // process neither changed nor advanced its version, so only the
+        // overlay rows are read again.
+        for path in ["/thread/events", "/thread/messages"] {
+            self.nodes.invalidate_overlay(path);
+        }
+        self.rows = tree_rows(&self.nodes);
     }
 
     fn reconcile_pending_user(&mut self, canonical: &Message) -> bool {
@@ -2491,6 +2592,7 @@ mod tests {
             Ok(Some(Value::Map(BTreeMap::from([
                 ("kind".into(), Value::from(kind)),
                 ("facts".into(), Value::Map(facts)),
+                ("hash".into(), Value::from(value.content_hash())),
                 ("locality".into(), Value::from(locality)),
                 ("path".into(), Value::from(path)),
             ]))))
@@ -2840,6 +2942,82 @@ mod tests {
     }
 
     #[test]
+    fn a_matching_content_hash_keeps_a_reported_node_resolved() {
+        let mut app = test_app(value!({"memory": {"count": 1, "color": "blue"}}), 1);
+        expand_paths(&mut app, &["/memory"]);
+        app.select("/memory/color");
+        let unchanged = app.nodes.value("/memory/color").cloned();
+
+        // The commit reports /memory/color, but its content is what the
+        // console already holds, so nothing about it needs reading again.
+        let hashes = BTreeMap::from([
+            (
+                "/memory/color".to_owned(),
+                Some(value!("blue").content_hash()),
+            ),
+            (
+                "/memory".to_owned(),
+                Some(value!({"count": 2}).content_hash()),
+            ),
+        ]);
+        app.app.refresh_process(&Change::notification_with_hashes(
+            2,
+            vec!["/memory/color".to_owned()],
+            hashes,
+        ));
+
+        assert!(!app.nodes.stale_nodes.contains("/memory/color"));
+        assert!(!app.nodes.stale_values.contains("/memory/color"));
+        assert_eq!(app.nodes.value("/memory/color"), unchanged.as_ref());
+        // The ancestor's published hash differs, so its listing is read again.
+        assert!(app.nodes.stale_children.contains("/memory"));
+    }
+
+    #[test]
+    fn a_thread_history_append_is_not_a_process_commit() {
+        let mut app = test_app_with(
+            ValueView::new(value!({
+                "memory": {"release": {"color": "blue"}},
+                "thread": {"format": "svit-thread@8"}
+            })),
+            3,
+            "sim",
+        );
+        expand_paths(&mut app, &["/memory", "/memory/release"]);
+
+        app.push_message(Message::assistant("Stored in memory."));
+
+        // Lampa owns the thread projection, so the committed tree around it
+        // keeps both its version and its resolved nodes.
+        assert_eq!(app.version, 3);
+        assert!(!app.nodes.stale_nodes.contains("/"));
+        assert!(!app.nodes.stale_children.contains("/"));
+        assert!(!app.nodes.stale_children.contains("/memory"));
+        assert!(!app.nodes.stale_values.contains("/memory/release/color"));
+        assert!(app.rows.iter().any(|row| row.id == "/memory/release"));
+    }
+
+    #[test]
+    fn a_commit_never_blanks_the_resolved_tree() {
+        let mut app = test_app(
+            value!({"memory": {"count": 1}, "thread": {"format": "x"}}),
+            1,
+        );
+        expand_paths(&mut app, &["/memory"]);
+
+        // Every change reaches the root, so a discarding invalidation would
+        // leave one row until the next resolution paints the tree again.
+        app.app.refresh_process(&Change::notification(
+            2,
+            vec!["/thread/events".to_owned(), "/thread/messages".to_owned()],
+        ));
+
+        assert!(app.rows.iter().any(|row| row.id == "/memory"));
+        assert!(app.rows.iter().any(|row| row.id == "/memory/count"));
+        assert!(app.rows.iter().any(|row| row.id == "/thread"));
+    }
+
+    #[test]
     fn an_unrelated_commit_keeps_the_rest_of_the_tree_resolved() {
         let mut app = test_app(
             value!({
@@ -2850,8 +3028,6 @@ mod tests {
         );
         expand_paths(&mut app, &["/memory", "/mounts", "/mounts/cwd"]);
         app.select("/mounts/cwd/a.txt");
-        let resolved_before = app.nodes.resolved();
-
         // A commit that names only /memory/count must not cost a re-walk of
         // the mounted directory the operator has open.
         app.view.root = value!({
@@ -2866,10 +3042,12 @@ mod tests {
             app.nodes.value("/mounts/cwd/a.txt"),
             Some(&Value::from("one"))
         );
-        // The changed path and its parent listing are the only casualties.
-        assert!(app.nodes.node("/memory/count").is_none());
-        assert!(!app.nodes.children.contains_key("/memory"));
-        assert!(app.nodes.resolved() < resolved_before);
+        // The changed path and its parent listing are the only entries the
+        // next resolution has to read again.
+        assert!(app.nodes.stale_nodes.contains("/memory/count"));
+        assert!(app.nodes.stale_children.contains("/memory"));
+        assert!(!app.nodes.stale_children.contains("/mounts/cwd"));
+        assert!(!app.nodes.stale_values.contains("/mounts/cwd/a.txt"));
 
         app.app.resolve(&app.view);
         app.select("/memory/count");
@@ -3878,6 +4056,9 @@ mod tests {
 
         assert!(!frame.contains("Inbox / Outbox"));
         assert!(frame.contains(" Memory "));
+        // A commit no longer blanks the tree, so both top-level sections are
+        // on screen in this viewport.
+        assert!(frame.contains("thread"));
         assert!(frame.contains("memory"));
         assert!(frame.contains("Stored in memory."));
         assert!(frame.contains("v3 · sim · ready"));

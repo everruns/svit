@@ -4,7 +4,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use everruns::core::{Tool, ToolExecutionResult};
+use everruns_core::{Tool, ToolExecutionResult};
 use serde_json::Value;
 
 type Handler =

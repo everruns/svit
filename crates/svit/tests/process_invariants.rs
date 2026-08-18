@@ -861,3 +861,68 @@ fn a_change_covers_paths_at_below_and_above_what_it_touched() {
     assert!(!change.touches("/mounts"));
     assert!(!change.touches("/lib"));
 }
+
+#[test]
+fn a_content_hash_covers_one_subtree_and_nothing_above_it() {
+    let mut process = Process::builder("svit://local/tests/content-hash")
+        .unwrap()
+        .memory("profile", value!({"name": "Ada"}))
+        .memory("scores", value!([3, 5]))
+        .build()
+        .unwrap();
+    let scores = process.node_hash("/memory/scores").unwrap().unwrap();
+    let profile = process.node_hash("/memory/profile").unwrap().unwrap();
+
+    process
+        .write("/memory/profile/name", value!("Grace"))
+        .unwrap();
+
+    // The written subtree and its ancestors move; a sibling keeps its hash,
+    // so a client holding it holds the same content.
+    assert_ne!(
+        process.node_hash("/memory/profile").unwrap().unwrap(),
+        profile
+    );
+    assert_eq!(
+        process.node_hash("/memory/scores").unwrap().unwrap(),
+        scores
+    );
+    // The same content hashes the same wherever it is stored.
+    assert_eq!(
+        value!({"name": "Grace"}).content_hash(),
+        process.node_hash("/memory/profile").unwrap().unwrap()
+    );
+    assert_eq!(
+        process.root_hash(),
+        process.node_hash("/").unwrap().unwrap()
+    );
+}
+
+#[test]
+fn a_commit_publishes_the_content_hash_of_every_path_it_reports() {
+    let mut process = Process::builder("svit://local/tests/change-hashes")
+        .unwrap()
+        .memory("profile", value!({"name": "Ada"}))
+        .build()
+        .unwrap();
+
+    let change = process
+        .write("/memory/profile/name", value!("Grace"))
+        .unwrap();
+
+    assert_eq!(
+        change.hash("/memory/profile/name"),
+        Some(Some(value!("Grace").content_hash().as_str()))
+    );
+    assert_eq!(
+        change.hash("/memory/profile"),
+        Some(Some(value!({"name": "Grace"}).content_hash().as_str()))
+    );
+    assert_eq!(change.hash("/"), Some(Some(process.root_hash().as_str())));
+    // A path the change never reported carries no hash to compare against.
+    assert_eq!(change.hash("/lib"), None);
+
+    let removal = process.remove("/memory/profile/name").unwrap();
+
+    assert_eq!(removal.hash("/memory/profile/name"), Some(None));
+}

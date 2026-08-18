@@ -4,8 +4,20 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::{Error, Limits, Result};
+
+// Content-hash type tags. These are committed contract: changing one changes
+// every hash below it, so a change here bumps the snapshot format.
+const TAG_NULL: u8 = 0;
+const TAG_BOOL: u8 = 1;
+const TAG_INTEGER: u8 = 2;
+const TAG_NUMBER: u8 = 3;
+const TAG_STRING: u8 = 4;
+const TAG_ARRAY: u8 = 5;
+const TAG_MAP: u8 = 6;
+const TAG_SCRIPT: u8 = 7;
 
 /// Named executable source stored in the process state tree.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -124,6 +136,74 @@ impl Value {
                 "documentation": script.documentation(),
             }),
         }
+    }
+
+    /// Returns the SHA-256 content hash of this value and everything below it.
+    ///
+    /// The hash is structural: it covers a node's own subtree and nothing
+    /// above it, so an unchanged subtree keeps its hash across commits, forks,
+    /// and snapshots, and a client holding the same hash holds the same
+    /// content. A mount node hashes its committed descriptor, never the
+    /// external source it resolves through.
+    ///
+    /// The encoding is canonical and part of the committed contract: a type
+    /// tag, then the leaf bytes or the child digests in canonical order, with
+    /// map keys length-prefixed so no key and value pair can be confused with
+    /// another.
+    pub fn content_hash(&self) -> String {
+        self.digest()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    fn digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        match self {
+            Self::Null => hasher.update([TAG_NULL]),
+            Self::Bool(value) => {
+                hasher.update([TAG_BOOL]);
+                hasher.update([u8::from(*value)]);
+            }
+            Self::Integer(value) => {
+                hasher.update([TAG_INTEGER]);
+                hasher.update(value.to_be_bytes());
+            }
+            Self::Number(value) => {
+                hasher.update([TAG_NUMBER]);
+                // Validation rejects non-finite numbers, and canonicalizing
+                // negative zero keeps equal values equally hashed.
+                let value = if *value == 0.0 { 0.0 } else { *value };
+                hasher.update(value.to_be_bytes());
+            }
+            Self::String(value) => {
+                hasher.update([TAG_STRING]);
+                hasher.update(value.as_bytes());
+            }
+            Self::Array(values) => {
+                hasher.update([TAG_ARRAY]);
+                hasher.update((values.len() as u64).to_be_bytes());
+                for value in values {
+                    hasher.update(value.digest());
+                }
+            }
+            Self::Map(values) => {
+                hasher.update([TAG_MAP]);
+                hasher.update((values.len() as u64).to_be_bytes());
+                for (key, value) in values {
+                    hasher.update((key.len() as u64).to_be_bytes());
+                    hasher.update(key.as_bytes());
+                    hasher.update(value.digest());
+                }
+            }
+            Self::Script(script) => {
+                hasher.update([TAG_SCRIPT]);
+                hasher.update((script.source().len() as u64).to_be_bytes());
+                hasher.update(script.source().as_bytes());
+                hasher.update(script.documentation().as_bytes());
+            }
+        }
+        hasher.finalize().into()
     }
 
     pub(crate) fn validate(&self, limits: &Limits, scripts_allowed: bool) -> Result<()> {

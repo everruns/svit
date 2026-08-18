@@ -19,7 +19,6 @@ use ketos::{
 };
 use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::error::sanitize_diagnostic;
 use crate::hooks::{
@@ -29,7 +28,7 @@ use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView}
 use crate::persistence::Mutation;
 use crate::{Error, Limits, Ports, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 8;
+const SNAPSHOT_FORMAT: u32 = 9;
 const INLINE_SCRIPT_PREFIX: &str = "\0svit:inline:";
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
@@ -105,11 +104,14 @@ pub struct MessageIntent {
 /// the durable event store records. `paths` is the observer-facing set: the
 /// same committed paths plus any mount path the transition wrote, because a
 /// client caching that node must read it again even though nothing was
-/// persisted for it.
+/// persisted for it. Committed paths and their ancestors also carry the
+/// content hash they now have, so a client revalidates what it holds instead
+/// of discarding everything the paths reach.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Change {
     version: u64,
     paths: Vec<String>,
+    hashes: BTreeMap<String, Option<String>>,
     mutations: Vec<Mutation>,
 }
 
@@ -123,13 +125,45 @@ impl Change {
         Self {
             version,
             paths,
+            hashes: BTreeMap::new(),
+            mutations: Vec::new(),
+        }
+    }
+
+    /// Records a change reported to an observer with the content hash each
+    /// changed path and its ancestors now have.
+    ///
+    /// A path whose node no longer exists carries `None`.
+    pub fn notification_with_hashes(
+        version: u64,
+        paths: Vec<String>,
+        hashes: BTreeMap<String, Option<String>>,
+    ) -> Self {
+        Self {
+            version,
+            paths,
+            hashes,
             mutations: Vec::new(),
         }
     }
 
     /// Returns this change with its values dropped, ready to publish.
     pub fn to_notification(&self) -> Self {
-        Self::notification(self.version, self.paths.clone())
+        Self::notification_with_hashes(self.version, self.paths.clone(), self.hashes.clone())
+    }
+
+    /// Returns the content hash this transition left at `path`.
+    ///
+    /// `Some(None)` reports a path the transition removed. `None` means the
+    /// transition carries no hash for it, either because the path is outside
+    /// the reported set or because the change was published without hashes;
+    /// a client must then re-read the node rather than assume it is current.
+    /// Mount paths never carry a hash: their content lives outside the
+    /// committed root.
+    pub fn hash(&self, path: &str) -> Option<Option<&str>> {
+        self.hashes
+            .get(path)
+            .map(|hash| hash.as_ref().map(String::as_str))
     }
 
     /// Returns the process version after this transition.
@@ -184,7 +218,7 @@ pub struct Activation {
     pub messages: Vec<MessageIntent>,
     /// Process version after the commit.
     pub version: u64,
-    /// SHA-256 of the canonical committed root encoding.
+    /// Structural SHA-256 content hash of the committed root.
     pub root_hash: String,
     /// Canonical paths this activation changed, including mount paths it
     /// wrote. Clients use these to invalidate exactly what went stale.
@@ -318,6 +352,19 @@ impl Process {
         root_hash(self.root.as_ref()).expect("validated process roots serialize")
     }
 
+    /// Returns the content hash of one committed node.
+    ///
+    /// A client caches this alongside the node and compares it against the
+    /// hash a later [`Change`] publishes, keeping what still matches instead
+    /// of re-reading everything a commit could have touched. Mount paths have
+    /// no committed content and return `None`.
+    pub fn node_hash(&self, path: &str) -> Result<Option<String>> {
+        if mount_target(path)?.is_some() {
+            return Ok(None);
+        }
+        Ok(self.read_committed(path)?.map(Value::content_hash))
+    }
+
     /// Validates a replacement root and publishes it as one version.
     ///
     /// THREAT[TM-EFF-001]: Every host transition funnels through this single
@@ -340,11 +387,38 @@ impl Process {
         let version = next_process_version(self.version)?;
         self.root = Arc::new(root);
         self.version = version;
+        // A client revalidates by content, not by path overlap: a changed
+        // path reaches every ancestor, so each one publishes the hash it now
+        // has and a client keeps whatever still matches.
+        let hashes = self.published_hashes(&paths);
         Ok(Change {
             version,
             paths,
+            hashes,
             mutations,
         })
+    }
+
+    /// Collects the content hash of every reported path and its ancestors.
+    ///
+    /// Mount paths are deliberately absent: their content is external, so a
+    /// client must re-read them rather than compare a committed hash.
+    fn published_hashes(&self, paths: &[String]) -> BTreeMap<String, Option<String>> {
+        let mut hashes = BTreeMap::new();
+        for path in paths {
+            for path in ancestors_inclusive(path) {
+                if mount_target(&path).ok().flatten().is_some() {
+                    continue;
+                }
+                hashes.entry(path).or_insert_with_key(|path| {
+                    self.read_committed(path)
+                        .ok()
+                        .flatten()
+                        .map(Value::content_hash)
+                });
+            }
+        }
+        hashes
     }
 
     /// Attaches or replaces one mount provider on a live process.
@@ -367,6 +441,7 @@ impl Process {
             return Ok(Change {
                 version: self.version,
                 paths: Vec::new(),
+                hashes: BTreeMap::new(),
                 mutations: Vec::new(),
             });
         }
@@ -455,6 +530,7 @@ impl Process {
             return Ok(Change {
                 version: self.version,
                 paths: vec![path.to_owned()],
+                hashes: BTreeMap::new(),
                 mutations: Vec::new(),
             });
         }
@@ -494,6 +570,7 @@ impl Process {
             return Ok(Change {
                 version: self.version,
                 paths: vec![path.to_owned()],
+                hashes: BTreeMap::new(),
                 mutations: Vec::new(),
             });
         }
@@ -1610,6 +1687,7 @@ fn committed_stat_value(path: &str, value: &Value) -> Value {
         ("locality".into(), Value::from("cache")),
         ("mount".into(), Value::Null),
         ("path".into(), Value::from(path)),
+        ("hash".into(), Value::from(value.content_hash())),
         ("source".into(), Value::from("process")),
     ]))
 }
@@ -2991,10 +3069,24 @@ fn message_from_value(value: &Value) -> Result<MessageIntent> {
 }
 
 fn root_hash(root: &Value) -> Result<String> {
-    let bytes = serde_json::to_vec(root)
-        .map_err(|error| Error::InvalidSnapshot(sanitize_diagnostic(error)))?;
-    let digest = Sha256::digest(bytes);
-    Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+    // The root hash is the root of the same content-hash tree every node
+    // publishes, so a client that holds a subtree hash holds that subtree.
+    Ok(root.content_hash())
+}
+
+/// Returns `path` and every ancestor above it, root last.
+fn ancestors_inclusive(path: &str) -> Vec<String> {
+    let mut paths = vec![path.to_owned()];
+    let mut current = path;
+    while let Some((parent, _)) = current.rsplit_once('/') {
+        let parent = if parent.is_empty() { "/" } else { parent };
+        paths.push(parent.to_owned());
+        if parent == "/" {
+            break;
+        }
+        current = parent;
+    }
+    paths
 }
 
 fn next_process_version(version: u64) -> Result<u64> {

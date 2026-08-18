@@ -1030,7 +1030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1055,30 +1055,33 @@ dependencies = [
 
 [[package]]
 name = "everruns"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.1"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
  "everruns-capability",
  "everruns-core",
  "everruns-host",
+ "everruns-llmsim",
  "everruns-openai",
- "everruns-test-support",
+ "everruns-provider",
  "serde_json",
  "tokio",
  "tokio-util",
+ "uuid",
 ]
 
 [[package]]
 name = "everruns-builtins"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.1"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "async-trait",
  "chrono",
  "everruns-capability",
  "everruns-core",
+ "everruns-provider",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -1089,8 +1092,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-capability"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "serde",
  "serde_json",
@@ -1098,8 +1101,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-core"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1129,25 +1132,35 @@ dependencies = [
 
 [[package]]
 name = "everruns-engine"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
+ "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
+ "everruns-provider",
+ "futures",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+ "tokio-util",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
 name = "everruns-host"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.19.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
  "everruns-engine",
- "everruns-platform",
+ "everruns-provider",
  "futures",
  "ignore",
  "regex",
@@ -1161,9 +1174,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "everruns-llmsim"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "everruns-host",
+ "everruns-provider",
+ "futures",
+ "llmsim",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "everruns-openai"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1176,29 +1204,9 @@ dependencies = [
 ]
 
 [[package]]
-name = "everruns-platform"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "everruns-core",
- "inventory",
- "jsonschema",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "everruns-provider"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1225,17 +1233,20 @@ dependencies = [
 
 [[package]]
 name = "everruns-test-support"
-version = "0.17.26"
-source = "git+https://github.com/everruns/everruns?branch=main#cd4cc54015c9bad7a3b014bcde9936e3ac616b85"
+version = "0.18.0"
+source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
+ "everruns-capability",
  "everruns-core",
+ "everruns-engine",
  "everruns-host",
+ "everruns-llmsim",
+ "everruns-provider",
  "futures",
  "inventory",
- "llmsim",
  "serde",
  "serde_json",
  "tokio",
@@ -3195,7 +3206,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3711,7 +3722,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3769,7 +3780,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4199,7 +4210,9 @@ dependencies = [
  "async-trait",
  "everruns",
  "everruns-builtins",
+ "everruns-core",
  "everruns-host",
+ "everruns-provider",
  "everruns-test-support",
  "jaq-core",
  "jaq-json",
@@ -4321,7 +4334,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5148,7 +5161,7 @@ version = "2.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8464ec13c3691491391d9fce00f6416c9a48e46972f72d7865688be2080192c9"
 dependencies = [
- "rand 0.10.2",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -5592,7 +5605,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

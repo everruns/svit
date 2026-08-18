@@ -5,21 +5,21 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use everruns::core::capabilities::{Capability, SystemPromptContext};
-use everruns::core::error::Result as EverrunsResult;
-use everruns::core::events::{Event, EventData, EventRequest, ToolCompletedData};
-use everruns::core::message_retriever::InputMessage;
-use everruns::core::tools::{Tool, ToolExecutionResult, ToolResultImage};
-use everruns::core::typed_id::{MessageId, SessionId};
-use everruns::core::{
-    AgentCapabilityConfig, AgentLoopError, CompactionCheckpointStore, ContentPart, DriverRegistry,
-    Message, MessageRole,
-};
+use everruns_core::capabilities::{Capability, SystemPromptContext};
+
+use everruns::CapabilityRef;
+use everruns_core::events::{Event, EventData, EventRequest, ToolCompletedData};
+use everruns_core::message_retriever::InputMessage;
+use everruns_core::tools::{Tool, ToolExecutionResult};
+use everruns_core::{CompactionCheckpointStore, ContentPart, Message, MessageRole};
 use everruns_host::{
     EventDurability, EventLog, EventLogError, EventPage, EventReadLimit, EventReadRequest,
     EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InMemoryEventLog,
     InProcessRuntime, InProcessRuntimeBuilder, TurnResult, TurnStopReason,
 };
+use everruns_provider::error::Result as EverrunsResult;
+use everruns_provider::typed_id::{MessageId, SessionId};
+use everruns_provider::{AgentLoopError, DriverRegistry, ToolResultImage};
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
@@ -1311,8 +1311,8 @@ impl ReasoningLoopBuilder {
             process: process.clone(),
             ports: ports.clone(),
         };
-        let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
-        let compaction_config = AgentCapabilityConfig::new("compaction").config(json!({
+        let capability_config = CapabilityRef::new(PROCESS_CAPABILITY_ID);
+        let compaction_config = CapabilityRef::new("compaction").config(json!({
             "strategy": "auto",
             "proactive": true,
             "budget_percent": 0.85,
@@ -1696,18 +1696,25 @@ impl EventLog for ProcessEventLog {
                 detail: "ephemeral events are sink-only".into(),
             });
         }
-        let state = {
+        let (state, limits) = {
             let view = self.process.view();
             let process = view.lock().map_err(|_| EventLogError::Backend {
                 detail: "Svit process lock is unavailable".into(),
             })?;
-            load_thread_state(&process).map_err(event_log_corruption)?
+            (
+                load_thread_state(&process).map_err(event_log_corruption)?,
+                process.limits().clone(),
+            )
         };
         if state.as_ref().map(|state| state.session_id) != Some(request.session_id) {
             return Err(EventLogError::InvalidAppend {
                 detail: "event belongs to a different Everruns session".into(),
             });
         }
+        // THREAT[TM-DOS-003]: Model and tool payloads enter the durable event
+        // stream only through bounded Svit value validation, exactly as they
+        // did when the same messages were committed inside process memory.
+        validate_event_payload(&request.data, &limits)?;
         self.process.event_log.append(request).await
     }
 
@@ -1967,6 +1974,33 @@ fn messages_from_events(events: &[Event]) -> Vec<Message> {
     events.iter().filter_map(message_from_event).collect()
 }
 
+/// Validates the guest-visible payload of one canonical event against the
+/// process limits.
+///
+/// Canonical events carry model and tool output that Svit later projects back
+/// as process-visible messages, so the same bounded value validation that
+/// guards process memory guards the event stream. Host-only correlation
+/// events carry no guest payload and pass through unchanged.
+fn validate_event_payload(data: &EventData, limits: &Limits) -> Result<(), EventLogError> {
+    let payload = match data {
+        EventData::InputMessage(data) => serde_json::to_value(&data.message),
+        EventData::OutputMessageCompleted(data) => serde_json::to_value(&data.message),
+        EventData::ToolCompleted(data) => serde_json::to_value(data),
+        _ => return Ok(()),
+    }
+    .map_err(|error| EventLogError::InvalidAppend {
+        detail: error.to_string(),
+    })?;
+    let value = Value::from_json(payload).map_err(invalid_event_payload)?;
+    value.validate(limits, false).map_err(invalid_event_payload)
+}
+
+fn invalid_event_payload(error: crate::Error) -> EventLogError {
+    EventLogError::InvalidAppend {
+        detail: crate::error::sanitize_diagnostic(&error),
+    }
+}
+
 fn message_from_event(event: &Event) -> Option<Message> {
     match &event.data {
         EventData::InputMessage(data) => Some(data.message.clone()),
@@ -2046,7 +2080,7 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
 
 #[cfg(test)]
 mod tests {
-    use everruns::core::events::{EventContext, InputMessageData};
+    use everruns_core::events::{EventContext, InputMessageData};
 
     use super::*;
 
@@ -2091,6 +2125,56 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
+    }
+
+    #[tokio::test]
+    async fn oversized_event_payloads_fail_closed_at_the_event_log() {
+        // THREAT[TM-DOS-003]: An event payload beyond the process limits never
+        // reaches the durable event stream, and a bounded one still appends.
+        let session_id = SessionId::new();
+        let process = Process::builder("svit://local/bounded-events")
+            .unwrap()
+            .limits(Limits {
+                max_text_bytes: 4 * 1024,
+                ..Limits::default()
+            })
+            .build()
+            .unwrap();
+        let process = ProcessState::volatile(process);
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let event_log = ProcessEventLog::new(process.clone());
+
+        let error = event_log
+            .append(EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                InputMessageData::new(Message::user("x".repeat(8 * 1024))),
+            ))
+            .await
+            .unwrap_err();
+
+        assert!(
+            error.to_string().contains("maximum text bytes exceeded"),
+            "{error}"
+        );
+        event_log
+            .append(EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                InputMessageData::new(Message::user("bounded")),
+            ))
+            .await
+            .unwrap();
+        let page = event_log
+            .read_page(EventReadRequest::new(
+                session_id,
+                everruns_host::EventReadLimit::default(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(page.events.len(), 1);
     }
 
     #[tokio::test]

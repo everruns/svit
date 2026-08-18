@@ -63,6 +63,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-046` | Process import preserves current state but not source history topology | Import starts a new transaction tail at the existing version; prior transaction envelopes, snapshots, and fork references remain only in the source store |
 | `L-047` | Context compaction requires a provider-supported strategy | Turso durably stores Everruns checkpoints, but a provider without native compaction falls back to Everruns' configured policies; retention and archival of canonical event history remain host policy |
 | `L-048` | Port responses are activation-local in-memory values, not streams or temporary files | A script can reduce a response larger than the durable value envelope before committing a small result, but the complete response remains in process memory during the activation; generic temporary-workspace and streaming-transfer contracts are deferred |
+| `L-049` | Content hashes are recomputed on demand, not memoized in the value tree | Hashing a node costs one walk of its subtree, so `root_hash`, `stat`, and change publication remain proportional to the state they cover; memoizing a digest per node needs a `Value` representation change |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

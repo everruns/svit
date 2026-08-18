@@ -1,5 +1,48 @@
 # Svit Knowledge Update Log
 
+## 2026-08-18
+
+* **Bounded event payloads**: Restored the process limit on canonical event
+  payloads. Externalizing thread history moved model and tool output out of
+  validated process memory and into the paged EventLog, where no Svit
+  validation ran, so an activation could commit output beyond
+  `max_text_bytes` and its terminal failure never reached subscribers.
+  `ProcessEventLog` now validates the guest-visible payload of message and
+  tool-completion events against the committed limits and fails the append
+  closed (TM-DOS-003).
+* **Content-hash tree**: Every committed node now publishes a structural
+  SHA-256 content hash covering its own subtree and nothing above it, so an
+  unchanged subtree keeps its hash across commits, forks, and snapshots. The
+  root hash is that tree's root rather than a digest of the whole serialized
+  root, `Process::node_hash` reads one node's hash, and a `Change` publishes
+  the hash each reported path and its ancestors now have, with `None` for a
+  removed path. Clients revalidate caches by content instead of discarding
+  everything a change could have touched. Snapshot format 8 to 9; mount paths
+  publish no hash because their content is external.
+* **Host overlays are not commits**: Lampa's bounded thread projection is a
+  host overlay, so appending to it refreshes only the overlay rows instead of
+  reporting a process commit at the current version.
+* **Non-blanking console cache**: A change notification reaches the root,
+  because a write below a node changes that node's value and can change its
+  child listing. Lampa discarded every touched entry, so any commit, including
+  its own host-side thread-history append, left the console with nothing to
+  paint until the next resolution. Resolved nodes, listings, and values now
+  stay on screen marked stale and are replaced as each one is read again; a
+  refreshed listing drops the rows the process no longer reports.
+* **Everruns 0.18 kernel boundary**: Moved the pinned Everruns `main` commit to
+  the 0.18 neutral-kernel layout. `everruns` no longer re-exports
+  `everruns-core`, and the provider-facing surface Svit consumes at the host
+  boundary (`typed_id`, `error`/`AgentLoopError`, `DriverRegistry`,
+  `ModelSpec`, `Provider`, `ToolResultImage`) now lives in `everruns-provider`.
+  Svit depends on `everruns-core` and `everruns-provider` directly instead of
+  routing those imports through the facade.
+* **Engine-owned sessions**: The one-shot native `llm` port now runs its turn
+  through `everruns::Engine::create`, because engines own the session lifecycle
+  and `Agent::session` is gone.
+* **Capability configuration**: The process and compaction capability
+  configuration uses `everruns::CapabilityRef`, the public name of the type
+  core previously re-exported as `AgentCapabilityConfig`.
+
 ## 2026-08-17
 
 * **Runnable reasoning contract reconciliation**: Made the canonical knowledge

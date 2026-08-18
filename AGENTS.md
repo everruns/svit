@@ -35,11 +35,6 @@ The first slice is deliberately narrow:
    query; the committed root stores only its descriptor and nodes resolve
    lazily through a host-owned provider under the granted access.
 
-Scheduling, message delivery, live or writable projections, durable storage
-adapters, distributed identity, and production multi-tenant deployment are not
-part of this slice. Record pressure to add them in
-`knowledge/operations/limitations.md`; do not add speculative abstractions.
-
 ### Security invariants
 
 - Treat every guest script, input value, snapshot, address, message, and mount
