@@ -434,6 +434,12 @@ struct MemoryTree {
     children: BTreeMap<String, Vec<String>>,
     values: BTreeMap<String, Value>,
     truncated: BTreeSet<String>,
+    /// Entries a commit could have made stale, kept until read again.
+    stale_nodes: BTreeSet<String>,
+    stale_children: BTreeSet<String>,
+    stale_values: BTreeSet<String>,
+    /// Bumped whenever a resolution replaces an entry.
+    revision: u64,
 }
 
 impl MemoryTree {
@@ -442,18 +448,27 @@ impl MemoryTree {
         self.children.clear();
         self.values.clear();
         self.truncated.clear();
+        self.stale_nodes.clear();
+        self.stale_children.clear();
+        self.stale_values.clear();
+        self.revision = self.revision.wrapping_add(1);
     }
 
-    /// Forgets every entry the change could have made stale.
+    /// Marks every entry the change could have made stale.
+    ///
+    /// A commit never blanks the console. Any change reaches the root, because
+    /// a write below a node changes that node's value and can change its child
+    /// listing, so discarding the touched entries would leave nothing to paint
+    /// until the next resolution. The last resolved facts stay on screen and
+    /// each one is replaced when it is read again.
     fn invalidate(&mut self, change: &Change) {
-        self.nodes.retain(|path, _| !change.touches(path));
-        self.children.retain(|path, _| !change.touches(path));
-        self.values.retain(|path, _| !change.touches(path));
-        self.truncated.retain(|path| !change.touches(path));
+        mark_stale(&self.nodes, &mut self.stale_nodes, change);
+        mark_stale(&self.children, &mut self.stale_children, change);
+        mark_stale(&self.values, &mut self.stale_values, change);
     }
 
-    fn resolved(&self) -> usize {
-        self.nodes.len() + self.children.len() + self.values.len()
+    fn revision(&self) -> u64 {
+        self.revision
     }
 
     fn node(&self, path: &str) -> Option<&Node> {
@@ -473,7 +488,7 @@ impl MemoryTree {
     }
 
     fn resolve_node(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.nodes.contains_key(path) {
+        if self.nodes.contains_key(path) && !self.stale_nodes.contains(path) {
             return;
         }
         let node = match view.stat(path) {
@@ -483,14 +498,18 @@ impl MemoryTree {
                 // An unreachable node still occupies a row; its failure becomes
                 // the value the preview shows.
                 self.values.insert(path.to_owned(), Value::String(error));
+                self.stale_values.remove(path);
                 Node::unreachable()
             }
         };
         self.nodes.insert(path.to_owned(), node);
+        self.stale_nodes.remove(path);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn resolve_children(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.children.contains_key(path) || !self.is_directory(path) {
+        let listed = self.children.contains_key(path) && !self.stale_children.contains(path);
+        if listed || !self.is_directory(path) {
             return;
         }
         let mut names = match view.discover(path) {
@@ -498,11 +517,15 @@ impl MemoryTree {
             Err(error) => {
                 self.children.insert(path.to_owned(), Vec::new());
                 self.values.insert(path.to_owned(), Value::String(error));
+                self.stale_children.remove(path);
+                self.stale_values.remove(path);
+                self.revision = self.revision.wrapping_add(1);
                 return;
             }
         };
         // A directory has no committed size, so one listing is bounded here
         // rather than trusting the source.
+        self.truncated.remove(path);
         if names.len() > MAX_TREE_CHILDREN {
             names.truncate(MAX_TREE_CHILDREN);
             self.truncated.insert(path.to_owned());
@@ -510,11 +533,21 @@ impl MemoryTree {
         for name in &names {
             self.resolve_node(view, &child_path(path, name));
         }
-        self.children.insert(path.to_owned(), names);
+        // A refreshed listing drops the rows the process no longer reports.
+        if let Some(previous) = self.children.insert(path.to_owned(), names) {
+            let retained = self.children[path].clone();
+            for name in previous {
+                if !retained.contains(&name) {
+                    self.forget(&child_path(path, &name));
+                }
+            }
+        }
+        self.stale_children.remove(path);
+        self.revision = self.revision.wrapping_add(1);
     }
 
     fn resolve_value(&mut self, view: &dyn MemoryView, path: &str) {
-        if self.values.contains_key(path) {
+        if self.values.contains_key(path) && !self.stale_values.contains(path) {
             return;
         }
         let value = match view.read(path) {
@@ -523,6 +556,33 @@ impl MemoryTree {
             Err(error) => Value::String(error),
         };
         self.values.insert(path.to_owned(), value);
+        self.stale_values.remove(path);
+        self.revision = self.revision.wrapping_add(1);
+    }
+
+    /// Drops one path and its descendants once the process stops reporting it.
+    fn forget(&mut self, path: &str) {
+        let below = |candidate: &String| {
+            candidate == path
+                || candidate
+                    .strip_prefix(path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        self.nodes.retain(|candidate, _| !below(candidate));
+        self.children.retain(|candidate, _| !below(candidate));
+        self.values.retain(|candidate, _| !below(candidate));
+        self.truncated.retain(|candidate| !below(candidate));
+        self.stale_nodes.retain(|candidate| !below(candidate));
+        self.stale_children.retain(|candidate| !below(candidate));
+        self.stale_values.retain(|candidate| !below(candidate));
+    }
+}
+
+fn mark_stale<T>(resolved: &BTreeMap<String, T>, stale: &mut BTreeSet<String>, change: &Change) {
+    for path in resolved.keys() {
+        if change.touches(path) {
+            stale.insert(path.clone());
+        }
     }
 }
 
@@ -645,7 +705,7 @@ impl App {
     /// operations, so a mounted folder and committed memory are browsed the
     /// same way.
     fn resolve(&mut self, view: &dyn MemoryView) {
-        let before = self.nodes.resolved();
+        let before = self.nodes.revision();
         self.nodes.resolve_node(view, "/");
         // Expanded paths iterate parent before child, so a directory's kind is
         // known by the time its own listing is requested.
@@ -680,7 +740,7 @@ impl App {
         let selected = self.selected().id.clone();
         self.nodes.resolve_value(view, &selected);
 
-        if before != self.nodes.resolved() {
+        if before != self.nodes.revision() {
             self.preview_cache = None;
             self.reconcile_tree();
         }
@@ -2840,6 +2900,26 @@ mod tests {
     }
 
     #[test]
+    fn a_commit_never_blanks_the_resolved_tree() {
+        let mut app = test_app(
+            value!({"memory": {"count": 1}, "thread": {"format": "x"}}),
+            1,
+        );
+        expand_paths(&mut app, &["/memory"]);
+
+        // Every change reaches the root, so a discarding invalidation would
+        // leave one row until the next resolution paints the tree again.
+        app.app.refresh_process(&Change::notification(
+            2,
+            vec!["/thread/events".to_owned(), "/thread/messages".to_owned()],
+        ));
+
+        assert!(app.rows.iter().any(|row| row.id == "/memory"));
+        assert!(app.rows.iter().any(|row| row.id == "/memory/count"));
+        assert!(app.rows.iter().any(|row| row.id == "/thread"));
+    }
+
+    #[test]
     fn an_unrelated_commit_keeps_the_rest_of_the_tree_resolved() {
         let mut app = test_app(
             value!({
@@ -2850,8 +2930,6 @@ mod tests {
         );
         expand_paths(&mut app, &["/memory", "/mounts", "/mounts/cwd"]);
         app.select("/mounts/cwd/a.txt");
-        let resolved_before = app.nodes.resolved();
-
         // A commit that names only /memory/count must not cost a re-walk of
         // the mounted directory the operator has open.
         app.view.root = value!({
@@ -2866,10 +2944,12 @@ mod tests {
             app.nodes.value("/mounts/cwd/a.txt"),
             Some(&Value::from("one"))
         );
-        // The changed path and its parent listing are the only casualties.
-        assert!(app.nodes.node("/memory/count").is_none());
-        assert!(!app.nodes.children.contains_key("/memory"));
-        assert!(app.nodes.resolved() < resolved_before);
+        // The changed path and its parent listing are the only entries the
+        // next resolution has to read again.
+        assert!(app.nodes.stale_nodes.contains("/memory/count"));
+        assert!(app.nodes.stale_children.contains("/memory"));
+        assert!(!app.nodes.stale_children.contains("/mounts/cwd"));
+        assert!(!app.nodes.stale_values.contains("/mounts/cwd/a.txt"));
 
         app.app.resolve(&app.view);
         app.select("/memory/count");
@@ -3870,9 +3950,6 @@ mod tests {
         app.push_user(Message::user("Remember the release color."));
         app.push_message(Message::assistant("Stored in memory."));
         app.finish_turn();
-        // Committed thread history invalidates the resolved nodes, so the
-        // frame renders after the per-frame resolution the console runs.
-        app.app.resolve(&app.view);
         let theme = lampa_theme();
         let probes = UiProbes::default();
         let root = build_view(&mut app, Rect::new(0, 0, 90, 24), &theme, &probes);

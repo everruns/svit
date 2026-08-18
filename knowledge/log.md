@@ -10,10 +10,13 @@
   `ProcessEventLog` now validates the guest-visible payload of message and
   tool-completion events against the committed limits and fails the append
   closed (TM-DOS-003).
-* **Lampa first frame after a commit**: Committed thread history invalidates
-  resolved nodes, so a frame is meaningful only after the console's per-frame
-  resolution. The headless frame test now renders in that order rather than
-  painting an invalidated tree.
+* **Non-blanking console cache**: A change notification reaches the root,
+  because a write below a node changes that node's value and can change its
+  child listing. Lampa discarded every touched entry, so any commit, including
+  its own host-side thread-history append, left the console with nothing to
+  paint until the next resolution. Resolved nodes, listings, and values now
+  stay on screen marked stale and are replaced as each one is read again; a
+  refreshed listing drops the rows the process no longer reports.
 * **Everruns 0.18 kernel boundary**: Moved the pinned Everruns `main` commit to
   the 0.18 neutral-kernel layout. `everruns` no longer re-exports
   `everruns-core`, and the provider-facing surface Svit consumes at the host
