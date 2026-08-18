@@ -376,6 +376,8 @@ struct Node {
     locality: String,
     /// The `content` fact, such as `object`, `array`, or `text/plain`.
     content: String,
+    /// Committed content hash, absent for a mount node or an unreachable one.
+    hash: Option<String>,
 }
 
 impl Node {
@@ -395,6 +397,7 @@ impl Node {
             directory: text(fields, "kind").as_deref() == Some("directory"),
             locality: text(fields, "locality").unwrap_or_else(|| "remote".into()),
             content,
+            hash: text(fields, "hash"),
         }
     }
 
@@ -403,6 +406,7 @@ impl Node {
             directory: false,
             locality: "cache".into(),
             content: String::new(),
+            hash: None,
         }
     }
 
@@ -411,6 +415,7 @@ impl Node {
             directory: false,
             locality: "remote".into(),
             content: String::new(),
+            hash: None,
         }
     }
 
@@ -462,9 +467,50 @@ impl MemoryTree {
     /// until the next resolution. The last resolved facts stay on screen and
     /// each one is replaced when it is read again.
     fn invalidate(&mut self, change: &Change) {
-        mark_stale(&self.nodes, &mut self.stale_nodes, change);
-        mark_stale(&self.children, &mut self.stale_children, change);
-        mark_stale(&self.values, &mut self.stale_values, change);
+        // A published content hash equal to the cached one settles the
+        // question: that subtree is the one already on screen, whatever the
+        // path overlap says.
+        let current = |path: &String| match (change.hash(path), self.nodes.get(path)) {
+            (Some(Some(published)), Some(node)) => node.hash.as_deref() == Some(published),
+            _ => false,
+        };
+        let stale = |path: &String| change.touches(path) && !current(path);
+        let nodes = self.nodes.keys().filter(|path| stale(path)).cloned();
+        let children = self.children.keys().filter(|path| stale(path)).cloned();
+        let values = self.values.keys().filter(|path| stale(path)).cloned();
+        let (nodes, children, values) = (
+            nodes.collect::<Vec<_>>(),
+            children.collect::<Vec<_>>(),
+            values.collect::<Vec<_>>(),
+        );
+        self.stale_nodes.extend(nodes);
+        self.stale_children.extend(children);
+        self.stale_values.extend(values);
+    }
+
+    /// Marks one host overlay subtree stale without claiming a process commit.
+    ///
+    /// Lampa owns the bounded thread projection under `/thread`, so appending
+    /// to it changes nothing the process committed and must not invalidate
+    /// the committed tree around it.
+    fn invalidate_overlay(&mut self, path: &str) {
+        let below = |candidate: &String| {
+            candidate == path
+                || candidate
+                    .strip_prefix(path)
+                    .is_some_and(|rest| rest.starts_with('/'))
+        };
+        let nodes = self.nodes.keys().filter(|p| below(p)).cloned();
+        let children = self.children.keys().filter(|p| below(p)).cloned();
+        let values = self.values.keys().filter(|p| below(p)).cloned();
+        let (nodes, children, values) = (
+            nodes.collect::<Vec<_>>(),
+            children.collect::<Vec<_>>(),
+            values.collect::<Vec<_>>(),
+        );
+        self.stale_nodes.extend(nodes);
+        self.stale_children.extend(children);
+        self.stale_values.extend(values);
     }
 
     fn revision(&self) -> u64 {
@@ -575,14 +621,6 @@ impl MemoryTree {
         self.stale_nodes.retain(|candidate| !below(candidate));
         self.stale_children.retain(|candidate| !below(candidate));
         self.stale_values.retain(|candidate| !below(candidate));
-    }
-}
-
-fn mark_stale<T>(resolved: &BTreeMap<String, T>, stale: &mut BTreeSet<String>, change: &Change) {
-    for path in resolved.keys() {
-        if change.touches(path) {
-            stale.insert(path.clone());
-        }
     }
 }
 
@@ -817,10 +855,13 @@ impl App {
     }
 
     fn refresh_thread_history(&mut self) {
-        self.refresh_process(&Change::notification(
-            self.version,
-            vec!["/thread/events".into(), "/thread/messages".into()],
-        ));
+        // The thread projection is a host overlay, not committed state: the
+        // process neither changed nor advanced its version, so only the
+        // overlay rows are read again.
+        for path in ["/thread/events", "/thread/messages"] {
+            self.nodes.invalidate_overlay(path);
+        }
+        self.rows = tree_rows(&self.nodes);
     }
 
     fn reconcile_pending_user(&mut self, canonical: &Message) -> bool {
@@ -2551,6 +2592,7 @@ mod tests {
             Ok(Some(Value::Map(BTreeMap::from([
                 ("kind".into(), Value::from(kind)),
                 ("facts".into(), Value::Map(facts)),
+                ("hash".into(), Value::from(value.content_hash())),
                 ("locality".into(), Value::from(locality)),
                 ("path".into(), Value::from(path)),
             ]))))
@@ -2897,6 +2939,62 @@ mod tests {
         assert_eq!(app.version, 2);
         assert_eq!(app.selected().id, "/mounts/cwd/a.txt");
         assert_eq!(app.selected_value(), &Value::from("two"));
+    }
+
+    #[test]
+    fn a_matching_content_hash_keeps_a_reported_node_resolved() {
+        let mut app = test_app(value!({"memory": {"count": 1, "color": "blue"}}), 1);
+        expand_paths(&mut app, &["/memory"]);
+        app.select("/memory/color");
+        let unchanged = app.nodes.value("/memory/color").cloned();
+
+        // The commit reports /memory/color, but its content is what the
+        // console already holds, so nothing about it needs reading again.
+        let hashes = BTreeMap::from([
+            (
+                "/memory/color".to_owned(),
+                Some(value!("blue").content_hash()),
+            ),
+            (
+                "/memory".to_owned(),
+                Some(value!({"count": 2}).content_hash()),
+            ),
+        ]);
+        app.app.refresh_process(&Change::notification_with_hashes(
+            2,
+            vec!["/memory/color".to_owned()],
+            hashes,
+        ));
+
+        assert!(!app.nodes.stale_nodes.contains("/memory/color"));
+        assert!(!app.nodes.stale_values.contains("/memory/color"));
+        assert_eq!(app.nodes.value("/memory/color"), unchanged.as_ref());
+        // The ancestor's published hash differs, so its listing is read again.
+        assert!(app.nodes.stale_children.contains("/memory"));
+    }
+
+    #[test]
+    fn a_thread_history_append_is_not_a_process_commit() {
+        let mut app = test_app_with(
+            ValueView::new(value!({
+                "memory": {"release": {"color": "blue"}},
+                "thread": {"format": "svit-thread@8"}
+            })),
+            3,
+            "sim",
+        );
+        expand_paths(&mut app, &["/memory", "/memory/release"]);
+
+        app.push_message(Message::assistant("Stored in memory."));
+
+        // Lampa owns the thread projection, so the committed tree around it
+        // keeps both its version and its resolved nodes.
+        assert_eq!(app.version, 3);
+        assert!(!app.nodes.stale_nodes.contains("/"));
+        assert!(!app.nodes.stale_children.contains("/"));
+        assert!(!app.nodes.stale_children.contains("/memory"));
+        assert!(!app.nodes.stale_values.contains("/memory/release/color"));
+        assert!(app.rows.iter().any(|row| row.id == "/memory/release"));
     }
 
     #[test]

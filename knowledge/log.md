@@ -10,6 +10,18 @@
   `ProcessEventLog` now validates the guest-visible payload of message and
   tool-completion events against the committed limits and fails the append
   closed (TM-DOS-003).
+* **Content-hash tree**: Every committed node now publishes a structural
+  SHA-256 content hash covering its own subtree and nothing above it, so an
+  unchanged subtree keeps its hash across commits, forks, and snapshots. The
+  root hash is that tree's root rather than a digest of the whole serialized
+  root, `Process::node_hash` reads one node's hash, and a `Change` publishes
+  the hash each reported path and its ancestors now have, with `None` for a
+  removed path. Clients revalidate caches by content instead of discarding
+  everything a change could have touched. Snapshot format 8 to 9; mount paths
+  publish no hash because their content is external.
+* **Host overlays are not commits**: Lampa's bounded thread projection is a
+  host overlay, so appending to it refreshes only the overlay rows instead of
+  reporting a process commit at the current version.
 * **Non-blanking console cache**: A change notification reaches the root,
   because a write below a node changes that node's value and can change its
   child listing. Lampa discarded every touched entry, so any commit, including

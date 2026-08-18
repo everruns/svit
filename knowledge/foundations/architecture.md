@@ -64,7 +64,7 @@ the boundary.
 | Script library | Named source records stored with committed process state |
 | Mounts | Virtual external namespaces resolved lazily through host-attached providers, with committed descriptors, node facts, and granted access |
 | Lisp adapter | Converts values and exposes only the versioned Svit Lisp surface |
-| Snapshot | Versioned deterministic JSON encoding, SHA-256 root hash, restore validation, and fork source |
+| Snapshot | Versioned deterministic JSON encoding, structural SHA-256 root hash, restore validation, and fork source |
 | Process controller | Serializes multi-client commands, enforces version preconditions, and retains bounded retry receipts |
 | Persistence | One canonical `ProcessTransaction` stream per process; adapter-neutral envelope/reducer plus adapter-owned CAS, recovery checkpoints, snapshots, forks, cuts, and fencing |
 | Ports | `/ports` host integrations with explicit grants for HTTP, model calls, and local child execution |
