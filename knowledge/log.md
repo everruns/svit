@@ -1,5 +1,21 @@
 # Svit Knowledge Update Log
 
+## 2026-08-18
+
+* **Everruns 0.18 kernel boundary**: Moved the pinned Everruns `main` commit to
+  the 0.18 neutral-kernel layout. `everruns` no longer re-exports
+  `everruns-core`, and the provider-facing surface Svit consumes at the host
+  boundary (`typed_id`, `error`/`AgentLoopError`, `DriverRegistry`,
+  `ModelSpec`, `Provider`, `ToolResultImage`) now lives in `everruns-provider`.
+  Svit depends on `everruns-core` and `everruns-provider` directly instead of
+  routing those imports through the facade.
+* **Engine-owned sessions**: The one-shot native `llm` port now runs its turn
+  through `everruns::Engine::create`, because engines own the session lifecycle
+  and `Agent::session` is gone.
+* **Capability configuration**: The process and compaction capability
+  configuration uses `everruns::CapabilityRef`, the public name of the type
+  core previously re-exported as `AgentCapabilityConfig`.
+
 ## 2026-08-17
 
 * **Runnable reasoning contract reconciliation**: Made the canonical knowledge

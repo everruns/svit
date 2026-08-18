@@ -1,4 +1,5 @@
-use everruns::{ModelSpec, Provider};
+use everruns::Provider;
+use everruns_provider::ModelSpec;
 
 /// Host-selected model and provider used to reason about one Svit process.
 ///

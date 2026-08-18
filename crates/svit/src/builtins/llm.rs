@@ -17,8 +17,8 @@ impl Reasoner {
             .provider(self.provider().clone())
             .build()
             .map_err(|_| ())?;
-        let turn = agent
-            .session()
+        let turn = everruns::Engine::new()
+            .create(agent)
             .send_and_wait(prompt)
             .await
             .map_err(|_| ())?;

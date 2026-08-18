@@ -1,10 +1,10 @@
 //! Adapter-neutral contracts for durable process persistence.
 
 use async_trait::async_trait;
-use everruns::core::CompactionCheckpointStore;
-use everruns::core::events::Event;
-use everruns::core::typed_id::SessionId;
+use everruns_core::CompactionCheckpointStore;
+use everruns_core::events::Event;
 use everruns_host::EventLog;
+use everruns_provider::typed_id::SessionId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;

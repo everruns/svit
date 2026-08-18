@@ -55,8 +55,8 @@ pub use control::{
     ControlRequest, ControlRequestId, ControlResponse, ProcessController, ProcessObservation,
 };
 pub use error::{Error, Result};
-pub use everruns::core::Message;
 pub use everruns::{ContentPart, MessageRole, OpenAI};
+pub use everruns_core::Message;
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
 pub use mounts::{

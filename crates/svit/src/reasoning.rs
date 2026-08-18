@@ -5,21 +5,21 @@ use std::fmt;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use everruns::core::capabilities::{Capability, SystemPromptContext};
-use everruns::core::error::Result as EverrunsResult;
-use everruns::core::events::{Event, EventData, EventRequest, ToolCompletedData};
-use everruns::core::message_retriever::InputMessage;
-use everruns::core::tools::{Tool, ToolExecutionResult, ToolResultImage};
-use everruns::core::typed_id::{MessageId, SessionId};
-use everruns::core::{
-    AgentCapabilityConfig, AgentLoopError, CompactionCheckpointStore, ContentPart, DriverRegistry,
-    Message, MessageRole,
-};
+use everruns_core::capabilities::{Capability, SystemPromptContext};
+
+use everruns::CapabilityRef;
+use everruns_core::events::{Event, EventData, EventRequest, ToolCompletedData};
+use everruns_core::message_retriever::InputMessage;
+use everruns_core::tools::{Tool, ToolExecutionResult};
+use everruns_core::{CompactionCheckpointStore, ContentPart, Message, MessageRole};
 use everruns_host::{
     EventDurability, EventLog, EventLogError, EventPage, EventReadLimit, EventReadRequest,
     EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InMemoryEventLog,
     InProcessRuntime, InProcessRuntimeBuilder, TurnResult, TurnStopReason,
 };
+use everruns_provider::error::Result as EverrunsResult;
+use everruns_provider::typed_id::{MessageId, SessionId};
+use everruns_provider::{AgentLoopError, DriverRegistry, ToolResultImage};
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
@@ -1311,8 +1311,8 @@ impl ReasoningLoopBuilder {
             process: process.clone(),
             ports: ports.clone(),
         };
-        let capability_config = AgentCapabilityConfig::new(PROCESS_CAPABILITY_ID);
-        let compaction_config = AgentCapabilityConfig::new("compaction").config(json!({
+        let capability_config = CapabilityRef::new(PROCESS_CAPABILITY_ID);
+        let compaction_config = CapabilityRef::new("compaction").config(json!({
             "strategy": "auto",
             "proactive": true,
             "budget_percent": 0.85,
@@ -2046,7 +2046,7 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
 
 #[cfg(test)]
 mod tests {
-    use everruns::core::events::{EventContext, InputMessageData};
+    use everruns_core::events::{EventContext, InputMessageData};
 
     use super::*;
 

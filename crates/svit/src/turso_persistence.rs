@@ -4,17 +4,18 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use everruns::core::events::{
+use everruns_core::events::{
     Event, EventRequest, INPUT_MESSAGE, OUTPUT_MESSAGE_COMPLETED, TOOL_COMPLETED,
 };
-use everruns::core::typed_id::{EventId, SessionId};
-use everruns::core::{
-    AgentLoopError, CompactionCheckpoint, CompactionCheckpointPayload, CompactionCheckpointStore,
+use everruns_core::{
+    CompactionCheckpoint, CompactionCheckpointPayload, CompactionCheckpointStore,
     ProactiveCompactionAttempt, ProactiveCompactionAttemptTracker,
 };
 use everruns_host::{
     EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest, EventReader,
 };
+use everruns_provider::AgentLoopError;
+use everruns_provider::typed_id::{EventId, SessionId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use turso::transaction::{Transaction, TransactionBehavior};
@@ -820,7 +821,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns::core::error::Result<Option<CompactionCheckpoint>> {
+    ) -> everruns_provider::error::Result<Option<CompactionCheckpoint>> {
         let connection = self
             .store
             .database
@@ -880,7 +881,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
     async fn install(
         &self,
         checkpoint: CompactionCheckpoint,
-    ) -> everruns::core::error::Result<bool> {
+    ) -> everruns_provider::error::Result<bool> {
         if checkpoint.source_sequence < 0 {
             return Err(AgentLoopError::store(
                 "checkpoint source sequence is invalid",
@@ -946,7 +947,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns::core::error::Result<Option<ProactiveCompactionAttempt>> {
+    ) -> everruns_provider::error::Result<Option<ProactiveCompactionAttempt>> {
         Ok(self
             .store
             .proactive_attempts
@@ -960,7 +961,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         provider_type: &str,
         model: &str,
         attempt: ProactiveCompactionAttempt,
-    ) -> everruns::core::error::Result<()> {
+    ) -> everruns_provider::error::Result<()> {
         self.store
             .proactive_attempts
             .record(session_id, provider_type, model, attempt)
@@ -2824,8 +2825,8 @@ mod tests {
     use super::*;
     use crate::persistence::DurableProcessHandle;
     use crate::value;
-    use everruns::core::Message;
-    use everruns::core::events::{EventContext, InputMessageData};
+    use everruns_core::Message;
+    use everruns_core::events::{EventContext, InputMessageData};
     use everruns_host::EventReadLimit;
 
     #[test]
