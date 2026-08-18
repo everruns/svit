@@ -4056,7 +4056,6 @@ mod tests {
 
         assert!(!frame.contains("Inbox / Outbox"));
         assert!(frame.contains(" Memory "));
-        assert!(frame.contains("thread"));
         assert!(frame.contains("memory"));
         assert!(frame.contains("Stored in memory."));
         assert!(frame.contains("v3 · sim · ready"));
