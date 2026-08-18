@@ -3870,6 +3870,9 @@ mod tests {
         app.push_user(Message::user("Remember the release color."));
         app.push_message(Message::assistant("Stored in memory."));
         app.finish_turn();
+        // Committed thread history invalidates the resolved nodes, so the
+        // frame renders after the per-frame resolution the console runs.
+        app.app.resolve(&app.view);
         let theme = lampa_theme();
         let probes = UiProbes::default();
         let root = build_view(&mut app, Rect::new(0, 0, 90, 24), &theme, &probes);

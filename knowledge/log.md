@@ -2,6 +2,18 @@
 
 ## 2026-08-18
 
+* **Bounded event payloads**: Restored the process limit on canonical event
+  payloads. Externalizing thread history moved model and tool output out of
+  validated process memory and into the paged EventLog, where no Svit
+  validation ran, so an activation could commit output beyond
+  `max_text_bytes` and its terminal failure never reached subscribers.
+  `ProcessEventLog` now validates the guest-visible payload of message and
+  tool-completion events against the committed limits and fails the append
+  closed (TM-DOS-003).
+* **Lampa first frame after a commit**: Committed thread history invalidates
+  resolved nodes, so a frame is meaningful only after the console's per-frame
+  resolution. The headless frame test now renders in that order rather than
+  painting an invalidated tree.
 * **Everruns 0.18 kernel boundary**: Moved the pinned Everruns `main` commit to
   the 0.18 neutral-kernel layout. `everruns` no longer re-exports
   `everruns-core`, and the provider-facing surface Svit consumes at the host
