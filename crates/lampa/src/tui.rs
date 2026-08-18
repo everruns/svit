@@ -4056,6 +4056,9 @@ mod tests {
 
         assert!(!frame.contains("Inbox / Outbox"));
         assert!(frame.contains(" Memory "));
+        // A commit no longer blanks the tree, so both top-level sections are
+        // on screen in this viewport.
+        assert!(frame.contains("thread"));
         assert!(frame.contains("memory"));
         assert!(frame.contains("Stored in memory."));
         assert!(frame.contains("v3 · sim · ready"));
