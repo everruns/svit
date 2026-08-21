@@ -6,6 +6,8 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Advance the Everruns `main` lock from `18296be8` to `66c20400`, including
+  `everruns` 0.18.2, `everruns-host` 0.20.1, and test support 0.18.2.
 - Define `Svit` as the primary runnable contract: one reason/act loop, durable
   conversation thread, and serializable `Process`, with the embedding
   application as host and `Reasoner` as model/provider configuration.

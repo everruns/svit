@@ -1030,7 +1030,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1055,8 +1055,8 @@ dependencies = [
 
 [[package]]
 name = "everruns"
-version = "0.18.1"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+version = "0.18.2"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1075,7 +1075,7 @@ dependencies = [
 [[package]]
 name = "everruns-builtins"
 version = "0.18.1"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1093,7 +1093,7 @@ dependencies = [
 [[package]]
 name = "everruns-capability"
 version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "serde",
  "serde_json",
@@ -1102,7 +1102,7 @@ dependencies = [
 [[package]]
 name = "everruns-core"
 version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1133,7 +1133,7 @@ dependencies = [
 [[package]]
 name = "everruns-engine"
 version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1152,8 +1152,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-host"
-version = "0.19.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+version = "0.20.1"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1175,8 +1175,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-llmsim"
-version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+version = "0.18.2"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1191,7 +1191,7 @@ dependencies = [
 [[package]]
 name = "everruns-openai"
 version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "async-trait",
  "chrono",
@@ -1206,7 +1206,7 @@ dependencies = [
 [[package]]
 name = "everruns-provider"
 version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1233,8 +1233,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-test-support"
-version = "0.18.0"
-source = "git+https://github.com/everruns/everruns?branch=main#18296be8fc66be3fdd5c748b0d52098e5b8738aa"
+version = "0.18.2"
+source = "git+https://github.com/everruns/everruns?branch=main#66c20400b0bcd4e14cb6552bf477f1a21d437250"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2656,7 +2656,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3206,7 +3206,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3722,7 +3722,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3780,7 +3780,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4334,7 +4334,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5605,7 +5605,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

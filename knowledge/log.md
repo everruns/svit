@@ -2,6 +2,10 @@
 
 ## 2026-08-20
 
+* **Everruns dependency refresh**: Advanced the locked Everruns `main`
+  revision from `18296be8` to `66c20400`. The resolved facade and test support
+  are 0.18.2 and `everruns-host` is 0.20.1; the Svit integration compiled
+  without an API adaptation.
 * **Explicit port grants**: Removed the authority-bearing standard port bundle
   and build-time reasoner/HTTP derivation. Hosts now register `http`, `llm`, and
   `spawn` individually. Allowlisted HTTP remains the default explicit form;
