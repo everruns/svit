@@ -11,6 +11,19 @@
   Astro 7, Tailwind 4, pnpm, Nimbus Docs, and Cloudflare static-assets stack;
   its build synchronizes `README.md`, `SECURITY.md`, `CHANGELOG.md`, and public
   `docs/` sources into generated content rather than maintaining a second copy.
+* **Bounded canonical history**: Canonical reasoning events were append-only
+  with no retention boundary, so a long-lived Svit grew without bound on disk
+  and a volatile one grew in host memory for its whole lifetime; `cut` bounded
+  only the process transaction log. `ThreadHistoryRetention` adds an explicit
+  host cut that reclaims every event at or below a boundary and records that
+  boundary durably. It fails closed unless a compaction checkpoint already
+  replaced the prefix, the boundary is inside the committed range, and no fork
+  inherits it (TM-AUD-002). The recorded boundary is a floor rather than a
+  deletion marker: reads start after it, a cursor below it expires, and
+  appended events never reuse a reclaimed sequence. Volatile Svit instances now
+  own their compaction checkpoints so they enforce the identical contract.
+  Retention stays manual host policy (`L-050`), the memory tree still has no
+  aggregate bound (`L-051`), and blob reclamation remains cut-local (`L-052`).
 
 ## 2026-08-20
 

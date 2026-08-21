@@ -41,6 +41,11 @@ implementation and authority remain host-owned. Svit suspends and replays pure
 guest execution around the async call, then commits guest state once. External
 effects are immediate and cannot be rolled back with that state.
 
+- **Thread history retention**: an explicit host cut that reclaims every
+  canonical event at or below a boundary a compaction checkpoint already
+  replaced. Nothing reclaims history automatically, and a prefix a fork
+  inherits cannot be cut.
+
 `/thread` contains host-managed, guest-readable loop and replay state. The
 namespace reserves `/tasks` and `/children`; `/inbox` is a host-managed durable
 input queue. `/mounts` contains

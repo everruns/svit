@@ -23,11 +23,11 @@ use turso::{Connection, Database, Row, Value as SqlValue, params};
 
 use crate::persistence::{
     DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
-    TransactionHead, TransactionQuery,
+    ThreadHistoryCut, ThreadHistoryRetention, TransactionHead, TransactionQuery,
 };
 use crate::{Activation, Error, Mount, Ports, Process, ProcessId, Result, Value};
 
-const SCHEMA_VERSION: &str = "2";
+const SCHEMA_VERSION: &str = "3";
 const BASE_FORMAT: &str = "svit-base@1";
 const SNAPSHOT_FORMAT: &str = "svit-store-snapshot@2";
 const LEGACY_SNAPSHOT_FORMAT: &str = "svit-store-snapshot@1";
@@ -123,6 +123,14 @@ CREATE TABLE IF NOT EXISTS thread_event_refs (
 );
 CREATE INDEX IF NOT EXISTS thread_event_refs_by_parent
     ON thread_event_refs(parent_address, session_id, through_sequence);
+
+CREATE TABLE IF NOT EXISTS thread_history_cuts (
+    address TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    cut_through_sequence INTEGER NOT NULL,
+    PRIMARY KEY(address, session_id),
+    FOREIGN KEY(address) REFERENCES svits(address) ON DELETE CASCADE
+);
 
 CREATE TABLE IF NOT EXISTS thread_compaction_checkpoints (
     address TEXT NOT NULL,
@@ -520,13 +528,21 @@ impl EventReader for TursoThreadEventLog {
             .connect()
             .map_err(|_| thread_event_backend())?;
         let current_high = thread_history_high(&connection, &self.address, session_id, 0).await?;
+        // A retention cut removed everything at or below this boundary, so a
+        // read starts after it instead of reporting a sequence gap.
+        let floor = thread_history_floor(&connection, &self.address, session_id).await?;
 
         let (after, snapshot) = match request.cursor() {
-            None => (0, current_high),
+            None => (floor, current_high),
             Some(cursor) => {
                 if cursor.session_id() != session_id {
                     return Err(EventLogError::CrossSessionCursor {
                         detail: "cursor belongs to another session".into(),
+                    });
+                }
+                if cursor.after_sequence() < floor {
+                    return Err(EventLogError::ExpiredCursor {
+                        detail: "cursor precedes the retained history boundary".into(),
                     });
                 }
                 let snapshot = cursor.snapshot_high_watermark().unwrap_or(current_high);
@@ -579,6 +595,32 @@ impl EventReader for TursoThreadEventLog {
             })
             .transpose()?;
         EventPage::new(events, next_cursor, snapshot)
+    }
+}
+
+#[async_trait]
+impl ThreadHistoryRetention for TursoThreadEventLog {
+    async fn retained_from(&self, session_id: SessionId) -> Result<i32> {
+        let connection = self.store.database.connect().map_err(store_error)?;
+        thread_history_floor(&connection, &self.address, session_id)
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))
+    }
+
+    async fn compacted_through(&self, session_id: SessionId) -> Result<i32> {
+        self.store
+            .compacted_through(&self.address, session_id)
+            .await
+    }
+
+    async fn cut_thread_events(
+        &self,
+        session_id: SessionId,
+        through_sequence: i32,
+    ) -> Result<ThreadHistoryCut> {
+        self.store
+            .cut_thread_events(&self.address, session_id, through_sequence)
+            .await
     }
 }
 
@@ -653,6 +695,46 @@ impl EventLog for TursoThreadEventLog {
     }
 }
 
+async fn thread_history_floor(
+    connection: &Connection,
+    address: &ProcessId,
+    session_id: SessionId,
+) -> std::result::Result<i32, EventLogError> {
+    let mut rows = connection
+        .query(
+            "SELECT cut_through_sequence FROM thread_history_cuts \
+             WHERE address = ?1 AND session_id = ?2",
+            params![address.as_str(), session_id.to_string()],
+        )
+        .await
+        .map_err(|_| thread_event_backend())?;
+    let Some(row) = rows.next().await.map_err(|_| thread_event_backend())? else {
+        return Ok(0);
+    };
+    i32::try_from(u64_column(&row, 0).map_err(thread_event_corruption)?)
+        .map_err(|_| thread_event_corruption("event sequence exceeds the supported range"))
+}
+
+async fn thread_history_floor_in_transaction(
+    transaction: &Transaction<'_>,
+    address: &ProcessId,
+    session_id: SessionId,
+) -> Result<i32> {
+    let mut rows = transaction
+        .query(
+            "SELECT cut_through_sequence FROM thread_history_cuts \
+             WHERE address = ?1 AND session_id = ?2",
+            params![address.as_str(), session_id.to_string()],
+        )
+        .await
+        .map_err(store_error)?;
+    let Some(row) = rows.next().await.map_err(store_error)? else {
+        return Ok(0);
+    };
+    i32::try_from(u64_column(&row, 0)?)
+        .map_err(|_| Error::InvalidPersistence("event sequence exceeds the supported range".into()))
+}
+
 async fn thread_history_high(
     connection: &Connection,
     address: &ProcessId,
@@ -680,7 +762,12 @@ async fn thread_history_high(
         .unwrap_or(0);
     drop(rows);
     let inherited = thread_event_ref(connection, address, session_id).await?;
-    Ok(own_high.max(inherited.map(|(_, through)| through).unwrap_or(0)))
+    // A reclaimed prefix still bounds the session: sequence allocation must
+    // never reuse a cut sequence, even when every stored event is gone.
+    let floor = thread_history_floor(connection, address, session_id).await?;
+    Ok(own_high
+        .max(inherited.map(|(_, through)| through).unwrap_or(0))
+        .max(floor))
 }
 
 async fn thread_history_high_in_transaction(
@@ -725,7 +812,25 @@ async fn thread_history_high_in_transaction(
                 .map_err(|_| thread_event_corruption("event sequence exceeds the supported range"))
         })
         .transpose()?;
-    Ok(own_high.max(inherited.unwrap_or(0)))
+    drop(refs);
+    let mut cuts = transaction
+        .query(
+            "SELECT cut_through_sequence FROM thread_history_cuts \
+             WHERE address = ?1 AND session_id = ?2",
+            params![address.as_str(), session_id.to_string()],
+        )
+        .await
+        .map_err(|_| thread_event_backend())?;
+    let floor = cuts
+        .next()
+        .await
+        .map_err(|_| thread_event_backend())?
+        .map(|row| {
+            i32::try_from(u64_column(&row, 0).map_err(thread_event_corruption)?)
+                .map_err(|_| thread_event_corruption("event sequence exceeds the supported range"))
+        })
+        .transpose()?;
+    Ok(own_high.max(inherited.unwrap_or(0)).max(floor.unwrap_or(0)))
 }
 
 async fn thread_event_ref(
@@ -1056,6 +1161,121 @@ impl TursoProcessStore {
         })
     }
 
+    async fn compacted_through(&self, address: &ProcessId, session_id: SessionId) -> Result<i32> {
+        let connection = self.database.connect().map_err(store_error)?;
+        let mut rows = connection
+            .query(
+                "SELECT MAX(source_sequence) FROM thread_compaction_checkpoints \
+                 WHERE address = ?1 AND session_id = ?2",
+                params![address.as_str(), session_id.to_string()],
+            )
+            .await
+            .map_err(store_error)?;
+        let Some(row) = rows.next().await.map_err(store_error)? else {
+            return Ok(0);
+        };
+        let Some(sequence) = optional_u64(&row, 0)? else {
+            return Ok(0);
+        };
+        i32::try_from(sequence).map_err(|_| {
+            Error::InvalidPersistence(
+                "checkpoint source sequence exceeds the supported range".into(),
+            )
+        })
+    }
+
+    // THREAT[TM-AUD-002]: Reclaiming canonical history is host policy, never an
+    // automatic side effect of a turn. The boundary must be inside the
+    // committed range, already replaced by a compaction checkpoint, and free of
+    // fork references before any event bytes are removed.
+    async fn cut_thread_events(
+        &self,
+        address: &ProcessId,
+        session_id: SessionId,
+        through_sequence: i32,
+    ) -> Result<ThreadHistoryCut> {
+        if through_sequence <= 0 {
+            return Err(Error::ThreadHistoryBoundary);
+        }
+        let mut connection = self.write_connection().await?;
+        let transaction = connection.transaction().await.map_err(store_error)?;
+        let high = thread_history_high_in_transaction(&transaction, address, session_id)
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
+        if through_sequence > high {
+            return Err(Error::ThreadHistoryBoundary);
+        }
+        let floor = thread_history_floor_in_transaction(&transaction, address, session_id).await?;
+        if through_sequence <= floor {
+            return Ok(ThreadHistoryCut::new(0, floor));
+        }
+        // THREAT[TM-FORK-003]: A child inherits this session's prefix from
+        // sequence one, so any retained reference overlaps every cut.
+        let mut references = transaction
+            .query(
+                "SELECT 1 FROM thread_event_refs \
+                 WHERE parent_address = ?1 AND session_id = ?2 LIMIT 1",
+                params![address.as_str(), session_id.to_string()],
+            )
+            .await
+            .map_err(store_error)?;
+        if references.next().await.map_err(store_error)?.is_some() {
+            return Err(Error::ThreadHistoryPinned);
+        }
+        drop(references);
+        if self.compacted_through(address, session_id).await? < through_sequence {
+            return Err(Error::ThreadHistoryUncompacted);
+        }
+
+        let mut rows = transaction
+            .query(
+                "SELECT event_blob_hash FROM thread_events \
+                 WHERE address = ?1 AND session_id = ?2 AND sequence <= ?3",
+                params![
+                    address.as_str(),
+                    session_id.to_string(),
+                    i64::from(through_sequence)
+                ],
+            )
+            .await
+            .map_err(store_error)?;
+        let mut blob_hashes = Vec::new();
+        while let Some(row) = rows.next().await.map_err(store_error)? {
+            blob_hashes.push(text(&row, 0)?);
+        }
+        drop(rows);
+        let removed = transaction
+            .execute(
+                "DELETE FROM thread_events \
+                 WHERE address = ?1 AND session_id = ?2 AND sequence <= ?3",
+                params![
+                    address.as_str(),
+                    session_id.to_string(),
+                    i64::from(through_sequence)
+                ],
+            )
+            .await
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "INSERT INTO thread_history_cuts (address, session_id, cut_through_sequence) \
+                 VALUES (?1, ?2, ?3) \
+                 ON CONFLICT(address, session_id) DO UPDATE SET cut_through_sequence = ?3",
+                params![
+                    address.as_str(),
+                    session_id.to_string(),
+                    i64::from(through_sequence)
+                ],
+            )
+            .await
+            .map_err(store_error)?;
+        for hash in &blob_hashes {
+            delete_unreferenced_blob(&transaction, hash).await?;
+        }
+        transaction.commit().await.map_err(store_error)?;
+        Ok(ThreadHistoryCut::new(removed, through_sequence))
+    }
+
     async fn import_thread_events(&self, address: &ProcessId, events: &[Event]) -> Result<()> {
         let Some(session_id) = events.first().map(|event| event.session_id) else {
             return Ok(());
@@ -1159,8 +1379,11 @@ impl TursoProcessStore {
         let high = thread_history_high(&connection, address, session_id, 0)
             .await
             .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
+        let floor = thread_history_floor(&connection, address, session_id)
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
         let mut events = Vec::with_capacity(limit);
-        for sequence in (1..=high).rev() {
+        for sequence in ((floor + 1)..=high).rev() {
             let event = thread_event_at(&connection, address, session_id, sequence, 0)
                 .await
                 .map_err(|error| Error::InvalidPersistence(error.to_string()))?
@@ -1189,8 +1412,11 @@ impl TursoProcessStore {
         let high = thread_history_high(&connection, address, session_id, 0)
             .await
             .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
+        let floor = thread_history_floor(&connection, address, session_id)
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
         let mut events = Vec::with_capacity(limit);
-        for sequence in (1..=high).rev() {
+        for sequence in ((floor + 1)..=high).rev() {
             let event = thread_event_at(&connection, address, session_id, sequence, 0)
                 .await
                 .map_err(|error| Error::InvalidPersistence(error.to_string()))?
@@ -1270,7 +1496,9 @@ impl TursoProcessStore {
             .ok_or(Error::PersistenceUnavailable)?;
         match text(&row, 0)?.as_str() {
             SCHEMA_VERSION => {}
-            "1" => {
+            // Every release adds tables with `CREATE TABLE IF NOT EXISTS`, so
+            // an older database is upgraded by the schema batch above.
+            "1" | "2" => {
                 connection
                     .execute(
                         "UPDATE svit_meta SET value = ?1 WHERE key = 'schema_version'",
@@ -2345,6 +2573,13 @@ impl DurableProcessHandle for DurableProcess {
 
     fn compaction_checkpoint_store(&self) -> Arc<dyn CompactionCheckpointStore> {
         Arc::new(TursoCompactionCheckpointStore {
+            store: self.store.clone(),
+            address: self.process.id().clone(),
+        })
+    }
+
+    fn thread_history_retention(&self) -> Arc<dyn ThreadHistoryRetention> {
+        Arc::new(TursoThreadEventLog {
             store: self.store.clone(),
             address: self.process.id().clone(),
         })

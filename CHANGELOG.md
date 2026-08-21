@@ -4,6 +4,21 @@ All notable changes to Svit will be documented here.
 
 ## Unreleased
 
+### Added
+
+- Bound canonical event history with an explicit retention cut.
+  `Svit::cut_thread_events` and the `ThreadHistoryRetention` contract reclaim
+  every event at or below a chosen boundary, and
+  `Svit::compacted_thread_events_through` reports the largest boundary that is
+  currently safe. A cut is refused unless a compaction checkpoint already
+  replaced the prefix, the boundary sits inside the committed range, and no
+  fork inherits it. The boundary is recorded durably, so reads start after it
+  and appended events never reuse a reclaimed sequence. Turso schema version 3
+  adds `thread_history_cuts`; older databases upgrade in place.
+- Give volatile Svit instances the same retention and compaction-checkpoint
+  surface as durable ones, so an in-memory reason/act loop no longer grows for
+  its whole lifetime.
+
 ### Changed
 
 - Advance the Everruns `main` lock from `18296be8` to `66c20400`, including

@@ -482,6 +482,9 @@ fn failure(error: Error) -> ControlFailure {
         Error::PersistenceReferenced => "persistence_referenced",
         Error::InvalidPersistence(_) => "invalid_persistence",
         Error::PersistenceUnavailable => "persistence_unavailable",
+        Error::ThreadHistoryPinned => "thread_history_pinned",
+        Error::ThreadHistoryUncompacted => "thread_history_uncompacted",
+        Error::ThreadHistoryBoundary => "thread_history_boundary",
     };
     ControlFailure {
         code: code.into(),

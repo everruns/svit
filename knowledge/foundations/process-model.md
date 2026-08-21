@@ -59,6 +59,12 @@ model context with a compact payload plus a raw suffix while leaving canonical
 events queryable. A presentation host may overlay a bounded recent-event or
 message window below `/thread`, but that overlay is not a process value,
 snapshot content, or guest context.
+Canonical events are append-only, so a long-lived Svit stays bounded only when
+the host reclaims history it no longer needs. `cut_thread_events` removes every
+event at or below an explicit boundary and records that boundary durably, and
+it is refused unless a compaction checkpoint already replaced the prefix and no
+fork inherits it. Retention is host policy: a turn never reclaims history on its
+own. Volatile and durable Svit instances enforce the same rules.
 Each `/ports/<name>` record contains a contract version, description, input schema,
 output contract, effect class, and limits. `/thread` and `/ports` are guest-readable but writable only through the
 trusted host boundary. `/inbox` is appended and acknowledged only

@@ -56,6 +56,9 @@ The following scenarios execute with assertions and deterministic output under
 - a real folder, a materialized Turso query, and a writable folder mounted
   together, read lazily with node facts, and written back under an explicit
   grant while a read-only mount refuses the same write.
+- a compacted prefix of canonical history reclaimed by an explicit retention
+  cut, refused before its compaction checkpoint exists, with the retained tail
+  readable, its sequences never reused, and the boundary preserved by resume;
 - a process-only fork starting a new session, plus a durable fork continuing
   an immutable inherited event prefix without copying it into the process root.
 - a started Svit drains its durable inbox, emits completed turns, and leaves a
@@ -131,6 +134,11 @@ The following scenarios execute with assertions and deterministic output under
 - reasoning startup reads its compact Everruns checkpoint and required paged
   EventLog suffix without decoding history from `/thread`; canonical appends
   are observable through `SvitEvent::CanonicalEvent`.
+- a thread-history retention cut reclaims only a prefix a compaction checkpoint
+  already replaced, refuses a boundary outside the committed range, refuses a
+  prefix a fork inherits, is idempotent when repeated, survives resume, and
+  leaves reads and sequence allocation consistent across the reclaimed
+  boundary; volatile and durable owners are covered by the same assertions.
 - cumulative thread history does not consume one guest value's entry budget;
   every event and message remains independently validated, while the host
   collections fail closed at their separate record and encoded-byte envelope.

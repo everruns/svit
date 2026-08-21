@@ -498,6 +498,73 @@ impl TransactionQuery {
     }
 }
 
+/// Outcome of one canonical event-history retention cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThreadHistoryCut {
+    removed_events: u64,
+    retained_from: i32,
+}
+
+impl ThreadHistoryCut {
+    /// Creates one retention outcome from adapter-owned counters.
+    pub fn new(removed_events: u64, retained_from: i32) -> Self {
+        Self {
+            removed_events,
+            retained_from,
+        }
+    }
+
+    /// Returns how many stored events this cut removed.
+    pub fn removed_events(&self) -> u64 {
+        self.removed_events
+    }
+
+    /// Returns the highest sequence this session no longer retains.
+    ///
+    /// Reads start after this boundary and appended sequences never reuse it.
+    pub fn retained_from(&self) -> i32 {
+        self.retained_from
+    }
+}
+
+/// Reclaims a summarized prefix of one session's canonical event history.
+///
+/// Canonical events are append-only, so a long-lived Svit grows without bound
+/// unless the host reclaims history it no longer needs. A cut is a storage
+/// lifecycle operation like [`DurableProcessHandle::cut`]: it changes retention
+/// only, never process version, root hash, or event sequence allocation.
+#[async_trait]
+pub trait ThreadHistoryRetention: Send + Sync {
+    /// Returns the highest sequence this session no longer retains.
+    ///
+    /// Zero means the complete history is retained.
+    async fn retained_from(&self, session_id: SessionId) -> Result<i32>;
+
+    /// Returns the highest sequence a compaction checkpoint already replaced.
+    ///
+    /// Zero means no checkpoint covers this session, so no prefix is safe to
+    /// reclaim.
+    async fn compacted_through(&self, session_id: SessionId) -> Result<i32>;
+
+    /// Removes every retained event at or below `through_sequence`.
+    ///
+    /// Implementations must fail closed:
+    ///
+    /// - [`crate::Error::ThreadHistoryBoundary`] when the boundary is not a
+    ///   positive sequence at or below the committed high watermark;
+    /// - [`crate::Error::ThreadHistoryUncompacted`] when no compaction
+    ///   checkpoint covers the boundary, because the loop would silently lose
+    ///   context it can no longer reconstruct;
+    /// - [`crate::Error::ThreadHistoryPinned`] when a fork inherits the prefix.
+    ///
+    /// Cutting a boundary already reclaimed is idempotent and removes nothing.
+    async fn cut_thread_events(
+        &self,
+        session_id: SessionId,
+        through_sequence: i32,
+    ) -> Result<ThreadHistoryCut>;
+}
+
 /// Creates and resumes durable process handles without exposing adapter internals.
 #[async_trait]
 pub trait ProcessStore: Send + Sync {
@@ -550,6 +617,10 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     /// Checkpoints compact model context only; the canonical event history
     /// remains readable through [`Self::event_log`].
     fn compaction_checkpoint_store(&self) -> Arc<dyn CompactionCheckpointStore>;
+    /// Returns the retention control paired with this process event log.
+    ///
+    /// Retention is host policy: nothing reclaims canonical history on its own.
+    fn thread_history_retention(&self) -> Arc<dyn ThreadHistoryRetention>;
     /// Returns whether this process inherited the supplied session's immutable
     /// event-history prefix through a durable fork boundary.
     async fn continues_thread_history(&self, session_id: SessionId) -> Result<bool>;

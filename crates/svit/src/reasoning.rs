@@ -14,8 +14,8 @@ use everruns_core::tools::{Tool, ToolExecutionResult};
 use everruns_core::{CompactionCheckpointStore, ContentPart, Message, MessageRole};
 use everruns_host::{
     EventDurability, EventLog, EventLogError, EventPage, EventReadLimit, EventReadRequest,
-    EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InMemoryEventLog,
-    InProcessRuntime, InProcessRuntimeBuilder, TurnResult, TurnStopReason,
+    EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InProcessRuntime,
+    InProcessRuntimeBuilder, TurnResult, TurnStopReason,
 };
 use everruns_provider::error::Result as EverrunsResult;
 use everruns_provider::typed_id::{MessageId, SessionId};
@@ -25,10 +25,12 @@ use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+use crate::thread_history::VolatileThreadEventLog;
 use crate::tools::{FunctionTool, tool_error, tool_json};
 use crate::{
     Activation, ActivationHook, Change, DurableProcessHandle, Limits, MessageIntent, Mount, Ports,
-    Process, ProcessBuilder, ProcessId, Reasoner, Script, Value,
+    Process, ProcessBuilder, ProcessId, Reasoner, Script, ThreadHistoryCut, ThreadHistoryRetention,
+    Value,
 };
 
 const THREAD_STATE_PATH: &str = "/thread";
@@ -183,7 +185,8 @@ struct ProcessState {
     owner: Arc<AsyncMutex<Box<dyn ProcessOwner>>>,
     event_sender: broadcast::Sender<SvitEvent>,
     event_log: Arc<dyn EventLog>,
-    compaction_checkpoints: Option<Arc<dyn CompactionCheckpointStore>>,
+    compaction_checkpoints: Arc<dyn CompactionCheckpointStore>,
+    thread_retention: Arc<dyn ThreadHistoryRetention>,
     durable: bool,
 }
 
@@ -207,12 +210,18 @@ impl ProcessState {
     fn volatile(process: Process) -> Self {
         let view = Arc::new(Mutex::new(process.clone()));
         let (event_sender, _) = broadcast::channel(64);
+        // The volatile log owns its compaction checkpoints so a volatile Svit
+        // can reclaim canonical history under the same retention rules as a
+        // durable one instead of growing for its whole lifetime.
+        let event_log = Arc::new(VolatileThreadEventLog::new());
+        let compaction_checkpoints = Arc::new(event_log.checkpoint_store());
         Self {
             view,
             owner: Arc::new(AsyncMutex::new(Box::new(VolatileProcess { process }))),
             event_sender,
-            event_log: Arc::new(InMemoryEventLog::new()),
-            compaction_checkpoints: None,
+            thread_retention: event_log.clone(),
+            event_log,
+            compaction_checkpoints,
             durable: false,
         }
     }
@@ -221,13 +230,15 @@ impl ProcessState {
         let process = handle.process_projection();
         let event_log = handle.event_log();
         let compaction_checkpoints = handle.compaction_checkpoint_store();
+        let thread_retention = handle.thread_history_retention();
         let (event_sender, _) = broadcast::channel(64);
         Ok(Self {
             view: Arc::new(Mutex::new(process)),
             owner: Arc::new(AsyncMutex::new(Box::new(PersistedProcess { handle }))),
             event_sender,
             event_log,
-            compaction_checkpoints: Some(compaction_checkpoints),
+            compaction_checkpoints,
+            thread_retention,
             durable: true,
         })
     }
@@ -410,6 +421,24 @@ impl ProcessState {
             };
             request = EventReadRequest::from_cursor(cursor, page_limit);
         }
+    }
+
+    async fn retained_thread_events_from(&self, session_id: SessionId) -> crate::Result<i32> {
+        self.thread_retention.retained_from(session_id).await
+    }
+
+    async fn compacted_thread_events_through(&self, session_id: SessionId) -> crate::Result<i32> {
+        self.thread_retention.compacted_through(session_id).await
+    }
+
+    async fn cut_thread_events(
+        &self,
+        session_id: SessionId,
+        through_sequence: i32,
+    ) -> crate::Result<ThreadHistoryCut> {
+        self.thread_retention
+            .cut_thread_events(session_id, through_sequence)
+            .await
     }
 
     async fn continues_thread_history(&self, session_id: SessionId) -> crate::Result<bool> {
@@ -763,6 +792,55 @@ impl Svit {
         Ok(self
             .process
             .recent_thread_events(self.session_id, limit)
+            .await?)
+    }
+
+    /// Returns the highest event sequence this Svit no longer retains.
+    ///
+    /// Zero means the complete canonical history is retained.
+    pub async fn retained_thread_events_from(&self) -> SvitResult<i32> {
+        Ok(self
+            .process
+            .retained_thread_events_from(self.session_id)
+            .await?)
+    }
+
+    /// Returns the highest event sequence a compaction checkpoint replaced.
+    ///
+    /// This is the largest boundary [`Svit::cut_thread_events`] accepts, so a
+    /// host schedules retention against it instead of guessing.
+    pub async fn compacted_thread_events_through(&self) -> SvitResult<i32> {
+        Ok(self
+            .process
+            .compacted_thread_events_through(self.session_id)
+            .await?)
+    }
+
+    /// Reclaims every canonical event at or below `through_sequence`.
+    ///
+    /// Canonical history is append-only, so a long-lived Svit needs an explicit
+    /// retention boundary to stay bounded. Reclaiming is host policy: a turn
+    /// never removes history on its own. The call fails closed when the
+    /// boundary is outside the committed range, is not already replaced by a
+    /// compaction checkpoint, or is inherited by a fork.
+    ///
+    /// Volatile and durable Svit instances enforce the same rules; only the
+    /// storage that is reclaimed differs.
+    ///
+    /// ```no_run
+    /// # async fn example(svit: &mut svit::Svit) -> svit::SvitResult<()> {
+    /// let compacted = svit.compacted_thread_events_through().await?;
+    /// if compacted > 0 {
+    ///     let cut = svit.cut_thread_events(compacted).await?;
+    ///     println!("reclaimed {} events", cut.removed_events());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn cut_thread_events(&self, through_sequence: i32) -> SvitResult<ThreadHistoryCut> {
+        Ok(self
+            .process
+            .cut_thread_events(self.session_id, through_sequence)
             .await?)
     }
 
@@ -1310,14 +1388,12 @@ impl ReasoningLoopBuilder {
             process.clone(),
             stored_state.as_ref(),
         )?);
-        let mut backends = HostBackends::in_memory()
+        let backends = HostBackends::in_memory()
             .with_event_log(event_log)
             .with_event_sink(Arc::new(SvitEventSink {
                 sender: process.event_sender(),
-            }));
-        if let Some(checkpoints) = process.compaction_checkpoints.clone() {
-            backends = backends.with_compaction_checkpoint_store(checkpoints);
-        }
+            }))
+            .with_compaction_checkpoint_store(process.compaction_checkpoints.clone());
         let mut drivers = DriverRegistry::new();
         drivers.register_provider(provider)?;
         // Svit is an advanced Everruns host because it owns both the execution
