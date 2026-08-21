@@ -1,6 +1,6 @@
 //! Host-provided `/ports` ports for process-owned runtimes.
 //!
-//! Each standard port lives in its own module. Hosts can add individual
+//! Each built-in port lives in its own module. Hosts add individual
 //! [`Port`] implementations or bundles through [`PortExtension`].
 //! Ports receive only explicit input and a read-only process context.
 
@@ -25,7 +25,7 @@ pub use http::{
     ReqwestHttpTransport,
 };
 
-use http::{HttpPolicy, HttpPort};
+use http::HttpPort;
 use llm::LlmPort;
 use spawn::{ChildRegistry, SpawnPort};
 
@@ -221,39 +221,25 @@ pub trait PortExtension: Send + Sync {
 ///
 /// Individual host ports and extension bundles follow Bashkit's registration rule: later entries replace
 /// earlier entries with the same name.
+///
+/// Hosts must register every port explicitly; there is no authority-bearing
+/// standard bundle:
+///
+/// ```compile_fail
+/// use svit::Ports;
+///
+/// let _ = Ports::standard();
+/// ```
 #[derive(Clone, Default)]
 pub struct Ports {
     entries: BTreeMap<String, Arc<dyn Port>>,
     children: ChildRegistry,
-    standard_reasoning_ports: bool,
-    http_policy: Option<HttpPolicy>,
 }
 
 impl Ports {
     /// Creates an empty host port registry.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Selects the complete standard port set.
-    ///
-    /// During construction, Svit resolves `http`, `llm`, and `spawn` from the
-    /// instance's configuration.
-    /// Selecting the standard set explicitly grants unrestricted HTTP. Hosts
-    /// can attenuate it with [`Self::with_http_allowlist`].
-    /// Later registrations replace any standard port with the same name.
-    pub fn standard() -> Self {
-        Self {
-            standard_reasoning_ports: true,
-            http_policy: Some(HttpPolicy::Unrestricted),
-            ..Self::default()
-        }
-    }
-
-    /// Adds the standard `http` port with the supplied URL grants.
-    pub fn with_http_allowlist(mut self, http_allowlist: HttpAllowlist) -> Self {
-        self.http_policy = Some(HttpPolicy::Allowlist(http_allowlist));
-        self
     }
 
     /// Registers or replaces one host-owned port.
@@ -278,6 +264,16 @@ impl Ports {
         self.port("http", Box::new(HttpPort::new(allowlist, transport)))
     }
 
+    /// Adds `http` with unrestricted HTTP(S) destinations.
+    ///
+    /// This is an explicit research-host grant. Prefer [`Self::http`] with an
+    /// allowlist whenever the permitted destinations are known.
+    pub fn http_unrestricted(self, transport: impl HttpTransport + 'static) -> Self {
+        // THREAT[TM-CAP-004]: Unrestricted network authority exists only
+        // behind this explicit host call; no bundle or build step adds it.
+        self.port("http", Box::new(HttpPort::unrestricted(transport)))
+    }
+
     /// Adds `llm` using one host-selected reasoner.
     pub fn llm(self, reasoner: Reasoner) -> Self {
         self.port("llm", Box::new(LlmPort::new(reasoner)))
@@ -288,32 +284,6 @@ impl Ports {
         let port = SpawnPort::new(reasoner, self.children.clone());
         self.register("spawn", Box::new(port));
         self
-    }
-
-    pub(crate) fn resolve(mut self, reasoner: &Reasoner) -> Result<Self, HttpTransportError> {
-        let http_policy = self.http_policy.take();
-        if http_policy.is_none() && !self.standard_reasoning_ports {
-            return Ok(self);
-        }
-
-        if let Some(http_policy) = http_policy
-            && !self.entries.contains_key("http")
-        {
-            let transport = ReqwestHttpTransport::new()?;
-            let port = match http_policy {
-                HttpPolicy::Unrestricted => HttpPort::unrestricted(transport),
-                HttpPolicy::Allowlist(allowlist) => HttpPort::new(allowlist, transport),
-            };
-            self.register("http", Box::new(port));
-        }
-        if self.standard_reasoning_ports && !self.entries.contains_key("llm") {
-            self.register("llm", Box::new(LlmPort::new(reasoner.clone())));
-        }
-        if self.standard_reasoning_ports && !self.entries.contains_key("spawn") {
-            let port = SpawnPort::new(reasoner.clone(), self.children.clone());
-            self.register("spawn", Box::new(port));
-        }
-        Ok(self)
     }
 
     /// Returns completed local child addresses in deterministic order.
@@ -388,16 +358,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn standard_registry_grants_unrestricted_http_tm_cap_004() {
-        assert!(matches!(
-            Ports::standard().http_policy,
-            Some(HttpPolicy::Unrestricted)
-        ));
-        assert!(matches!(
-            Ports::standard()
-                .with_http_allowlist(HttpAllowlist::new())
-                .http_policy,
-            Some(HttpPolicy::Allowlist(_))
-        ));
+    fn unrestricted_http_requires_explicit_registration_tm_cap_004() {
+        assert_eq!(Ports::new().catalog(), json!({}));
+        let ports = Ports::new().http_unrestricted(ReqwestHttpTransport::new().unwrap());
+        assert!(ports.catalog().get("http").is_some());
     }
 }

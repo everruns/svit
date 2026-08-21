@@ -91,12 +91,14 @@ The following scenarios execute with assertions and deterministic output under
 - a host `PortExtension` contributes a discoverable port that can
   read committed state through the restricted context; the common dispatcher
   rejects oversized extension output.
-- Lampa projects `http`, `llm`, and `spawn` under `/ports` by selecting the
-  standard registry without additional HTTP policy; Svit's reusable reqwest
-  transport rejects redirect escape, while large in-memory responses must be
-  reduced before crossing a persistent or model-visible value boundary.
-- the Svit standard port setup derives the full catalog from one instance's
-  `Reasoner`; commit events are notifications, and an atomic
+- Lampa projects `http`, `llm`, and `spawn` under `/ports` after explicitly
+  registering unrestricted HTTP and the selected reasoner for both model-backed
+  ports; Svit's reusable reqwest transport rejects redirect escape, while large
+  in-memory responses must be reduced before crossing a persistent or
+  model-visible value boundary.
+- compile-fail evidence keeps the standard bundle unavailable, and the explicit
+  registry test exposes only the individually registered ports; commit events
+  are notifications, and an atomic
   Svit contract read returns an owned value/version pair after inbox and
   completed-turn transitions. Multiple `Events` observers independently see
   the same notifications, and empty `Events` and `Outbox` observations return

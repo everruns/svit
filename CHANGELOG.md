@@ -52,9 +52,10 @@ All notable changes to Svit will be documented here.
   while the TUI consumes commit notifications, inbox, and outbox without
   polling process state or assembling built-ins. Remove the separate direct
   `Process` script-execution command.
-- Let Lampa select `Builtins::standard()` without HTTP policy configuration;
-  the standard registry grants unrestricted destinations for research hosts,
-  while `with_http_allowlist` remains available for attenuation.
+- Remove `Ports::standard()` and deferred port derivation. Hosts now register
+  `http`, `llm`, and `spawn` individually; unrestricted HTTP requires the
+  separately named `http_unrestricted` call. Lampa makes all three grants
+  explicitly.
 - Keep Lampa's memory viewport stable when selecting lower visible rows and
   start with only the tree root expanded.
 - Navigate Lampa panels backward with `Shift+Tab` while retaining forward
@@ -117,10 +118,9 @@ All notable changes to Svit will be documented here.
   conversation events carried through snapshot, restore, and isolated forks.
 - A live `support-agent-svit` consumer using `gpt-5.6-terra` through a
   process-owned Svit inbox and outbox.
-- One Svit built-in setup path, with `Builtins::standard()` deriving `llm`
-  and `spawn` from the instance reasoner, granting unrestricted research HTTP
-  unless attenuated, and using a reusable redirect-denying, response-bounded
-  reqwest transport.
+- Explicit `Ports` builders for allowlisted or unrestricted HTTP, nested model
+  calls, and one-turn child execution, plus a reusable redirect-denying reqwest
+  transport.
 - Explicit Svit `Inbox`, `Outbox`, and `Events` ports, commit notifications,
   atomic owned value/version reads, and sanitized terminal failures without
   exposing the mutable process tree or channel implementation.

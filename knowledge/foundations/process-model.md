@@ -224,20 +224,20 @@ exposing committed reads and discovery without process
 mutation. Extension implementations are trusted native host code and may use
 only additional capabilities deliberately captured during registration.
 
-`Ports::standard()` selects the complete set through the same `ports`
-builder operation used for every host registry. Selecting the standard set is
-an explicit unrestricted HTTP-destination grant; `with_http_allowlist`
-attenuates it. At Svit construction it derives `llm` and `spawn` from the same
-instance `Reasoner`, and resolves `http` with
-Svit's redirect-denying in-memory HTTP transport. The research transport does
-not impose a response-size cap; a script must reduce a large response before
-it crosses the persistent or model-visible value boundary. Later port
-registrations win, including a
-specialized host's explicit `http` adapter. Presentation hosts do not
-reconstruct this registry after the Svit instance is built.
+There is no standard port bundle or build-time port derivation. A host adds
+`http`, `llm`, and `spawn` individually and passes the frozen registry to Svit.
+`http` requires a host-selected allowlist and transport;
+`http_unrestricted` makes an unrestricted HTTP-destination grant explicit at
+the call site. `llm` and `spawn` each require their own host-selected
+`Reasoner`. The reusable reqwest transport refuses redirects but does not
+impose a response-size cap; a script must reduce a large response before it
+crosses the persistent or model-visible value boundary. Later registrations
+win, including a specialized host's explicit `http` adapter. Presentation
+hosts do not reconstruct this registry after the Svit instance is built.
 
-Hosts choosing a smaller port set have no HTTP authority unless they add
-it explicitly with an allowlist and transport. `/ports/llm` uses one
+Hosts choosing a smaller port set have no HTTP authority unless they add it
+explicitly with an allowlist and transport or call `http_unrestricted`.
+`/ports/llm` uses one
 host-selected model and driver. A port remains a host dispatch rather than
 a nested activation, even when Lisp invokes it, and its external effects cannot
 be rolled back with process state.

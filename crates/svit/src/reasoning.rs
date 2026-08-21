@@ -57,10 +57,6 @@ pub enum SvitError {
     #[error("Svit reasoner is required")]
     MissingReasoner,
 
-    /// The standard native HTTP transport could not be initialized.
-    #[error("Svit HTTP transport is unavailable")]
-    HttpTransportUnavailable,
-
     /// Internal loop assembly did not receive its owning process.
     #[error("Svit process is required")]
     MissingProcess,
@@ -1247,14 +1243,7 @@ impl ReasoningLoopBuilder {
         let reasoner = self.reasoner.ok_or(SvitError::MissingReasoner)?;
         let model = reasoner.model_spec();
         let provider = reasoner.provider().clone();
-        let ports = self
-            .ports
-            .map(|ports| {
-                ports
-                    .resolve(&reasoner)
-                    .map_err(|_| SvitError::HttpTransportUnavailable)
-            })
-            .transpose()?;
+        let ports = self.ports;
         let initial_state = {
             let view = process.view();
             let process = view.lock().map_err(|_| SvitError::ProcessUnavailable)?;

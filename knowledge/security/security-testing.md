@@ -68,8 +68,8 @@ Required for the initial vertical slice.
   mounted data remains read-only through host and guest path operations.
 - `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an
   allowed fixture request passes through both URL policy and host transport;
-  Svit's standard reqwest transport refuses redirects and bounds the streamed
-  body.
+  unrestricted HTTP requires a separately named host registration, while
+  Svit's reusable reqwest transport refuses redirects.
 - `TM-CAP-005`: `/ports` exposes the exact installed port manuals during a
   turn, and resume removes entries whose host grants are no longer configured.
 - `TM-CAP-006`: a host extension executes through bounded explicit JSON and a

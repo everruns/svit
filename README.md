@@ -231,9 +231,11 @@ let svit = Svit::builder("svit://local/explicit-ports")?
 
 Here `http` can reach only the allowlisted origin and its path descendants,
 `llm` uses the selected reasoner for nested model calls, and `spawn` uses it for
-child Svit turns. Omit any registration the process should not receive. Port
-descriptors appear under `/ports`, but descriptors never carry authority and
-snapshots never serialize port implementations.
+child Svit turns. A research host that intentionally accepts any HTTP(S)
+destination must call `http_unrestricted` by name. Omit any registration the
+process should not receive. Port descriptors appear under `/ports`, but
+descriptors never carry authority and snapshots never serialize port
+implementations.
 
 Mounts project host-selected folders or values below `/mounts` without copying
 their contents into the committed root. The root stores only a descriptor;
@@ -252,7 +254,8 @@ OPENAI_API_KEY=... cargo run --locked -p lampa
 
 Lampa shows the conversation beside the complete memory tree, mounts the current
 directory read-only at `/mounts/cwd`, and persists each instance in its own
-database. Reuse an instance name to resume it:
+database. It explicitly registers unrestricted `http` plus model-backed `llm`
+and `spawn` ports as a research host. Reuse an instance name to resume it:
 
 ```console
 OPENAI_API_KEY=... cargo run --locked -p lampa -- --instance research-one

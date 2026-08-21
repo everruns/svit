@@ -114,14 +114,14 @@ as Svit's public abstraction. A persisted Svit serializes every mutation
 through its adapter-owned `DurableProcessHandle` and updates a cloned committed
 read projection only after storage accepts the process transaction. Canonical
 reasoning events append through the separate EventLog, never as process-tree
-values or `ProcessTransaction` mutations. Svit's standard port setup derives model-backed `llm` and
-`spawn` from the instance
-configuration. Lampa selects that standard registry without additional HTTP
-policy; selecting the complete research registry explicitly grants unrestricted
-HTTP destinations. Svit supplies the reusable redirect-denying,
-in-memory HTTP response transport, and other hosts may attenuate destinations
-with an allowlist. A script must reduce a large response before it crosses the
-persistent or model-visible value boundary; file-backed transfer remains open.
+values or `ProcessTransaction` mutations. Svit performs no implicit port
+derivation. Hosts individually register `http`, `llm`, `spawn`, or custom ports
+and pass one frozen registry to the Svit builder. Lampa explicitly registers
+unrestricted HTTP plus model-backed `llm` and `spawn` ports. Svit supplies the
+reusable redirect-denying, in-memory HTTP response transport, and other hosts
+may attenuate destinations with an allowlist. A script must reduce a large
+response before it crosses the persistent or model-visible value boundary;
+file-backed transfer remains open.
 Each append commits the canonical event before its derived message is observed;
 it never grows the Svit process root. One `Reasoner` owns the
 provider-visible model ID and host-owned provider, so Svit cannot represent a

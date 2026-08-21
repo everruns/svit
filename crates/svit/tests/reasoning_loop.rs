@@ -339,7 +339,7 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
             ),
             SimTurn::text("persisted answer"),
         ]))
-        .ports(Ports::standard())
+        .ports(Ports::new().port("read-value", Box::new(ReadValue)))
         .build()
         .await
         .unwrap();
@@ -371,7 +371,7 @@ async fn persisted_svit_resumes_memory_and_conversation_without_rerunning_reason
     let resumed = Svit::persisted(durable)
         .unwrap()
         .reasoner(scripted_reasoner([]))
-        .ports(Ports::standard())
+        .ports(Ports::new().port("read-value", Box::new(ReadValue)))
         .build()
         .await
         .unwrap();
@@ -481,11 +481,16 @@ async fn durable_fork_shares_an_immutable_event_prefix_and_diverges_afterward() 
 }
 
 #[tokio::test]
-async fn svit_standard_builtin_setup_derives_model_tools() {
+async fn svit_exposes_only_explicitly_registered_ports() {
+    let reasoner = scripted_reasoner([]);
+    let ports = Ports::new()
+        .http(HttpAllowlist::new(), FixtureHttp)
+        .llm(reasoner.clone())
+        .spawn(reasoner.clone());
     let svit = Svit::builder("svit://local/port-setup")
         .unwrap()
-        .reasoner(scripted_reasoner([]))
-        .ports(Ports::standard())
+        .reasoner(reasoner)
+        .ports(ports)
         .build()
         .await
         .unwrap();
@@ -497,11 +502,11 @@ async fn svit_standard_builtin_setup_derives_model_tools() {
 }
 
 #[tokio::test]
-async fn http_allowlist_layers_onto_a_custom_builtin_set() {
+async fn explicit_http_registration_exposes_only_http() {
     let svit = Svit::builder("svit://local/http-ports")
         .unwrap()
         .reasoner(scripted_reasoner([]))
-        .ports(Ports::new().with_http_allowlist(HttpAllowlist::new()))
+        .ports(Ports::new().http(HttpAllowlist::new(), FixtureHttp))
         .build()
         .await
         .unwrap();
@@ -1053,11 +1058,7 @@ async fn host_extension_registers_discoverable_process_builtin() {
 async fn host_port_registration_exposes_its_own_descriptor() {
     let svit = Svit::builder("svit://local/port-override")
         .unwrap()
-        .ports(
-            Ports::standard()
-                .with_http_allowlist(HttpAllowlist::new())
-                .port("read-value", Box::new(ReadValue)),
-        )
+        .ports(Ports::new().port("read-value", Box::new(ReadValue)))
         .reasoner(scripted_reasoner([]))
         .build()
         .await

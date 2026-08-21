@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use svit::{
-    DurableProcess, Error, Mount, OpenAI, Ports, Process, Reasoner, Svit, TursoProcessStore,
+    DurableProcess, Error, Mount, OpenAI, Ports, Process, Reasoner, ReqwestHttpTransport, Svit,
+    TursoProcessStore,
 };
 
 mod tui;
@@ -58,13 +59,18 @@ async fn run() -> Result<(), String> {
         options.legacy_import.as_deref(),
     )
     .await?;
+    let reasoner = Reasoner::new(
+        &options.model,
+        OpenAI::from_env().map_err(|error| error.to_string())?,
+    );
+    let ports = Ports::new()
+        .http_unrestricted(ReqwestHttpTransport::new().map_err(|error| error.to_string())?)
+        .llm(reasoner.clone())
+        .spawn(reasoner.clone());
     let svit = Svit::persisted(process)
         .map_err(|error| error.to_string())?
-        .reasoner(Reasoner::new(
-            &options.model,
-            OpenAI::from_env().map_err(|error| error.to_string())?,
-        ))
-        .ports(Ports::standard())
+        .reasoner(reasoner)
+        .ports(ports)
         .build()
         .await
         .map_err(|error| error.to_string())?;

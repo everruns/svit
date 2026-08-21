@@ -49,15 +49,15 @@ are not an authorization boundary. Independently running reasoning loops expose
 terminal failures through a capped, sanitized operational error stream; hosts
 must not treat diagnostic text as trusted content.
 
-`Builtins` configures host-provided programs under `/bin`, invoked through the same
-generic `exec(path, input)` operation used for `/lib` scripts. `search` reads
-committed process values and `jq` processes explicit JSON. Neither has a host filesystem,
-executable, or environment interface. Selecting `Builtins::standard()` is an
-explicit host grant of unrestricted HTTP destinations; hosts can attenuate it
-with `HttpAllowlist` or replace the transport. `llm` and `spawn` require
-host-selected drivers.
+`Ports` configures host-provided programs under `/ports`, invoked from Svit Lisp
+through `port-call`. `search` reads committed process values and `jq` processes
+explicit JSON. Neither has a host filesystem, executable, or environment
+interface. `Ports::new()` grants nothing: hosts register `http`, `llm`, and
+`spawn` individually. `http` requires an allowlist and transport;
+`http_unrestricted` is a separately named unrestricted research-host grant.
+`llm` and `spawn` each require a host-selected reasoner.
 
-`/bin` projects manuals for the exact built-ins installed by the current
+`/ports` projects manuals for the exact ports installed by the current
 host, including schemas, effect classes, and limits. It is read-only and descriptive:
 host runtime registration remains the authority boundary. Resume replaces any
 snapshot-carried catalog before the agent runs so stale metadata cannot restore

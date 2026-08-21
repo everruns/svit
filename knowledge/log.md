@@ -1,5 +1,14 @@
 # Svit Knowledge Update Log
 
+## 2026-08-20
+
+* **Explicit port grants**: Removed the authority-bearing standard port bundle
+  and build-time reasoner/HTTP derivation. Hosts now register `http`, `llm`, and
+  `spawn` individually. Allowlisted HTTP remains the default explicit form;
+  `http_unrestricted` names the broader research-host grant at the call site.
+  Lampa deliberately registers unrestricted HTTP and uses its selected
+  reasoner for both nested model calls and child turns (TM-CAP-004).
+
 ## 2026-08-18
 
 * **Bounded event payloads**: Restored the process limit on canonical event
