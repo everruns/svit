@@ -6,6 +6,9 @@
   revision from `18296be8` to `66c20400`. The resolved facade and test support
   are 0.18.2 and `everruns-host` is 0.20.1; the Svit integration compiled
   without an API adaptation.
+* **Tuika dependency refresh**: Updated Lampa from Tuika 0.9.0 to 0.10.0 and
+  `tuika-codeformatters` from 0.4.2 to 0.4.3. Lampa compiled without an API
+  adaptation; Tuika's alternate-screen mouse capture remains opt-in.
 * **Explicit port grants**: Removed the authority-bearing standard port bundle
   and build-time reasoner/HTTP derivation. Hosts now register `http`, `llm`, and
   `spawn` individually. Allowlisted HTTP remains the default explicit form;
