@@ -4,65 +4,50 @@
 [![Security policy](https://img.shields.io/badge/security-policy-blue.svg)](SECURITY.md)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**A durable, scriptable runtime.**
+**Memory and behavior, committed together.**
 
-Svit gives an agent one structured space in which to remember, act, and evolve.
-One `Svit` instance owns a reason/act loop, a durable conversation thread, one
-serializable process, a memory tree, named scripts, inbox and outbox
-ports, snapshots, and isolated forks. [Everruns](https://github.com/everruns/everruns)
-implements the current reason/act loop behind the Svit API.
+Svit is a research-stage Rust runtime for agents that need durable state and
+reusable code. It keeps structured memory, named Svit Lisp scripts, inbox state,
+buffered message intents, and runtime metadata in one serializable process.
+Every activation runs against a bounded working copy and either commits one
+complete next version or commits nothing.
+
+One `Svit` owns one reason/act loop, one durable conversation thread, and one
+serializable `Process`. The host chooses a `Reasoner`, mounts, and ports;
+[Everruns](https://github.com/everruns/everruns) implements the current loop
+behind the Svit API.
 
 > [!IMPORTANT]
-> Svit is research-stage software. The current implementation is runnable and
-> tested, but it is not a production hostile multi-tenant isolation boundary
-> and has no stable release yet.
+> Svit is runnable and tested, but it has no stable release and is not a proven
+> hostile multi-tenant isolation boundary. Production use with untrusted code
+> still needs an outer Wasm or OS process boundary.
 
 ## Why Svit
 
-- **Durable Svit state.** `/memory`, scripts, inbox state, and bounded runtime
-  metadata commit into one process state root; conversation is retained in a
-  separate paged EventLog.
-- **Transactional actions.** A bounded script activation commits memory,
-  scripts, and buffered message intents together, or commits nothing.
-- **One inspectable memory tree.** Agents use the same absolute-path interface
-  for committed state, named scripts, ports, and mounted resources.
-- **Portable execution state.** A committed process can be snapshotted,
-  restored, persisted, or forked into an independently mutable child.
-- **Explicit authority.** Guest scripts receive no ambient filesystem, network,
-  environment, process, module, clock, or randomness access. Host capabilities
-  are attached explicitly through mounts and ports.
+- **One process space.** Memory, scripts, queues, metadata, and mounted resources
+  use one absolute-path interface rather than unrelated agent tools.
+- **Atomic activations.** Memory, script, and buffered message changes commit
+  together. Syntax, runtime, validation, conversion, and limit failures roll
+  back the complete activation.
+- **Durable reasoning.** With persistence, process transactions and paged
+  conversation events survive restarts without materializing the full thread in
+  every snapshot.
+- **Portable state.** Processes can be snapshotted, restored, inspected, and
+  forked into independently mutable children.
+- **Explicit authority.** Guest Lisp has no ambient filesystem, network,
+  environment, process, module loader, clock, randomness, or native-extension
+  access. Hosts attach external authority through typed mounts and ports.
+- **Observable change.** Commits report the paths they changed, while committed
+  nodes and roots have structural content hashes for precise cache validation.
 
 ## Quick start
 
-Clone the repository and run the Svit reasoning example:
+Create a Rust application and add Svit while its public API is still changing:
 
 ```console
-git clone https://github.com/everruns/svit.git
-cd svit
-cargo run --locked -p svit --example process_reasoning
+cargo new svit-quickstart
+cd svit-quickstart
 ```
-
-Expected output:
-
-```text
-process_reasoning color=blue version=26
-```
-
-The example needs no API key or network access. It starts a `Svit`, submits a
-durable inbox message, lets the model invoke a process script, receives the
-completed message from the outbox, and verifies the committed value under
-`/memory`.
-
-If the [`just`](https://github.com/casey/just) task runner is installed, run all
-examples with:
-
-```console
-just examples
-```
-
-## Use Svit from Rust
-
-Svit is currently consumed from Git while its public API is still changing:
 
 ```toml
 [dependencies]
@@ -70,19 +55,19 @@ svit = { git = "https://github.com/everruns/svit", branch = "main" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-The primary API is `Svit`, not the underlying reason/act-loop implementation:
+Replace `src/main.rs` with:
 
 ```rust
-use svit::{Message, OpenAI, Reasoner, Svit};
+use svit::{Message, OpenAI, Reasoner, Svit, value};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut svit = Svit::builder("svit://local/readme/demo")?
-        .instructions("Keep durable facts in your Svit memory tree.")
-        .reasoner(Reasoner::new(
-            "gpt-5.6-terra",
-            OpenAI::from_env()?,
-        ))
+    let mut svit = Svit::builder("svit://local/quickstart")?
+        .memory("facts", value!({}))
+        .instructions(
+            "Write requested durable facts to the exact process path before replying.",
+        )
+        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
         .build()
         .await?;
 
@@ -91,48 +76,62 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     svit.start()?;
     inbox
-        .send(Message::user("Remember that the release color is blue."))
+        .send(Message::user(
+            "Write blue to /memory/facts/release_color, then confirm it.",
+        ))
         .await?;
 
     let reply = outbox.recv().await?;
-    println!("{}", reply.text().unwrap_or_default());
-
     drop(inbox);
     svit.block().await?;
+
+    println!("{}", reply.text().unwrap_or_default());
+    println!("stored={:?}", svit.read("/memory/facts/release_color")?);
     Ok(())
 }
 ```
 
-`Svit::builder` creates the process and reasoning loop as one Svit-owned
-instance. `Inbox::send` commits a message before waking the loop. `Outbox`
-publishes completed assistant messages, while `Events` publishes committed
-process changes, canonical event-log appends, derived messages, and sanitized
-terminal failures. Hosts inspect state through owned reads such as `read` and
-`read_versioned`; they do not retain a mutable process-tree reference.
+Run it with an OpenAI API key:
 
-See [`process_reasoning.rs`](crates/svit/examples/process_reasoning.rs) for a
-complete executable example.
+```console
+OPENAI_API_KEY=... cargo run
+```
 
-## Runtime model
+`Inbox::send` commits a message before waking the loop. `Outbox` publishes
+completed assistant messages. `Events` publishes committed path changes,
+canonical conversation events, derived messages, and sanitized terminal
+failures. Hosts inspect state through owned reads; they never receive a mutable
+reference to the process tree.
+
+For a complete live example, clone this repository and run the process-owned
+support agent:
+
+```console
+OPENAI_API_KEY=... cargo run --locked -p svit-support-agent-svit
+```
+
+## Process model
 
 ```text
 Host
- ├── Inbox ───────────────┐
- ├── Outbox <─────────────┤
- └── Events <─────────────┤
-                          v
-                       Svit
-                    ┌─────┴─────┐
-             reason/act loop   Process
-                              ├── memory tree
-                              ├── script library
-                              ├── transaction boundary
-                              ├── snapshot / restore
-                              └── fork
+├── Reasoner
+├── Inbox ─────────────┐
+├── Outbox <───────────┤
+├── Events <───────────┤
+├── Ports              │
+└── Mount providers    │
+                       v
+                    Svit
+             reason/act loop + thread
+                       │
+                       v
+                    Process
+             state + scripts + limits
+             transactions + snapshots
 ```
 
-The guest-visible memory tree is the complete namespace under `/`, not only
-the `/memory` node:
+The memory tree is the complete guest-visible namespace below `/`, not just the
+`/memory` node:
 
 ```text
 /
@@ -140,39 +139,41 @@ the `/memory` node:
 ├── memory/      durable application values
 ├── lib/         named Svit Lisp scripts
 ├── ports/       manuals for host-attached ports
-├── inbox/       durable input queue
+├── inbox/       durable local input queue
 ├── mounts/      virtual host resources under explicit grants
 ├── tasks/       reserved in the current slice
 ├── children/    reserved in the current slice
 └── system/      identity, API, limits, lineage, runtime, and outbox metadata
 ```
 
-Rust callers, the reasoning loop, and Svit Lisp share six path operations:
+Rust callers, model tools, and Svit Lisp use the same path vocabulary:
 
 ```text
 discover(path)        list immediate children
 read(path)            read one value
-stat(path)            inspect kind, access, locality, and source facts
+stat(path)            inspect kind, access, locality, source, and content facts
 write(path, value)    commit a memory, script, or granted mount write
 remove(path)          commit a removal
-exec(path, input)     run a named script
+exec(path, input)     run a named /lib script
 ```
 
-Model-facing `exec` runs transient Svit Lisp source through the interpreter or
-a named `/lib` script. Installed host ports are discoverable under
-`/ports`; a Svit Lisp script invokes one with `(port-call "name" input)`. It constructs a
-persistent object—such as a fixed port request—with
-`(value-map "key" value ...)`.
-Svit suspends and replays pure guest execution around an async port call,
-then commits guest state once. The external effect itself is immediate and
-cannot be rolled back. Bare `Process::exec` resolves only `/lib`, because
-serializable process state never owns native host authority.
+The model-facing `exec` tool can also run transient Svit Lisp source. A fresh,
+restricted interpreter runs each activation. Successful activations validate
+and commit memory, scripts, and buffered message intents once; failed
+activations leave the process version and committed root unchanged.
 
-## Persistence and forks
+External effects have a narrower guarantee. Port calls happen immediately and
+cannot be rolled back. Granted mount writes are delayed until process
+validation succeeds, but the external source cannot join the process
+transaction.
 
-The default `persistence-turso` feature provides a local Turso adapter. A host
-creates or resumes a durable process, then gives its `DurableProcessHandle` to
-`Svit::persisted`. The creation path is:
+## Persistence, snapshots, and forks
+
+The default `persistence-turso` feature provides local Turso persistence. One
+canonical `ProcessTransaction` stream records process mutations; a separate
+paged `EventLog` retains conversation history. Resume verifies transaction
+versions, hashes, mutations, and resulting root hashes without rerunning guest
+code.
 
 ```rust
 use svit::{OpenAI, Process, Reasoner, Svit, TursoProcessStore};
@@ -182,44 +183,66 @@ async fn build_persisted() -> Result<Svit, Box<dyn std::error::Error>> {
     let process = Process::builder("svit://local/persisted/demo")?.build()?;
     let durable = store.create(process).await?;
 
-    let svit = Svit::persisted(durable)?
+    Ok(Svit::persisted(durable)?
         .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
         .build()
-        .await?;
-    Ok(svit)
+        .await?)
 }
 ```
 
-On restart, use `store.resume("svit://local/persisted/demo")` in place of
-`store.create(process)` and build the returned handle through the same
-`Svit::persisted` path.
-
-Every process mutation belongs to one canonical `ProcessTransaction` stream.
-Conversation events are a separate paged `EventLog`; `/thread` contains only
-bounded session metadata, never a materialized conversation copy.
-Lampa projects bounded, read-only `events` and `messages` entries beneath its
-`/thread` tree for inspection; they are not process values and never enter a
-snapshot or guest context.
-Resume validates transaction hashes, versions, mutations, and resulting root
-hashes without rerunning guest code. The Turso adapter atomically maintains one
-validated recovery checkpoint per process, so ordinary resume reconstructs
-only the bounded transaction tail while retained history remains queryable.
-
-`Svit::snapshot` captures process state and thread metadata. A durable
-`DurableProcess::fork` shares the parent event prefix at its exact boundary;
-`Svit::fork_process` is process-only and starts a fresh child session.
+Use `store.resume(address)` to reopen a process. Snapshots preserve canonical
+process state and thread metadata. Durable forks share an immutable history
+prefix at the fork boundary and then commit independently; process-only forks
+start a fresh child session.
 
 | Feature | Purpose |
 | --- | --- |
-| `persistence-turso` | Local process-transaction store, snapshots, resume, forks, queries, and history cuts |
-| `turso-mount` | Host-side materialization of a bounded Turso query as a mount |
+| `persistence-turso` | Local transactions, snapshots, resume, forks, queries, and history cuts |
+| `turso-mount` | A bounded host-selected Turso query exposed as a virtual mount |
 
 Use `--no-default-features` for the adapter-neutral runtime and persistence
 contracts.
 
+## Ports and mounts
+
+Ports are host-owned async capabilities. `Ports::new()` grants none. Add each
+port deliberately and attach the resulting registry when building Svit:
+
+```rust
+use svit::{
+    HttpAllowlist, OpenAI, Ports, Reasoner, ReqwestHttpTransport, Svit,
+};
+
+let reasoner = Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?);
+let ports = Ports::new()
+    .http(
+        HttpAllowlist::new().allow("https://api.github.com/"),
+        ReqwestHttpTransport::new()?,
+    )
+    .llm(reasoner.clone())
+    .spawn(reasoner.clone());
+
+let svit = Svit::builder("svit://local/explicit-ports")?
+    .reasoner(reasoner)
+    .ports(ports)
+    .build()
+    .await?;
+```
+
+Here `http` can reach only the allowlisted origin and its path descendants,
+`llm` uses the selected reasoner for nested model calls, and `spawn` uses it for
+child Svit turns. Omit any registration the process should not receive. Port
+descriptors appear under `/ports`, but descriptors never carry authority and
+snapshots never serialize port implementations.
+
+Mounts project host-selected folders or values below `/mounts` without copying
+their contents into the committed root. The root stores only a descriptor;
+nodes resolve lazily through a host-owned provider. Providers are never
+serialized, so a restored process fails closed until the host reattaches them.
+
 ## Lampa process console
 
-Lampa is the interactive reference host for one persisted Svit instance:
+Lampa is the interactive reference host for one persisted Svit:
 
 ```console
 OPENAI_API_KEY=... cargo run --locked -p lampa
@@ -227,117 +250,48 @@ OPENAI_API_KEY=... cargo run --locked -p lampa
 
 ![Lampa terminal process viewer](docs/lampa.gif)
 
-Lampa shows the conversation, including intermediate model commentary and
-compact tool status rows, alongside the complete memory tree and selected
-value. It mounts the current directory read-only as `/mounts/cwd`, renders
-messages and text previews as Markdown, and exposes the standard `/ports`
-ports. Drag over transcript text to select and copy it; `Ctrl+C` copies an
-active selection again and otherwise exits Lampa.
-
-Each instance has its own database. Reuse an instance ID to resume its committed
-conversation and memory:
+Lampa shows the conversation beside the complete memory tree, mounts the current
+directory read-only at `/mounts/cwd`, and persists each instance in its own
+database. Reuse an instance name to resume it:
 
 ```console
 OPENAI_API_KEY=... cargo run --locked -p lampa -- --instance research-one
 ```
 
-Use `--mount name=path` or `--mount-rw name=path` to attach folders. Set
-`LAMPA_DATA_DIR` to choose the storage root; otherwise Lampa uses the native
-application-data directory.
-
-## The lower-level `Process` API
-
-`Process` is the serializable state machine owned by `Svit`. Use it directly
-when you need bounded script activations without a model loop:
-
-```rust
-use svit::{Process, Value, svit_script, value};
-
-fn main() -> svit::Result<()> {
-    let mut process = Process::builder("svit://local/readme/counter")?
-        .memory("count", value!(0))
-        .library("increment", svit_script! {
-            (define (main input)
-              (let ((next (+ (read "/memory/count")
-                             (value-get input "/by"))))
-                (do
-                  (write "/memory/count" next)
-                  next)))
-        })
-        .build()?;
-
-    let activation = process.exec("/lib/increment", value!({"by": 3}))?;
-    assert_eq!(activation.output, value!(3));
-    assert_eq!(process.read("/memory/count")?, Some(Value::Integer(3)));
-    Ok(())
-}
-```
-
-A fresh restricted Lisp VM runs each activation against a transactional working
-copy. Syntax, runtime, conversion, validation, or resource-limit failure leaves
-the committed process unchanged. `svit_script!` compile-checks embedded scripts;
-`svit_script_test!` executes them in a fresh real process for state assertions.
-
-Svit Lisp is a versioned restricted Ketos surface, not unrestricted Ketos,
-Scheme, or Common Lisp. Persistent values are null, booleans, signed integers,
-finite floats, text, arrays, and text-keyed maps. See the
-[runtime contract](knowledge/runtimes/lisp-runtime.md) and
-[examples](examples/README.md).
-
-## Ports and mounts
-
-`Ports::new()` creates an empty host port registry. Svit Lisp has pure
-standard-library functions for local data work: `(jq filter value)` transforms
-JSON, while `(search path pattern)` searches the transactional process tree.
-`jq` accepts structured JSON, JSON text, or an HTTP response and evaluates JSON
-response bodies directly; it returns the array of values emitted by the filter.
-Hosts may explicitly add HTTP, model, child-process, or custom ports. The
-`/ports` entries are manuals for the attached implementations, not serialized
-authority. Restoring a process does not recreate a missing host grant.
-
-`Ports::standard()` selects `http`, `llm`, and `spawn`. It is a
-research-host preset and explicitly grants unrestricted HTTP destinations;
-hosts that need destination policy should apply `with_http_allowlist` or
-install a narrower transport.
-
-Mounts project host-selected resources into `/mounts` without copying them into
-the committed root. A committed descriptor records identity, locality, and
-granted access; the host-owned provider resolves nodes lazily. Providers are
-never serialized and must be reattached after restore.
+Use `--mount name=path` or `--mount-rw name=path` to attach folders and
+`LAMPA_DATA_DIR` to select the storage root.
 
 ## Current scope
 
 Implemented now:
 
-- process-owned Everruns reasoning with durable inbox, thread, and outbox;
+- process-owned reasoning with a durable local inbox, thread, and outbox;
 - transactional memory and named Svit Lisp scripts;
 - bounded values, execution, diagnostics, snapshots, restore, and forks;
-- local Turso persistence with one canonical process-transaction stream;
-- virtual folder and materialized-query mounts;
-- explicit ports for local data work and host-granted external effects;
-- VAST control semantics with process-version preconditions and conflicts;
-- runnable acceptance examples and adversarial invariant tests.
+- local Turso persistence with validated transaction replay;
+- lazy folder, value, and materialized-query mounts;
+- explicit host ports and pure local `jq` and `search` functions;
+- VAST version preconditions, conflicts, and bounded retry receipts;
+- deterministic examples and adversarial invariant tests.
 
 Not implemented:
 
-- message delivery, scheduling, timers, retries, or global routing;
+- remote message delivery, scheduling, timers, retries, or global routing;
 - authenticated process identity, authorization, or secrets;
-- distributed ownership, migration, durable control receipts, or exactly-once
-  external effects;
+- distributed ownership, migration, or durable control receipts;
+- exactly-once external effects;
 - production Wasm/OS isolation or formal hostile-tenant isolation evidence.
 
-The public [vision](docs/vision.md) describes the broader research direction;
-it is not a promise that those capabilities already exist.
+The public [vision](docs/vision.md) describes the broader research direction,
+not functionality already promised by this implementation.
 
 ## Security
 
-Svit validates persistent values and snapshots, applies configured resource
-limits, starts a fresh restricted interpreter for every activation, and rolls
-back failed activations. Those controls do not prove safe hostile
-multi-tenancy: the interpreter is native code, wall-time checks are not
-instruction-level fuel, and estimated memory is not an allocator cap.
-Run hostile workloads behind a Wasm or OS boundary with outer CPU, memory, and
-time limits.
+Svit validates persistent values and snapshots, enforces configured limits,
+uses a fresh restricted interpreter for every activation, caps diagnostics, and
+rolls back failed activations. These controls are executable invariants, not a
+proof of hostile multi-tenancy. Ketos uses wall-clock deadlines and estimated
+interpreter memory rather than deterministic fuel and an allocator byte cap.
 
 Do not report vulnerabilities in public issues. Follow
 [`SECURITY.md`](SECURITY.md) for private reporting and the current support
@@ -348,7 +302,8 @@ policy.
 | Resource | Purpose |
 | --- | --- |
 | [Vision](docs/vision.md) | Product model and research direction |
-| [Examples](examples/README.md) | End-to-end scenarios |
+| [Examples](examples/README.md) | Runnable end-to-end scenarios |
+| [Svit Lisp contract](knowledge/runtimes/lisp-runtime.md) | Versioned guest-language surface |
 | [Control protocol](docs/control-protocol.md) | VAST semantics and wire contract |
 | [Security policy](SECURITY.md) | Security model, limitations, and reporting |
 | [Changelog](CHANGELOG.md) | Unreleased and released changes |
@@ -369,9 +324,8 @@ just pre-pr
 ```
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`AGENTS.md`](AGENTS.md) before
-changing runtime behavior. Contributions should keep changes small, update the
-relevant knowledge, and add executable evidence for behavioral and security
-claims.
+changing runtime behavior. Behavioral and security claims require executable
+evidence and the corresponding knowledge update.
 
 ## License
 
