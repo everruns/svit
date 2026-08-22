@@ -45,6 +45,7 @@
 	--nb-border-strong: oklch(0.87 0 0);
 	--nb-selected: oklch(0.89 0 0);
 	--nb-ring: oklch(0.42 0.12 258 / 0.42);
+	--nb-page-dot: oklch(0.26 0.09 258 / 0.08);
 
 	/* Status colors — paired (saturated for text/border + muted for bg) */
 	--nb-info: oklch(0.45 0.18 255);
@@ -123,6 +124,7 @@
 	--nb-border-strong: oklch(0.371 0 0);
 	--nb-selected: oklch(0.371 0 0);
 	--nb-ring: oklch(0.76 0.1 250 / 0.45);
+	--nb-page-dot: oklch(0.82 0.08 250 / 0.09);
 
 	--nb-info: oklch(0.75 0.12 255);
 	--nb-info-foreground: oklch(0.75 0.12 255);
@@ -203,6 +205,13 @@ html {
 
 body {
 	opacity: 1;
+	background-image: radial-gradient(
+		circle at center,
+		var(--nb-page-dot) 1px,
+		transparent 1px
+	);
+	background-size: 24px 24px;
+	background-attachment: fixed;
 }
 
 .nb-brand-mark {
@@ -407,6 +416,50 @@ pre.astro-code span {
 .nb-code-figure[data-nb-lang="plain"]::before,
 .nb-code-figure[data-nb-lang="txt"]::before {
 	display: none;
+}
+
+/* Mermaid source remains the no-JavaScript and parse-error fallback. */
+.nb-code-figure[data-mermaid-state="rendered"]::before,
+.nb-code-figure[data-mermaid-state="rendered"] > pre[data-language="mermaid"] {
+	display: none;
+}
+.nb-mermaid-canvas {
+	min-width: 0;
+	padding: 1.75rem;
+	overflow-x: auto;
+	background:
+		radial-gradient(
+			circle at 50% 0%,
+			color-mix(in oklch, var(--nb-primary) 7%, transparent),
+			transparent 58%
+		),
+		var(--nb-card);
+}
+.nb-mermaid-canvas svg {
+	display: block;
+	max-width: 100%;
+	height: auto;
+	margin-inline: auto;
+}
+.nb-mermaid-canvas[data-mermaid-wide] svg {
+	width: 56rem;
+	max-width: none;
+}
+.nb-mermaid-canvas .nodeLabel,
+.nb-mermaid-canvas .edgeLabel,
+.nb-mermaid-canvas .messageText,
+.nb-mermaid-canvas .actor {
+	font-weight: 500;
+}
+.nb-mermaid-canvas .nodeLabel p {
+	margin: 0;
+	white-space: inherit;
+}
+
+@media (max-width: 640px) {
+	.nb-mermaid-canvas {
+		padding: 1rem;
+	}
 }
 
 /* Block-level lines so tints + gutters paint across the full row. */

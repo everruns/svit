@@ -113,8 +113,11 @@ const llmsUrl = Astro.site
 
     <script>
       import { codeCopy, headingAnchors } from "@cloudflare/nimbus-docs/client";
+      import { initMermaidDiagrams } from "@/lib/mermaid";
+
       codeCopy();
       headingAnchors();
+      initMermaidDiagrams();
     </script>
   </body>
 </html>

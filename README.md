@@ -24,19 +24,21 @@ behind the Svit API.
 
 ## Why Svit
 
-- **One process space.** Memory, scripts, queues, metadata, and mounted resources
-  use one absolute-path interface rather than unrelated agent tools.
+- **One process space.** [Memory](docs/memory.md), scripts, queues, metadata,
+  and mounted resources use one absolute-path interface rather than unrelated
+  agent tools.
 - **Atomic activations.** Memory, script, and buffered message changes commit
   together. Syntax, runtime, validation, conversion, and limit failures roll
   back the complete activation.
 - **Durable reasoning.** With persistence, process transactions and paged
-  conversation events survive restarts without materializing the full thread in
-  every snapshot.
+  [events](docs/events.md) survive restarts without materializing the full
+  thread in every snapshot.
 - **Portable state.** Processes can be snapshotted, restored, inspected, and
   forked into independently mutable children.
 - **Explicit authority.** Guest Lisp has no ambient filesystem, network,
   environment, process, module loader, clock, randomness, or native-extension
-  access. Hosts attach external authority through typed mounts and ports.
+  access. Hosts attach external authority through typed mounts and
+  [ports](docs/ports.md).
 - **Observable change.** Commits report the paths they changed, while committed
   nodes and roots have structural content hashes for precise cache validation.
 
