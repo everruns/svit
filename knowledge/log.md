@@ -15,7 +15,8 @@
   Cloudflare Workers Builds. Production builds follow `main`, run from `/site`
   with pnpm, retain the unrestricted watch path required by synchronized root
   documentation, and deploy automatically to `svit.everruns.com`; preview
-  builds are disabled.
+  builds are disabled. The Cloudflare GitHub App explicitly includes the Svit
+  repository so GitHub push events reach the production trigger.
 
 ## 2026-08-20
 

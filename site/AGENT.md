@@ -30,6 +30,9 @@ binding. Cloudflare Workers Builds watches `everruns/svit` on `main`, runs from
 `/site`, builds with `pnpm build`, and deploys with
 `pnpm exec wrangler deploy`. Preview builds are disabled. Every push to `main`
 that matches the unrestricted build watch path starts a production deployment.
+The `Cloudflare Workers and Pages` GitHub App must include `everruns/svit` in
+its selected repository access or GitHub push events will not reach the build
+trigger.
 
 For a deliberate local deployment, use an authenticated Wrangler environment
 and run `pnpm deploy` from this directory.
