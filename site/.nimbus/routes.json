@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "base": "/",
+  "knownRoutes": [
+    "/",
+    "/404",
+    "/changelog",
+    "/control-protocol",
+    "/overview",
+    "/security",
+    "/vision"
+  ],
+  "opaqueNamespaces": []
+}

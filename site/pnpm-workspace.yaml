@@ -1,0 +1,15 @@
+# Declines install scripts for esbuild and sharp (they ship prebuilds),
+# clearing pnpm's build-scripts gate. Adding a package here lets it run scripts.
+packages: []
+allowBuilds: # pnpm 11
+  esbuild: false
+  sharp: false
+  workerd: false
+ignoredBuiltDependencies: # pnpm 10
+  - esbuild
+  - sharp
+  - workerd
+# astro-icon 1.1.5 still requests v4, whose extract-zip has no patched release.
+# Drop this override once upstream declares @iconify/tools v5 compatibility.
+overrides:
+  "@iconify/tools@^4.0.5": 5.0.12

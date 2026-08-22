@@ -1,503 +1,104 @@
 ---
-import "../styles/global.css";
+import BaseLayout from "../layouts/BaseLayout.astro";
+import Header from "../components/Header.astro";
+import "../styles/home.css";
 
-const operations = [
-  { name: "discover(path)", copy: "List immediate children" },
-  { name: "read(path)", copy: "Read a process value" },
-  { name: "write(path, value)", copy: "Transactionally update memory or library" },
-  { name: "remove(path)", copy: "Transactionally remove memory or library data" },
-  { name: "exec(path, input)", copy: "Run a /lib script or installed /bin executable" },
+const documents = [
+  ["Overview", "Orientation, runnable quick start, and process model.", "/overview/"],
+  ["Vision", "Research direction, runtime model, and explicit limits.", "/vision/"],
+  ["Control protocol", "Versioned atomic transitions for multiple clients.", "/control-protocol/"],
+  ["Security", "Threat boundaries and vulnerability reporting.", "/security/"],
+  ["Changelog", "Published changes to the runtime.", "/changelog/"],
 ];
 
-const works = [
-  "One namespace for memory, scripts, mount snapshots, system metadata, and outbox",
-  "One process protocol across host callers, agent tools, and Svit Lisp",
-  "Atomic memory, script, and outbox commits with complete rollback",
-  "Bounded Svit Lisp 2 execution with no ambient host authority",
-  "Deterministic snapshots, restore, and isolated forks",
-  "In-memory VAST control with version checks and bounded retry receipts",
-  "Bounded read-only folder and Turso query snapshots under /mounts",
-];
-
-const later = [
-  "Live and writable projections of the outside world",
-  "Addressable communication between runtimes",
-  "Runtime-native identity, authentication, and capabilities",
-  "Durable storage, scheduling, and message delivery",
-  "Authenticated network control, durable receipts, and distributed process ownership",
-  "Stronger isolation through Wasm or OS process boundaries",
-];
-
-const denied = ["filesystem", "network", "environment", "process", "clock", "randomness", "module loader", "native extensions"];
+const head = [{
+  tag: "script" as const,
+  attrs: { type: "application/ld+json" },
+  content: JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "SoftwareSourceCode",
+    name: "Svit",
+    description: "A research-stage Rust runtime for durable agent state and reusable code.",
+    codeRepository: "https://github.com/everruns/svit",
+    programmingLanguage: "Rust",
+    license: "https://opensource.org/license/mit",
+    url: "https://svit.everruns.com",
+    author: { "@type": "Organization", name: "Everruns", url: "https://everruns.com" },
+  }),
+}];
 ---
 
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width" />
-    <meta name="theme-color" content="#fafafa" />
-    <meta
-      name="description"
-      content="Svit gives agents a structured space to remember, act, and evolve: memory and executable behavior together, changed through bounded transactions."
-    />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://svit.everruns.com/" />
-    <meta property="og:title" content="Give the agent a space to remember, act, and evolve" />
-    <meta
-      property="og:description"
-      content="Memory and executable behavior together in one structured, self-reflective, transactional space."
-    />
-    <meta property="og:image" content="https://svit.everruns.com/og-space.png" />
-    <meta property="og:image:width" content="1792" />
-    <meta property="og:image:height" content="933" />
-    <meta property="og:image:alt" content="Svit process states moving from memory through activation and commit to a fork" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Give the agent a space to remember, act, and evolve" />
-    <meta name="twitter:description" content="Memory and executable behavior together in one structured, self-reflective, transactional space." />
-    <meta name="twitter:image" content="https://svit.everruns.com/og-space.png" />
-    <link rel="canonical" href="https://svit.everruns.com/" />
-    <title>Svit — give the agent a space to remember, act, and evolve</title>
-  </head>
-  <body>
-    <a class="skip-link" href="#main">Skip to content</a>
+<BaseLayout
+  title="Svit — research-stage agent runtime"
+  description="A research-stage Rust runtime for durable agent state and reusable code."
+  markdownUrl="/index.md"
+  head={head}
+>
+  <div class="index-shell">
+    <Header showSidebar={false} />
 
-    <header class="site-header page-shell">
-      <a class="wordmark" href="#top" aria-label="Svit home">SVIT<span>_</span></a>
-      <nav aria-label="Primary navigation">
-        <a href="#model">Model</a>
-        <a href="#runtime">Runtime</a>
-        <a href="#status">Status</a>
-        <a class="nav-github" href="https://github.com/everruns/svit">GitHub <span aria-hidden="true">↗</span></a>
-      </nav>
-    </header>
-
-    <main id="main">
-      <section id="top" class="hero page-shell">
-        <div class="hero-copy">
-          <p class="eyebrow"><span class="signal"></span> Research-stage runtime designed for agents</p>
-          <h1>Give the agent a space to <em>remember</em>, act, and evolve.</h1>
-          <p class="hero-lede">
-            Svit keeps memory and executable behavior together in one structured, self-reflective space. Agents can inspect it, script it, and evolve it through bounded transactions.
-          </p>
-          <p class="hero-proof">Structured. Scriptable. Transactional. Self-reflective. Forkable.</p>
-          <div class="hero-actions">
-            <a class="button button-dark" href="#model">Explore the process model <span aria-hidden="true">↓</span></a>
-            <a class="text-link" href="https://github.com/everruns/svit">Explore the source <span aria-hidden="true">↗</span></a>
-          </div>
+    <main id="main-content" class="project-index">
+      <section class="project-heading" aria-labelledby="project-title">
+        <div>
+          <h1 id="project-title">Svit</h1>
+          <p>Research-stage Rust runtime</p>
         </div>
-
-        <figure class="space-card">
-          <div class="space-card-title">
-            <span>ONE EVOLVING AGENT SPACE</span>
-            <span>PROCESS / 001</span>
-          </div>
-          <svg class="space-map" viewBox="0 0 560 500" role="img" aria-labelledby="space-map-title space-map-description">
-            <title id="space-map-title">One evolving agent space</title>
-            <desc id="space-map-description">
-              An agent activates a Svit process containing memory, behaviors, and read-only external snapshots. The process changes transactionally and can be snapshotted, restored, or forked.
-            </desc>
-            <defs>
-              <marker id="space-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
-                <path d="M0 0 L0 6 L8 3 Z" class="space-arrow-head"></path>
-              </marker>
-              <marker id="projection-arrow" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
-                <path d="M0 0 L0 6 L8 3 Z" class="projection-arrow-head"></path>
-              </marker>
-            </defs>
-
-            <text x="28" y="42" class="space-map-kicker">ONE AGENT PROCESS</text>
-            <text x="28" y="72" class="space-map-heading">REMEMBER · ACT · REACH</text>
-
-            <g class="agent-node">
-              <circle cx="56" cy="242" r="34"></circle>
-              <circle cx="56" cy="234" r="7" class="agent-head"></circle>
-              <path d="M40 258 Q56 241 72 258" class="agent-body"></path>
-              <text x="56" y="294" text-anchor="middle">AGENT</text>
-            </g>
-            <path d="M96 242 H144" class="space-line" marker-end="url(#space-arrow)"></path>
-            <text x="119" y="227" text-anchor="middle" class="space-map-note">ACTIVATE</text>
-
-            <g class="agent-space">
-              <circle cx="300" cy="242" r="148" class="space-boundary"></circle>
-              <circle cx="300" cy="242" r="51" class="space-core"></circle>
-              <text x="300" y="237" text-anchor="middle" class="space-core-label">AGENT</text>
-              <text x="300" y="261" text-anchor="middle" class="space-core-label">SPACE</text>
-
-              <g class="space-node memory-node">
-                <circle cx="300" cy="122" r="42"></circle>
-                <text x="300" y="118" text-anchor="middle">MEMORY</text>
-                <text x="300" y="141" text-anchor="middle" class="space-map-note">REMEMBER</text>
-              </g>
-              <g class="space-node behavior-node">
-                <circle cx="198" cy="302" r="42"></circle>
-                <text x="198" y="298" text-anchor="middle">BEHAVIORS</text>
-                <text x="198" y="321" text-anchor="middle" class="space-map-note">ACT</text>
-              </g>
-              <g class="space-node world-node">
-                <circle cx="402" cy="302" r="42"></circle>
-                <text x="402" y="298" text-anchor="middle">MOUNTS</text>
-                <text x="402" y="321" text-anchor="middle" class="space-map-note">READ</text>
-                <text x="402" y="358" text-anchor="middle" class="space-map-direction">SNAPSHOT VALUES</text>
-              </g>
-            </g>
-
-            <path d="M445 292 C466 284 473 266 488 249" class="projection-line" marker-end="url(#projection-arrow)"></path>
-            <text x="475" y="278" text-anchor="middle" class="space-map-note">SNAPSHOT</text>
-            <text x="475" y="290" text-anchor="middle" class="space-map-note">IMPORT</text>
-            <g class="external-node">
-              <rect x="492" y="202" width="58" height="78"></rect>
-              <text x="521" y="235" text-anchor="middle">EXTERNAL</text>
-              <text x="521" y="253" text-anchor="middle">SYSTEMS</text>
-            </g>
-
-            <path d="M300 390 V418" class="space-line" marker-end="url(#space-arrow)"></path>
-            <text x="318" y="410" class="space-map-note">COMMIT</text>
-            <path d="M200 430 Q300 408 400 430 V465 Q300 486 200 465 Z" class="snapshot-node"></path>
-            <text x="300" y="450" text-anchor="middle" class="snapshot-label">SNAPSHOT · RESTORE · FORK</text>
-          </svg>
-          <figcaption class="space-card-foot">
-            <span>UNIFIED INSIDE</span>
-            <span>EXPLICIT AT THE BOUNDARY</span>
-          </figcaption>
-        </figure>
-
-        <div class="hero-index" aria-hidden="true">
-          <span>SVIT / 001</span>
-          <span>RESEARCH-STAGE</span>
-          <span>AUG · 2026</span>
-        </div>
+        <dl class="project-facts">
+          <div><dt>Status</dt><dd>Runnable, unstable API</dd></div>
+          <div><dt>Language</dt><dd>Rust</dd></div>
+          <div><dt>License</dt><dd>MIT</dd></div>
+        </dl>
       </section>
 
-      <section class="thesis page-shell section-rule">
-        <p class="section-label">The premise</p>
-        <blockquote>
-          Memory and behavior belong in <span>one coherent space.</span>
-        </blockquote>
-        <p class="thesis-note">
-          A space the agent can understand from inside: structured state, discoverable scripts, bounded transitions, and explicit authority.
-        </p>
-      </section>
-
-      <section id="model" class="model page-shell section-rule">
-        <div class="section-intro">
-          <p class="section-label">01 / Process space</p>
-          <h2>One root. One shared protocol.</h2>
-          <p>Five operations address memory, scripts, mount snapshots, runtime metadata, and outbox through one committed process namespace.</p>
-        </div>
-        <div class="process-space-visual">
-          <div class="protocol-entry">
-            <p>THE SHARED PROCESS PROTOCOL</p>
-            <div class="protocol-operations" aria-label="Five shared process protocol operations">
-              {operations.map((operation) => <code>{operation.name}</code>)}
-            </div>
-            <div class="protocol-entry-line" aria-hidden="true">
-              <span>OPERATES ON ONE ROOT</span>
-              <strong>↓</strong>
-            </div>
-          </div>
-
-          <article class="process-root-visual">
-            <div class="process-root-heading">
-              <span>ONE COMMITTED PROCESS SPACE</span>
-              <code>/</code>
-            </div>
-            <div class="process-zones">
-              <div class="process-zone process-zone-memory">
-                <div class="process-zone-heading"><span>REMEMBER</span><code>/memory</code></div>
-                <h3>A navigable tree of durable values.</h3>
-                <div class="memory-tree" aria-label="Illustrative paths in the process memory tree">
-                  <div class="memory-root"><code>/memory</code><small>&#123;…&#125;</small></div>
-                  <div class="memory-branches">
-                    <div><code>context</code><small>&#123;…&#125;</small></div>
-                    <div><code>plans</code><small>[…]</small></div>
-                    <div><code>history</code><small>[…]</small></div>
-                  </div>
-                </div>
-                <p>Illustrative paths into structured values—not host files.</p>
-              </div>
-              <div class="process-zone process-zone-library">
-                <div class="process-zone-heading"><span>ACT</span><code>/lib</code></div>
-                <h3>What the agent can execute and revise.</h3>
-                <p>Named Svit Lisp scripts stored with process state.</p>
-              </div>
-              <div class="process-zone process-zone-mounts">
-                <div class="process-zone-heading"><span>IMPORT</span><code>/mounts</code></div>
-                <h3>Recorded views of external data.</h3>
-                <p>Bounded read-only folder trees and host-selected Turso query rows. No live handles.</p>
-              </div>
-              <div class="process-zone process-zone-system">
-                <div class="process-zone-heading"><span>ORIENT</span><code>/system</code></div>
-                <h3>How the agent understands the runtime.</h3>
-                <p>Identity, API, limits, lineage, runtime, and committed outbox.</p>
-              </div>
-            </div>
-            <div class="reserved-strip">
-              <span>RESERVED IN THIS SLICE</span>
-              <code>/tasks · /inbox · /children</code>
-              <p>Names exist; behavior does not yet.</p>
-            </div>
-            <div class="root-lifecycle">
-              <p>The whole committed root moves together.</p>
-              <strong>SNAPSHOT · RESTORE · FORK</strong>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section class="transaction page-shell section-rule">
-        <div class="transaction-copy">
-          <p class="section-label">02 / VAST transaction</p>
-          <h2>Success commits once. Rejection commits nothing.</h2>
+      <section class="project-summary" aria-labelledby="summary-title">
+        <h2 id="summary-title">Current scope</h2>
+        <div>
           <p>
-            Versioned Atomic State Transitions check the version a client observed at the same serialization point as commit. Syntax, runtime, conversion, validation, and limit failures all roll back memory, scripts, outbox, and version together.
+            Svit keeps structured memory, named Svit Lisp scripts, inbox state,
+            buffered message intents, and runtime metadata in one serializable
+            process. Each activation commits one complete next version or
+            commits nothing.
           </p>
-          <div class="invariant">
-            <span class="invariant-mark">✓</span>
-            <p><strong>The invariant</strong><br />A rejected activation exposes no partial process state.</p>
-          </div>
+          <p class="status-note">
+            There is no stable release. Svit is not a proven hostile
+            multi-tenant isolation boundary; untrusted production workloads
+            still require an outer Wasm or OS process boundary.
+          </p>
         </div>
+      </section>
 
-        <div class="commit-diagram" role="img" aria-label="Committed process state is copied for an activation and either atomically committed or rolled back">
-          <div class="commit-row">
-            <span class="commit-id">A</span>
-            <div>
-              <small>COMMITTED ROOT · v12</small>
-              <strong>memory + scripts + outbox</strong>
-            </div>
-            <span class="commit-status">STABLE</span>
-          </div>
-          <div class="commit-connector"><span>working copy</span></div>
-          <div class="commit-row commit-row-active">
-            <span class="commit-id">B</span>
-            <div>
-              <small>ACTIVATION</small>
-              <strong>script(input) → candidate root</strong>
-            </div>
-            <span class="commit-status">BOUNDED</span>
-          </div>
-          <div class="commit-split">
-            <div>
-              <span>VALID</span>
-              <strong>commit · v13</strong>
-            </div>
-            <div>
-              <span>REJECTED</span>
-              <strong>rollback · v12</strong>
-            </div>
-          </div>
+      <section class="project-documents" aria-labelledby="documents-title">
+        <div class="section-heading">
+          <h2 id="documents-title">Documents</h2>
+          <span>Canonical repository sources</span>
         </div>
-
-        <div class="control-block">
-          <div class="control-copy">
-            <p class="section-label">02B / Multi-client control</p>
-            <h3>Many clients. One commit point.</h3>
-            <p>
-              If two valid requests race from the same version and one commits, the stale request receives a conflict. VAST never merges concurrent activations.
-            </p>
-            <p>While its bounded receipt is retained, an exact retry returns the original result without running the activation again.</p>
-            <aside class="control-scope">
-              <strong>Current scope</strong>
-              <span>Transport-neutral and in memory. Network transport, authentication, durable receipts, and distributed process ownership remain research directions.</span>
-            </aside>
-          </div>
-
-          <div class="control-flow" role="img" aria-label="Two clients race from version 12. At the serialization point, Client A commits version 13 first. Client B then conflicts because version 12 is stale. An exact retry by Client A replays the retained receipt without another activation.">
-            <div class="race-heading">
-              <span>ONE PROCESS</span>
-              <strong>v12</strong>
-            </div>
-            <div class="race-lanes">
-              <div class="race-request">
-                <span>CLIENT A</span>
-                <strong>expected v12</strong>
-                <small>activation α</small>
-              </div>
-              <div class="race-gate">
-                <span>01</span>
-                <strong>v12 = v12</strong>
-                <small>SERIALIZATION POINT</small>
-              </div>
-              <div class="race-result race-result-commit">
-                <span>COMMIT</span>
-                <strong>v13</strong>
-                <small>state changes once</small>
-              </div>
-
-              <div class="race-request">
-                <span>CLIENT B</span>
-                <strong>expected v12</strong>
-                <small>activation β</small>
-              </div>
-              <div class="race-gate">
-                <span>02</span>
-                <strong>v12 ≠ v13</strong>
-                <small>SERIALIZATION POINT</small>
-              </div>
-              <div class="race-result race-result-conflict">
-                <span>CONFLICT</span>
-                <strong>still v13</strong>
-                <small>activation never runs</small>
-              </div>
-            </div>
-            <div class="retry-receipt">
-              <div><span>EXACT RETRY · CLIENT A</span><strong>same request id + digest</strong></div>
+        <div class="document-list">
+          {documents.map(([title, description, href]) => (
+            <a href={href}>
+              <strong>{title}</strong>
+              <span>{description}</span>
               <b aria-hidden="true">→</b>
-              <div><span>RETAINED RECEIPT</span><strong>replay committed result · no activation</strong></div>
-            </div>
-          </div>
+            </a>
+          ))}
         </div>
       </section>
 
-      <section id="runtime" class="sandbox">
-        <div class="page-shell sandbox-inner">
-          <div class="sandbox-copy">
-            <p class="section-label section-label-light">03 / Svit Lisp boundary</p>
-            <h2>No ambient authority.</h2>
-            <p>
-              Svit Lisp 2 scripts use the same process protocol exposed to host callers and agent tools. Every activation starts in a fresh interpreter with null I/O and module loading denied.
-            </p>
-            <p class="security-note">
-              This is a tested runtime layer, not proof of hostile same-process multi-tenancy. Production isolation still needs a Wasm or OS boundary.
-            </p>
-          </div>
-          <div class="surface-panel">
-            <div class="surface-allowed">
-              <p>PROCESS PROTOCOL</p>
-              <code>(discover path)</code>
-              <code>(read path)</code>
-              <code>(write path value)</code>
-              <code>(remove path)</code>
-              <code>(exec script input)</code>
-              <code>(log-info! message fields)</code>
-              <code>(send! address message)</code>
-            </div>
-            <div class="surface-denied">
-              <p>ABSENT BY DEFAULT</p>
-              <ul>
-                {denied.map((item) => <li><span>×</span>{item}</li>)}
-              </ul>
-            </div>
-          </div>
+      <section class="source-row" aria-labelledby="source-title">
+        <div>
+          <h2 id="source-title">Source</h2>
+          <p>The implementation, examples, tests, and research record live in one repository.</p>
         </div>
-      </section>
-
-      <section class="agent-context page-shell">
-        <div class="section-intro agent-context-intro">
-          <p class="section-label">04 / Agent in context</p>
-          <h2>The agent works through the process.</h2>
-          <p>The runnable Everruns example gives a model Svit's complete process surface; workflow behavior lives in its instructions and scripts.</p>
-        </div>
-
-        <div class="agent-trace">
-          <div class="agent-question">
-            <span>SUPPORT REQUEST</span>
-            <blockquote>“I lost access to my verified email and my authenticator.”</blockquote>
-            <p>The example instructs the agent to discover process scripts, execute them, and commit its result before replying.</p>
-          </div>
-          <div class="trace-steps">
-            <div class="trace-row">
-              <span>01</span>
-              <code>discover("/lib")</code>
-              <p>Find <strong>search_support_docs</strong> and <strong>commit_support_result</strong>.</p>
-            </div>
-            <div class="trace-row">
-              <span>02</span>
-              <code>exec("/lib/search_support_docs", input)</code>
-              <p>Read support knowledge and account context from <strong>/mounts</strong> snapshots.</p>
-            </div>
-            <div class="trace-row">
-              <span>03</span>
-              <code>exec("/lib/commit_support_result", input)</code>
-              <p>Write the authoritative answer to <strong>/memory/request/result</strong>.</p>
-            </div>
-            <div class="trace-row trace-row-outbox">
-              <span>04</span>
-              <code>/system/outbox</code>
-              <p>Commit a ticket intent with the answer. <strong>Queued, not delivered.</strong></p>
-            </div>
-          </div>
-        </div>
-        <a class="example-link" href="https://github.com/everruns/svit/tree/main/examples/support-agent-process">
-          Explore the support-agent-process example <span aria-hidden="true">↗</span>
-        </a>
-      </section>
-
-      <section class="example page-shell">
-        <div class="section-intro example-intro">
-          <p class="section-label">05 / The smallest useful script</p>
-          <h2>State in. State out.</h2>
-          <p>A named script defines <code>(main input)</code>. The runtime owns the transition around it.</p>
-        </div>
-        <div class="code-window">
-          <div class="code-heading">
-            <span>counter.svit-script</span>
-            <span>SVIT LISP 2</span>
-          </div>
-          <pre><code><span class="code-dim">01</span>  (<span class="code-keyword">define</span> (<span class="code-call">main</span> input)
-<span class="code-dim">02</span>    (<span class="code-keyword">let</span> ((count (+ (read "/memory/count")
-<span class="code-dim">03</span>                    (value-get input "/by"))))
-<span class="code-dim">04</span>      (<span class="code-keyword">do</span>
-<span class="code-dim">05</span>        (write "/memory/count" count)
-<span class="code-dim">06</span>        (value-map "count" count))))</code></pre>
-          <div class="code-result">
-            <span>INPUT</span><code>&#123; by: 4 &#125;</code>
-            <span>OUTPUT</span><code>&#123; count: 9 &#125;</code>
-            <span>VERSION</span><code>3 → 4</code>
-          </div>
-        </div>
-        <div class="quickstart">
-          <span>RUN THE EXECUTABLE EXAMPLE</span>
-          <code>cargo run -p svit --example durable_counter</code>
-          <a href="https://github.com/everruns/svit#quick-start" aria-label="Open the Svit quick start on GitHub">↗</a>
-        </div>
-      </section>
-
-      <section id="status" class="status page-shell section-rule">
-        <div class="section-intro status-intro">
-          <p class="section-label">06 / From slice to system</p>
-          <h2>Start with a kernel. Grow toward an agent runtime.</h2>
-          <p>The current slice tests the core semantics. The larger direction adds live projections, communication, identity, durable execution, and stronger isolation.</p>
-        </div>
-        <div class="status-grid">
-          <div class="status-list status-works">
-            <div class="status-heading"><span></span> IMPLEMENTED NOW</div>
-            <ul>
-              {works.map((item) => <li><span>✓</span>{item}</li>)}
-            </ul>
-          </div>
-          <div class="status-list status-later">
-            <div class="status-heading"><span></span> RESEARCH DIRECTION</div>
-            <ul>
-              {later.map((item) => <li><span>—</span>{item}</li>)}
-            </ul>
-          </div>
-        </div>
-        <p class="status-footnote">
-          Security claims track executable evidence. The repository includes a threat model, adversarial tests, and an explicit negative specification.
-        </p>
-      </section>
-
-      <section class="closing">
-        <div class="page-shell closing-inner">
-          <p class="eyebrow"><span class="signal"></span> Open source · MIT licensed</p>
-          <h2>Design the runtime<br />agents actually need.</h2>
-          <div class="closing-actions">
-            <a class="button button-light" href="https://github.com/everruns/svit">View Svit on GitHub <span aria-hidden="true">↗</span></a>
-            <a href="https://github.com/everruns/svit/blob/main/docs/vision.md">Read the vision</a>
-          </div>
-        </div>
+        <a href="https://github.com/everruns/svit">github.com/everruns/svit <span aria-hidden="true">↗</span></a>
       </section>
     </main>
 
-    <footer class="site-footer page-shell">
-      <a class="wordmark" href="#top">SVIT<span>_</span></a>
-      <p>Researching durable, transactional runtime semantics for agent processes.</p>
-      <div>
+    <footer class="site-footer">
+      <span>Svit</span>
+      <nav aria-label="Footer">
+        <a href="/llms.txt">llms.txt</a>
         <a href="https://github.com/everruns/svit">GitHub</a>
-        <a href="https://github.com/everruns/svit/blob/main/SECURITY.md">Security</a>
-        <a href="https://github.com/everruns">Everruns</a>
-      </div>
+        <a href="https://everruns.com">Everruns</a>
+      </nav>
     </footer>
-  </body>
-</html>
+  </div>
+</BaseLayout>

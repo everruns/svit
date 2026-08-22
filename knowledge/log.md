@@ -6,6 +6,12 @@
   as Svit's mark, connecting the Ukrainian name `svit` (world) with a world
   becoming visible. The canonical color and monochrome SVG sources live at the
   repository root; transparent 1024 px PNGs are derived from the same geometry.
+* **Public site**: Replaced the early marketing page with a factual project
+  index and Nimbus-rendered canonical documents. The site follows Tuika's
+  Astro 7, Tailwind 4, pnpm, Nimbus Docs, and Cloudflare static-assets stack;
+  its build synchronizes `README.md`, `SECURITY.md`, `CHANGELOG.md`, and public
+  `docs/` sources into generated content rather than maintaining a second copy.
+
 ## 2026-08-20
 
 * **Everruns dependency refresh**: Advanced the locked Everruns `main`

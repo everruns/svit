@@ -1,0 +1,228 @@
+.index-shell {
+  min-height: 100vh;
+  background: var(--nb-background);
+  color: var(--nb-foreground);
+}
+
+.project-index,
+.site-footer {
+  width: min(100% - 2rem, 62rem);
+  margin-inline: auto;
+}
+
+.project-index {
+  padding-block: 2.5rem 5rem;
+}
+
+.project-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(24rem, 0.9fr);
+  gap: 3rem;
+  align-items: end;
+  padding-bottom: 2rem;
+  border-bottom: 1px solid var(--nb-border-strong);
+}
+
+.project-heading h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.25rem);
+  font-weight: 650;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.project-heading p {
+  margin: 0.65rem 0 0;
+  color: var(--nb-muted-foreground);
+  font-size: 0.95rem;
+}
+
+.project-facts {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  margin: 0;
+}
+
+.project-facts div {
+  padding-left: 1rem;
+  border-left: 1px solid var(--nb-border);
+}
+
+.project-facts dt,
+.section-heading span {
+  color: var(--nb-muted-foreground);
+  font-family: var(--nb-font-mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.project-facts dd {
+  margin: 0.35rem 0 0;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.project-summary,
+.source-row {
+  display: grid;
+  grid-template-columns: 13rem minmax(0, 1fr);
+  gap: 3rem;
+  padding-block: 2.5rem;
+  border-bottom: 1px solid var(--nb-border);
+}
+
+.project-summary h2,
+.section-heading h2,
+.source-row h2 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.project-summary > div {
+  max-width: 43rem;
+}
+
+.project-summary p,
+.source-row p {
+  margin: 0;
+  color: var(--nb-foreground);
+  font-size: 1rem;
+  line-height: 1.7;
+}
+
+.project-summary .status-note {
+  margin-top: 1.25rem;
+  padding-left: 1rem;
+  border-left: 2px solid var(--nb-primary);
+  color: var(--nb-muted-foreground);
+  font-size: 0.88rem;
+}
+
+.project-documents {
+  padding-block: 2.5rem;
+  border-bottom: 1px solid var(--nb-border);
+}
+
+.section-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.document-list {
+  border-top: 1px solid var(--nb-border);
+}
+
+.document-list a {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr) auto;
+  gap: 1.25rem;
+  align-items: center;
+  min-height: 4rem;
+  border-bottom: 1px solid var(--nb-border);
+  color: inherit;
+  text-decoration: none;
+}
+
+.document-list a:hover {
+  color: var(--nb-primary);
+}
+
+.document-list strong {
+  font-size: 0.88rem;
+}
+
+.document-list span {
+  color: var(--nb-muted-foreground);
+  font-size: 0.83rem;
+}
+
+.document-list b {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.source-row {
+  border-bottom: 0;
+}
+
+.source-row p {
+  margin-top: 0.6rem;
+  color: var(--nb-muted-foreground);
+  font-size: 0.85rem;
+}
+
+.source-row > a {
+  align-self: center;
+  color: var(--nb-primary);
+  font-family: var(--nb-font-mono);
+  font-size: 0.8rem;
+  text-underline-offset: 0.25rem;
+}
+
+.site-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-block: 1.25rem 2rem;
+  border-top: 1px solid var(--nb-border-strong);
+  color: var(--nb-muted-foreground);
+  font-size: 0.75rem;
+}
+
+.site-footer nav {
+  display: flex;
+  gap: 1.25rem;
+}
+
+.site-footer a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.site-footer a:hover {
+  color: var(--nb-foreground);
+}
+
+@media (max-width: 48rem) {
+  .project-index {
+    padding-top: 1.75rem;
+  }
+
+  .project-heading,
+  .project-summary,
+  .source-row {
+    grid-template-columns: 1fr;
+    gap: 1.5rem;
+  }
+
+  .project-facts {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .document-list a {
+    grid-template-columns: 1fr auto;
+    gap: 0.35rem 1rem;
+    padding-block: 0.85rem;
+  }
+
+  .document-list span {
+    grid-column: 1;
+  }
+
+  .document-list b {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+  }
+
+  .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

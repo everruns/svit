@@ -1,0 +1,83 @@
+---
+import { Icon } from "astro-icon/components";
+import { Button } from "./ui/button";
+import { LinkButton } from "./ui/link-button";
+import { ThemeToggle } from "./ui/theme-toggle";
+import { SearchTrigger } from "./ui/search";
+import { config } from "virtual:nimbus/config";
+import { getSidebarSections } from "@cloudflare/nimbus-docs";
+import logoUrl from "../../../logo.svg?url";
+
+interface Props {
+  collection?: string;
+  entryId?: string;
+  showSidebar?: boolean;
+}
+
+const { collection, showSidebar = true } = Astro.props;
+const currentSlug = Astro.url.pathname.replace(/\/$/, "") || "/";
+const sections = await getSidebarSections(currentSlug, { collection });
+const showSections = sections.length >= 2;
+---
+
+<header class="sticky top-0 z-30 border-b border-border bg-card/90 backdrop-blur-lg">
+  <div class="mx-auto flex h-14 items-center justify-between px-4 lg:px-6">
+    <div class="flex items-center gap-3">
+      <a href="/" class="group flex items-center gap-2 no-underline" aria-label="Svit home">
+        <img src={logoUrl} alt="" class="nb-brand-mark size-6" aria-hidden="true" />
+        <span class="text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{config.title}</span>
+        <span class="hidden border-l border-border pl-2 text-xs text-muted-foreground sm:inline">by Everruns</span>
+      </a>
+
+      {showSections && (
+        <nav aria-label="Sections" class="ml-4 hidden h-6 items-center gap-1 border-l border-border pl-4 md:flex">
+          {sections.map((section) => (
+            <a
+              href={section.href}
+              aria-current={section.isActive ? "page" : undefined}
+              class:list={[
+                "rounded-md px-2 py-1 text-[0.8125rem] font-medium no-underline transition-colors",
+                section.isActive
+                  ? "bg-accent text-foreground"
+                  : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+              ]}
+            >
+              {section.label}
+            </a>
+          ))}
+        </nav>
+      )}
+    </div>
+
+    <div class="flex items-center gap-2">
+      {config.search !== false && <SearchTrigger />}
+      <a href="/overview/" class="hidden text-xs font-medium text-muted-foreground no-underline hover:text-foreground sm:inline">Docs</a>
+      {config.github && (
+        <LinkButton
+          href={config.github}
+          variant="minimal"
+          shape="square"
+          size="sm"
+          aria-label="GitHub"
+          target="_blank"
+          rel="noopener"
+          class="text-muted-foreground"
+        >
+          <Icon name="ph:github-logo" class="h-4 w-4" />
+        </LinkButton>
+      )}
+      <ThemeToggle />
+      {showSidebar && (
+        <Button
+          variant="ghost"
+          shape="square"
+          size="sm"
+          icon="ph:list"
+          aria-label="Open navigation"
+          data-menu-btn
+          class="text-muted-foreground lg:hidden"
+        />
+      )}
+    </div>
+  </div>
+</header>
