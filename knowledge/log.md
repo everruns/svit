@@ -1,5 +1,11 @@
 # Svit Knowledge Update Log
 
+## 2026-08-21
+
+* **Visual identity**: Adopted a radiant sunrise above two sweeping horizons
+  as Svit's mark, connecting the Ukrainian name `svit` (world) with a world
+  becoming visible. The canonical color and monochrome SVG sources live at the
+  repository root; transparent 1024 px PNGs are derived from the same geometry.
 ## 2026-08-20
 
 * **Everruns dependency refresh**: Advanced the locked Everruns `main`

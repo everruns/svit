@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1024"
+     height="1024"
+     viewBox="0 0 512 512"
+     role="img"
+     aria-labelledby="title desc">
+  <title id="title">Svit logo</title>
+  <desc id="desc">A gold sunrise above two sweeping navy horizons.</desc>
+
+  <defs>
+    <linearGradient id="navy" x1="88" y1="252" x2="448" y2="408"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#081C3F"/>
+      <stop offset="0.55" stop-color="#0A1636"/>
+      <stop offset="1" stop-color="#0B1233"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="256" y1="76" x2="256" y2="296"
+                    gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#E2B446"/>
+      <stop offset="1" stop-color="#D4A43A"/>
+    </linearGradient>
+  </defs>
+
+  <g fill="url(#gold)">
+    <path d="M250 72 H262 L258 140 H254 Z"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-24 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(24 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-48 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(48 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-72 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(72 256 220)"/>
+    <path d="M180 252 A76 76 0 0 1 332 252 Z"/>
+  </g>
+
+  <path fill="url(#navy)"
+        d="M56 305
+           C178 225 355 228 470 315
+           C390 276 240 266 92 362
+           Z"/>
+  <path fill="url(#navy)"
+        d="M126 374
+           C220 314 360 288 448 324
+           C365 420 218 447 126 374
+           Z"/>
+</svg>

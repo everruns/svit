@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1024"
+     height="1024"
+     viewBox="0 0 512 512"
+     role="img"
+     aria-labelledby="title desc">
+  <title id="title">Svit monochrome logo</title>
+  <desc id="desc">A sunrise above two sweeping horizons in one color.</desc>
+
+  <g fill="#0A0A0A">
+    <path d="M250 72 H262 L258 140 H254 Z"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-24 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(24 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-48 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(48 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(-72 256 220)"/>
+    <path d="M250 72 H262 L258 140 H254 Z" transform="rotate(72 256 220)"/>
+    <path d="M180 252 A76 76 0 0 1 332 252 Z"/>
+    <path d="M56 305
+             C178 225 355 228 470 315
+             C390 276 240 266 92 362
+             Z"/>
+    <path d="M126 374
+             C220 314 360 288 448 324
+             C365 420 218 447 126 374
+             Z"/>
+  </g>
+</svg>
