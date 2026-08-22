@@ -51,18 +51,15 @@ const head = [{
       </section>
 
       <section class="project-summary" aria-labelledby="summary-title">
-        <h2 id="summary-title">Current scope</h2>
+        <h2 id="summary-title">Abstract</h2>
         <div>
           <p>
-            Svit keeps structured memory, named Svit Lisp scripts, inbox state,
-            buffered message intents, and runtime metadata in one serializable
-            process. Each activation commits one complete next version or
-            commits nothing.
-          </p>
-          <p class="status-note">
-            There is no stable release. Svit is not a proven hostile
-            multi-tenant isolation boundary; untrusted production workloads
-            still require an outer Wasm or OS process boundary.
+            Svit is a research-stage Rust runtime for agents that need durable
+            state and reusable code. It keeps structured memory, named Svit Lisp
+            scripts, inbox state, buffered message intents, and runtime metadata
+            in one serializable process. Every activation runs against a bounded
+            working copy and either commits one complete next version or commits
+            nothing.
           </p>
         </div>
       </section>

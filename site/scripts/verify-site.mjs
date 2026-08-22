@@ -75,6 +75,20 @@ for (const marker of ["example.com", "CHANGE_ME", "sitemap-index.xml"]) {
   if (combined.includes(marker)) failures.push(`built pages contain ${marker}`);
 }
 
+const home = await read("index.html");
+const normalizedHome = home.replace(/\s+/g, " ");
+const abstract =
+  "Svit is a research-stage Rust runtime for agents that need durable state and reusable code. " +
+  "It keeps structured memory, named Svit Lisp scripts, inbox state, buffered message intents, " +
+  "and runtime metadata in one serializable process. Every activation runs against a bounded " +
+  "working copy and either commits one complete next version or commits nothing.";
+if (!home.includes(">Abstract</h2>") || !normalizedHome.includes(abstract)) {
+  failures.push("home page lacks the public Abstract");
+}
+if (home.includes(">Current scope</h2>")) {
+  failures.push("home page still contains the Current scope section");
+}
+
 const overview = await read("overview/index.html");
 if (!overview.includes('id="how-a-turn-moves"')) {
   failures.push("overview lacks its public runtime walkthrough");
