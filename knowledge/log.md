@@ -11,6 +11,11 @@
   Astro 7, Tailwind 4, pnpm, Nimbus Docs, and Cloudflare static-assets stack;
   its build synchronizes `README.md`, `SECURITY.md`, `CHANGELOG.md`, and public
   `docs/` sources into generated content rather than maintaining a second copy.
+* **Site delivery**: Connected the `svit-site` Worker to `everruns/svit` through
+  Cloudflare Workers Builds. Production builds follow `main`, run from `/site`
+  with pnpm, retain the unrestricted watch path required by synchronized root
+  documentation, and deploy automatically to `svit.everruns.com`; preview
+  builds are disabled.
 
 ## 2026-08-20
 
