@@ -28,7 +28,7 @@ use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView}
 use crate::persistence::Mutation;
 use crate::{Error, Limits, Ports, Result, Script, Value};
 
-const SNAPSHOT_FORMAT: u32 = 9;
+const SNAPSHOT_FORMAT: u32 = 10;
 const INLINE_SCRIPT_PREFIX: &str = "\0svit:inline:";
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
 const MAX_SNAPSHOT_BYTES: usize = 128 * 1024 * 1024;
@@ -1315,6 +1315,7 @@ fn initial_root(
 }
 
 fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
+    validate_tree_size(root, limits)?;
     let root = root_map(root)?;
     if root.keys().map(String::as_str).collect::<BTreeSet<_>>()
         != BTreeSet::from([
@@ -1420,6 +1421,23 @@ fn validate_root(root: &Value, id: &ProcessId, limits: &Limits) -> Result<()> {
     Value::Array(outbox.clone()).validate(limits, false)?;
     for message in outbox {
         message_from_value(message)?;
+    }
+    Ok(())
+}
+
+// THREAT[TM-DOS-012]: Per-value limits bound one write but never the state a
+// process accumulates. Measuring the whole committed root at the same boundary
+// that validates it keeps unbounded growth from surviving a commit, a restore,
+// or a fork, and keeps every snapshot of that root bounded too.
+fn validate_tree_size(root: &Value, limits: &Limits) -> Result<()> {
+    let mut nodes = 0usize;
+    let mut text_bytes = 0usize;
+    root.measure(&mut nodes, &mut text_bytes);
+    if nodes > limits.max_tree_nodes {
+        return Err(Error::ResourceLimitExceeded("process tree nodes"));
+    }
+    if text_bytes > limits.max_tree_text_bytes {
+        return Err(Error::ResourceLimitExceeded("process tree text bytes"));
     }
     Ok(())
 }
@@ -1607,6 +1625,14 @@ fn limits_value(limits: &Limits) -> Value {
         (
             "max_value_stack".into(),
             integer_value(limits.max_value_stack),
+        ),
+        (
+            "max_tree_nodes".into(),
+            integer_value(limits.max_tree_nodes),
+        ),
+        (
+            "max_tree_text_bytes".into(),
+            integer_value(limits.max_tree_text_bytes),
         ),
     ]))
 }

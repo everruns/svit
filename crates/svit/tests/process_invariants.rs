@@ -926,3 +926,83 @@ fn a_commit_publishes_the_content_hash_of_every_path_it_reports() {
 
     assert_eq!(removal.hash("/memory/profile/name"), Some(None));
 }
+
+#[test]
+// THREAT[TM-DOS-012]
+fn accumulated_tree_growth_fails_closed_without_committing() {
+    // Each write is well inside every per-value limit; only their accumulated
+    // total crosses the aggregate bound.
+    let mut process = Process::builder("svit://local/tests/tree-nodes")
+        .unwrap()
+        .limits(Limits {
+            max_tree_nodes: 60,
+            ..Limits::default()
+        })
+        .build()
+        .unwrap();
+    let baseline = unchanged(&process);
+    let mut committed = 0;
+    let refused = loop {
+        let path = format!("/memory/node-{committed}");
+        match process.write(&path, value!(1)) {
+            Ok(_) => {
+                committed += 1;
+                assert!(committed < 60, "aggregate node limit never refused a write");
+            }
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(
+        refused,
+        Error::ResourceLimitExceeded("process tree nodes")
+    ));
+    assert!(committed > 0, "the limit refused the very first write");
+    assert_eq!(process.version(), committed);
+    assert_eq!(
+        process.read(&format!("/memory/node-{committed}")).unwrap(),
+        None
+    );
+
+    // Text bytes are bounded independently of node count.
+    let mut process = Process::builder("svit://local/tests/tree-text")
+        .unwrap()
+        .limits(Limits {
+            max_tree_text_bytes: 2048,
+            ..Limits::default()
+        })
+        .build()
+        .unwrap();
+    let filler = "x".repeat(256);
+    let refused = loop {
+        let path = format!("/memory/text-{}", process.version());
+        match process.write(&path, value!(filler.clone())) {
+            Ok(_) => assert!(
+                process.version() < 64,
+                "aggregate text limit never refused a write"
+            ),
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(
+        refused,
+        Error::ResourceLimitExceeded("process tree text bytes")
+    ));
+
+    // A root already over the bound cannot be restored or forked back in.
+    let over_limit = Process::builder("svit://local/tests/tree-restore")
+        .unwrap()
+        .memory("a", value!({"b": 1, "c": 2}))
+        .build()
+        .unwrap();
+    let snapshot = over_limit.snapshot().unwrap();
+    let mut tightened: serde_json::Value = serde_json::from_slice(&snapshot).unwrap();
+    tightened["limits"]["max_tree_nodes"] = serde_json::json!(4);
+    assert!(matches!(
+        Process::restore(&serde_json::to_vec(&tightened).unwrap()),
+        Err(Error::ResourceLimitExceeded("process tree nodes"))
+    ));
+
+    // Nothing above was committed into the untouched baseline process.
+    let baseline_process = Process::restore(&baseline).unwrap();
+    assert_eq!(baseline_process.version(), 0);
+}

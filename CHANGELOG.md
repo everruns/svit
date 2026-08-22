@@ -18,6 +18,11 @@ All notable changes to Svit will be documented here.
 - Give volatile Svit instances the same retention and compaction-checkpoint
   surface as durable ones, so an in-memory reason/act loop no longer grows for
   its whole lifetime.
+- Bound the committed process tree as a whole. `Limits::max_tree_nodes` and
+  `Limits::max_tree_text_bytes` are measured over the complete root at the same
+  boundary that validates a commit, restore, or fork, so state accumulated one
+  valid write at a time now fails closed instead of growing without end. Both
+  appear under `/system/limits`; snapshots move to format 10.
 
 ### Changed
 

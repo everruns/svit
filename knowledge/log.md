@@ -22,8 +22,17 @@
   deletion marker: reads start after it, a cursor below it expires, and
   appended events never reuse a reclaimed sequence. Volatile Svit instances now
   own their compaction checkpoints so they enforce the identical contract.
-  Retention stays manual host policy (`L-050`), the memory tree still has no
-  aggregate bound (`L-051`), and blob reclamation remains cut-local (`L-052`).
+  Retention stays manual host policy (`L-050`) and blob reclamation remains
+  cut-local (`L-052`).
+* **Bounded committed tree**: `Limits` capped depth, entries, and bytes per
+  value but never the state those writes accumulate into, so a script
+  committing one small node per activation grew the committed root and every
+  snapshot of it without end. `max_tree_nodes` and `max_tree_text_bytes` are
+  now measured over the whole root inside `validate_root`, the single boundary
+  that already guards commit, restore, fork, and recovery, so an over-large
+  root cannot be committed, restored, or forked back in (TM-DOS-012). Both
+  limits are published under `/system/limits`, which moves snapshots to format
+  10. This retires `L-051`; its ID is not reused.
 
 ## 2026-08-20
 

@@ -206,6 +206,34 @@ impl Value {
         hasher.finalize().into()
     }
 
+    /// Accumulates this subtree's node count and text bytes.
+    ///
+    /// Aggregate accounting is separate from [`Self::validate`] because the
+    /// committed root is measured as one whole rather than per value.
+    pub(crate) fn measure(&self, nodes: &mut usize, text_bytes: &mut usize) {
+        *nodes = nodes.saturating_add(1);
+        match self {
+            Self::String(value) => *text_bytes = text_bytes.saturating_add(value.len()),
+            Self::Array(values) => {
+                for value in values {
+                    value.measure(nodes, text_bytes);
+                }
+            }
+            Self::Map(values) => {
+                for (key, value) in values {
+                    *text_bytes = text_bytes.saturating_add(key.len());
+                    value.measure(nodes, text_bytes);
+                }
+            }
+            Self::Script(script) => {
+                *text_bytes = text_bytes
+                    .saturating_add(script.source().len())
+                    .saturating_add(script.documentation().len());
+            }
+            Self::Null | Self::Bool(_) | Self::Integer(_) | Self::Number(_) => {}
+        }
+    }
+
     pub(crate) fn validate(&self, limits: &Limits, scripts_allowed: bool) -> Result<()> {
         let mut entries = 0usize;
         let mut text_bytes = 0usize;
