@@ -93,6 +93,11 @@ const overview = await read("overview/index.html");
 if (!overview.includes('id="how-a-turn-moves"')) {
   failures.push("overview lacks its public runtime walkthrough");
 }
+for (const group of ["Concepts", "Architecture", "Project"]) {
+  if (!overview.includes(`>${group}<`)) {
+    failures.push(`documentation sidebar lacks the ${group} group`);
+  }
+}
 for (const heading of ["Current scope", "Security", "Documentation", "Development", "License"]) {
   if (overview.includes(`>${heading}</h`)) {
     failures.push(`overview should not duplicate the ${heading} section`);

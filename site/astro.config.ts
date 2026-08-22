@@ -26,6 +26,26 @@ const nimbusConfig = defineNimbusConfig({
   homeLabel: "Svit",
   github: "https://github.com/everruns/svit",
   editPattern: null,
+  sidebar: {
+    items: [
+      "overview",
+      {
+        label: "Concepts",
+        collapsed: false,
+        items: ["memory", "ports", "events"],
+      },
+      {
+        label: "Architecture",
+        collapsed: false,
+        items: ["vision", "control-protocol"],
+      },
+      {
+        label: "Project",
+        collapsed: false,
+        items: ["security", "changelog"],
+      },
+    ],
+  },
   head: [
     { tag: "meta", attrs: { name: "theme-color", content: "#0a1636" } },
   ],
