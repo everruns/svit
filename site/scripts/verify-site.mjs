@@ -2,7 +2,17 @@ import { access, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 const root = resolve(import.meta.dirname, "..");
-const pages = ["", "overview", "vision", "control-protocol", "security", "changelog"];
+const pages = [
+  "",
+  "overview",
+  "memory",
+  "ports",
+  "events",
+  "vision",
+  "control-protocol",
+  "security",
+  "changelog",
+];
 const failures = [];
 
 async function read(path) {
@@ -63,6 +73,42 @@ const combined = (await Promise.all(
 )).join("\n");
 for (const marker of ["example.com", "CHANGE_ME", "sitemap-index.xml"]) {
   if (combined.includes(marker)) failures.push(`built pages contain ${marker}`);
+}
+
+const overview = await read("overview/index.html");
+if (!overview.includes('id="how-a-turn-moves"')) {
+  failures.push("overview lacks its public runtime walkthrough");
+}
+for (const heading of ["Current scope", "Security", "Documentation", "Development", "License"]) {
+  if (overview.includes(`>${heading}</h`)) {
+    failures.push(`overview should not duplicate the ${heading} section`);
+  }
+}
+
+const mermaidFences = [
+  ...combined.matchAll(/<figure[^>]*data-nb-lang="mermaid"/g),
+].length;
+const mermaidDiagrams = [...combined.matchAll(/data-mermaid-diagram/g)].length;
+if (mermaidFences === 0 || mermaidDiagrams !== mermaidFences) {
+  failures.push(
+    `built pages contain ${mermaidFences} Mermaid fences but ${mermaidDiagrams} renderable diagrams`,
+  );
+}
+
+const shikiCss = await read("_nimbus/shiki.css");
+const rustBlocks = [...combined.matchAll(/<pre[^>]*data-language="rust"[\s\S]*?<\/pre>/g)]
+  .map(([block]) => block)
+  .join("\n");
+const tokenClasses = new Set(
+  [...rustBlocks.matchAll(/\b(nb-shiki-[a-z0-9-]+)\b/g)].map(([, name]) => name),
+);
+const hasInlineTokenThemes =
+  rustBlocks.includes("--shiki-light:") && rustBlocks.includes("--shiki-dark:");
+const hasClassTokenThemes =
+  tokenClasses.size > 0 &&
+  [...tokenClasses].every((name) => shikiCss.includes(`.${name}{`));
+if (!rustBlocks || (!hasInlineTokenThemes && !hasClassTokenThemes)) {
+  failures.push("Rust code blocks lack complete light and dark syntax token styles");
 }
 
 if (failures.length) {

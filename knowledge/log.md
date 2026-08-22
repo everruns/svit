@@ -49,6 +49,14 @@
   documentation, and deploy automatically to `svit.everruns.com`; preview
   builds are disabled. The Cloudflare GitHub App explicitly includes the Svit
   repository so GitHub push events reach the production trigger.
+* **Documentation diagrams**: Mermaid fences render as responsive diagrams in
+  the Nimbus site, lazy-loading the client renderer only on diagram pages and
+  following the active light or dark theme. Strict rendering remains enabled,
+  and the source code block is the no-JavaScript and parse-error fallback.
+* **Documentation code highlighting**: Shiki emits dual-theme token colors
+  inline for fenced code. This keeps syntax highlighting independent of the
+  Nimbus static-build class registry, and the site verifier rejects Rust blocks
+  without complete light and dark token styles.
 * **Public runtime concepts**: Added dedicated public references for `/memory`,
   explicit host-attached ports, and the distinct process-change, canonical
   reasoning, message, outbox, and failure event surfaces.

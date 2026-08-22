@@ -3,6 +3,20 @@ import icon from "astro-icon";
 import tailwindcss from "@tailwindcss/vite";
 import nimbus, { defineConfig as defineNimbusConfig } from "@cloudflare/nimbus-docs";
 import { tableScroll } from "@cloudflare/nimbus-docs/markdown";
+import type { HastPluginInput } from "@cloudflare/nimbus-docs/types";
+
+const mermaidCodeBlocks: HastPluginInput = {
+  name: "svit:mermaid-code-blocks",
+  element: {
+    filter: ["figure"],
+    visit(node, context) {
+      const language = node.properties?.dataNbLang ?? node.properties?.["data-nb-lang"];
+      if (language === "mermaid") {
+        context.setProperty(node, "dataMermaidDiagram", "");
+      }
+    },
+  },
+};
 
 const nimbusConfig = defineNimbusConfig({
   site: "https://svit.everruns.com",
@@ -18,6 +32,13 @@ const nimbusConfig = defineNimbusConfig({
 });
 export default defineConfig({
   output: "static",
+  markdown: {
+    shikiConfig: {
+      // Keep dual-theme token colors in the HTML when Nimbus' generated
+      // class registry is unavailable during a static build.
+      defaultColor: "light-dark()",
+    },
+  },
   vite: {
     plugins: [tailwindcss()],
   },
@@ -33,7 +54,7 @@ export default defineConfig({
         "nimbus/internal-link": "error",
       },
       markdown: {
-        hastPlugins: [tableScroll()],
+        hastPlugins: [tableScroll(), mermaidCodeBlocks],
       },
     }),
   ],
