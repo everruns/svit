@@ -8,10 +8,10 @@ const targetDir = resolve(siteRoot, "src/content/docs");
 
 const pages = [
   {
-    source: "README.md",
+    source: "docs/overview.md",
     target: "overview.md",
     title: "Overview",
-    description: "Product orientation, runnable quick start, and the current Svit process model.",
+    description: "Public orientation, runtime model, and the shortest Rust path into Svit.",
     order: 1,
   },
   {
@@ -19,28 +19,49 @@ const pages = [
     target: "vision.md",
     title: "Vision",
     description: "The runtime model, research direction, and explicit limits of Svit.",
+    order: 5,
+  },
+  {
+    source: "docs/memory.md",
+    target: "memory.md",
+    title: "Memory",
+    description: "Durable process values, paths, transactions, snapshots, and forks.",
     order: 2,
+  },
+  {
+    source: "docs/ports.md",
+    target: "ports.md",
+    title: "Ports",
+    description: "Explicit host integrations available to Svit Lisp through typed contracts.",
+    order: 3,
+  },
+  {
+    source: "docs/events.md",
+    target: "events.md",
+    title: "Events",
+    description: "Process commits, canonical reasoning history, messages, and transient observers.",
+    order: 4,
   },
   {
     source: "docs/control-protocol.md",
     target: "control-protocol.md",
     title: "Control protocol",
     description: "Versioned atomic state transitions for multiple clients controlling one process.",
-    order: 3,
+    order: 6,
   },
   {
     source: "SECURITY.md",
     target: "security.md",
     title: "Security",
     description: "Supported versions, threat boundaries, and vulnerability reporting.",
-    order: 4,
+    order: 7,
   },
   {
     source: "CHANGELOG.md",
     target: "changelog.md",
     title: "Changelog",
     description: "Published changes to Svit.",
-    order: 5,
+    order: 8,
   },
 ];
 

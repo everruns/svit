@@ -6,7 +6,10 @@
     "/404",
     "/changelog",
     "/control-protocol",
+    "/events",
+    "/memory",
     "/overview",
+    "/ports",
     "/security",
     "/vision"
   ],

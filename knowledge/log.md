@@ -9,8 +9,9 @@
 * **Public site**: Replaced the early marketing page with a factual project
   index and Nimbus-rendered canonical documents. The site follows Tuika's
   Astro 7, Tailwind 4, pnpm, Nimbus Docs, and Cloudflare static-assets stack;
-  its build synchronizes `README.md`, `SECURITY.md`, `CHANGELOG.md`, and public
-  `docs/` sources into generated content rather than maintaining a second copy.
+  its build synchronizes a dedicated public overview, `SECURITY.md`,
+  `CHANGELOG.md`, and public `docs/` sources into generated content. README
+  remains repository documentation rather than the site overview.
 * **Bounded canonical history**: Canonical reasoning events were append-only
   with no retention boundary, so a long-lived Svit grew without bound on disk
   and a volatile one grew in host memory for its whole lifetime; `cut` bounded
@@ -48,6 +49,9 @@
   documentation, and deploy automatically to `svit.everruns.com`; preview
   builds are disabled. The Cloudflare GitHub App explicitly includes the Svit
   repository so GitHub push events reach the production trigger.
+* **Public runtime concepts**: Added dedicated public references for `/memory`,
+  explicit host-attached ports, and the distinct process-change, canonical
+  reasoning, message, outbox, and failure event surfaces.
 
 ## 2026-08-20
 

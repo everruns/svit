@@ -12,7 +12,10 @@ await rm(resolve(dist, "sitemap-index.xml"));
 
 const sourceByRoute = new Map([
   ["/", "site/src/pages/index.astro"],
-  ["/overview/", "README.md"],
+  ["/overview/", "docs/overview.md"],
+  ["/memory/", "docs/memory.md"],
+  ["/ports/", "docs/ports.md"],
+  ["/events/", "docs/events.md"],
   ["/vision/", "docs/vision.md"],
   ["/control-protocol/", "docs/control-protocol.md"],
   ["/security/", "SECURITY.md"],
