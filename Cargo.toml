@@ -17,6 +17,7 @@ categories = ["development-tools", "virtualization"]
 
 [workspace.dependencies]
 async-trait = "0.1"
+clap = { version = "4.5", features = ["derive", "env"] }
 everruns = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false, features = ["openai"] }
 everruns-builtins = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false }
 everruns-core = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false }

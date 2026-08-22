@@ -2,6 +2,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use clap::Parser;
 use svit::{
     DurableProcess, Error, Mount, OpenAI, Ports, Process, Reasoner, ReqwestHttpTransport, Svit,
     TursoProcessStore,
@@ -11,19 +12,51 @@ mod tui;
 
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const DEFAULT_INSTANCE_ID: &str = "default";
-const USAGE: &str = "usage: lampa [--instance <instance-id>] [--model <model>] [--mount <name>=<path>] [--mount-rw <name>=<path>] [--import-legacy <shared-db>]";
 
-/// Host-selected mounts for one console session.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct MountSpecification {
+    name: String,
+    path: PathBuf,
+}
+
+/// Terminal interface for one persisted Svit process.
+#[derive(Debug, Parser)]
+#[command(version, about)]
 struct Options {
+    /// Instance name used for the process address and per-instance database.
+    #[arg(
+        long = "instance",
+        value_name = "INSTANCE_ID",
+        env = "LAMPA_INSTANCE_ID",
+        default_value = DEFAULT_INSTANCE_ID,
+        value_parser = parse_instance_id
+    )]
     instance_id: String,
+
+    /// Model used for the process reasoner and nested model calls.
+    #[arg(long, value_name = "MODEL", env = "SVIT_MODEL", default_value = DEFAULT_MODEL)]
     model: String,
-    mounts: Vec<(String, PathBuf, bool)>,
+
+    /// Attach a folder as a read-only mount. May be repeated.
+    #[arg(long = "mount", value_name = "NAME=PATH", value_parser = parse_mount_specification)]
+    mounts: Vec<MountSpecification>,
+
+    /// Attach a folder as a writable mount. May be repeated.
+    #[arg(long = "mount-rw", value_name = "NAME=PATH", value_parser = parse_mount_specification)]
+    writable_mounts: Vec<MountSpecification>,
+
+    /// One-time import from the shared database used by older Lampa versions.
+    #[arg(
+        long = "import-legacy",
+        value_name = "SHARED_DB",
+        value_hint = clap::ValueHint::FilePath
+    )]
     legacy_import: Option<PathBuf>,
 }
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    match run().await {
+    match run(Options::parse()).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("lampa: {error}");
@@ -32,21 +65,21 @@ async fn main() -> ExitCode {
     }
 }
 
-async fn run() -> Result<(), String> {
-    let options = parse_options(env::args().skip(1))?;
+async fn run(options: Options) -> Result<(), String> {
     let cwd = env::current_dir().map_err(|error| error.to_string())?;
     let mut mounts = vec![(
         "cwd".to_owned(),
         Mount::folder(&cwd).map_err(|error| error.to_string())?,
     )];
-    for (name, path, writable) in &options.mounts {
-        let mount = if *writable {
-            Mount::writable_folder(path)
-        } else {
-            Mount::folder(path)
-        }
-        .map_err(|error| format!("{name}: {error}"))?;
-        mounts.push((name.clone(), mount));
+    for specification in &options.mounts {
+        let mount = Mount::folder(&specification.path)
+            .map_err(|error| format!("{}: {error}", specification.name))?;
+        mounts.push((specification.name.clone(), mount));
+    }
+    for specification in &options.writable_mounts {
+        let mount = Mount::writable_folder(&specification.path)
+            .map_err(|error| format!("{}: {error}", specification.name))?;
+        mounts.push((specification.name.clone(), mount));
     }
     let data_dir = match env::var_os("LAMPA_DATA_DIR") {
         Some(path) => PathBuf::from(path),
@@ -229,53 +262,22 @@ fn platform_data_directory() -> Option<PathBuf> {
         .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
 }
 
-fn parse_options(arguments: impl Iterator<Item = String>) -> Result<Options, String> {
-    let mut arguments = arguments.peekable();
-    let mut instance_id = None;
-    let mut model = None;
-    let mut mounts = Vec::new();
-    let mut legacy_import = None;
-    while let Some(flag) = arguments.next() {
-        let value = || arguments_value(&flag);
-        match flag.as_str() {
-            "--instance" => {
-                instance_id = Some(arguments.next().ok_or_else(value)?);
-            }
-            "--model" => {
-                model = Some(arguments.next().ok_or_else(value)?);
-            }
-            "--import-legacy" => {
-                legacy_import = Some(PathBuf::from(arguments.next().ok_or_else(value)?));
-            }
-            "--mount" | "--mount-rw" => {
-                let specification = arguments.next().ok_or_else(value)?;
-                let (name, path) = specification
-                    .split_once('=')
-                    .ok_or_else(|| format!("{flag} expects <name>=<path>"))?;
-                if name.is_empty() || path.is_empty() {
-                    return Err(format!("{flag} expects <name>=<path>"));
-                }
-                mounts.push((name.to_owned(), PathBuf::from(path), flag == "--mount-rw"));
-            }
-            _ => return Err(USAGE.into()),
-        }
-    }
-    let instance_id = instance_id
-        .or_else(|| env::var("LAMPA_INSTANCE_ID").ok())
-        .unwrap_or_else(|| DEFAULT_INSTANCE_ID.to_string());
-    lampa_address(&instance_id)?;
-    Ok(Options {
-        instance_id,
-        model: model
-            .or_else(|| env::var("SVIT_MODEL").ok())
-            .unwrap_or_else(|| DEFAULT_MODEL.to_string()),
-        mounts,
-        legacy_import,
-    })
+fn parse_instance_id(value: &str) -> Result<String, String> {
+    lampa_address(value)?;
+    Ok(value.to_owned())
 }
 
-fn arguments_value(flag: &str) -> String {
-    format!("{flag} requires a value")
+fn parse_mount_specification(value: &str) -> Result<MountSpecification, String> {
+    let (name, path) = value
+        .split_once('=')
+        .ok_or_else(|| "expected <name>=<path>".to_owned())?;
+    if name.is_empty() || path.is_empty() {
+        return Err("expected <name>=<path>".to_owned());
+    }
+    Ok(MountSpecification {
+        name: name.to_owned(),
+        path: PathBuf::from(path),
+    })
 }
 
 #[cfg(test)]
@@ -288,7 +290,8 @@ mod tests {
     use super::*;
 
     fn parse(arguments: &[&str]) -> Result<Options, String> {
-        parse_options(arguments.iter().map(|argument| (*argument).to_string()))
+        Options::try_parse_from(std::iter::once("lampa").chain(arguments.iter().copied()))
+            .map_err(|error| error.to_string())
     }
 
     #[test]
@@ -303,10 +306,17 @@ mod tests {
 
         assert_eq!(
             options.mounts,
-            vec![
-                ("docs".to_owned(), PathBuf::from("/tmp/docs"), false),
-                ("notes".to_owned(), PathBuf::from("/tmp/notes"), true),
-            ]
+            vec![MountSpecification {
+                name: "docs".to_owned(),
+                path: PathBuf::from("/tmp/docs"),
+            }]
+        );
+        assert_eq!(
+            options.writable_mounts,
+            vec![MountSpecification {
+                name: "notes".to_owned(),
+                path: PathBuf::from("/tmp/notes"),
+            }]
         );
     }
 
@@ -433,6 +443,14 @@ mod tests {
         assert!(parse(&["--mount", "=/tmp/docs"]).is_err());
         assert!(parse(&["--mount"]).is_err());
         assert!(parse(&["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn help_documents_the_one_time_legacy_import() {
+        let help = parse(&["--help"]).unwrap_err();
+
+        assert!(help.contains("--import-legacy <SHARED_DB>"));
+        assert!(help.contains("One-time import from the shared database"));
     }
 
     #[test]

@@ -264,6 +264,11 @@ OPENAI_API_KEY=... cargo run --locked -p lampa -- --instance research-one
 Use `--mount name=path` or `--mount-rw name=path` to attach folders and
 `LAMPA_DATA_DIR` to select the storage root.
 
+`--import-legacy <shared-db>` is only for a one-time migration from Lampa's old
+shared database layout. It imports the selected instance's current process
+state into its new per-instance database; it does not copy the source event or
+fork history and refuses to replace an existing instance database.
+
 ## Current scope
 
 Implemented now:

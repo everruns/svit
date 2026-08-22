@@ -2,6 +2,10 @@
 
 ## 2026-08-21
 
+* **Lampa CLI parsing**: Replaced the handwritten flag loop with Clap-derived
+  parsing, typed repeated mount specifications, generated help and version
+  output, and explicit environment fallbacks. The one-time legacy shared-store
+  import remains available and is now described in `--help`.
 * **Visual identity**: Adopted a radiant sunrise above two sweeping horizons
   as Svit's mark, connecting the Ukrainian name `svit` (world) with a world
   becoming visible. The canonical color and monochrome SVG sources live at the
