@@ -44,6 +44,7 @@ mod process;
 mod reasoner;
 mod reasoning;
 mod stdlib;
+mod thread_history;
 mod tools;
 #[cfg(feature = "persistence-turso")]
 mod turso_persistence;
@@ -65,7 +66,7 @@ pub use mounts::{
 };
 pub use persistence::{
     DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
-    TransactionHead, TransactionQuery,
+    ThreadHistoryCut, ThreadHistoryRetention, TransactionHead, TransactionQuery,
 };
 pub use ports::{
     HttpAllowlist, HttpRequest, HttpResponse, HttpTransport, HttpTransportError, Port, PortContext,

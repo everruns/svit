@@ -11,6 +11,37 @@
   Astro 7, Tailwind 4, pnpm, Nimbus Docs, and Cloudflare static-assets stack;
   its build synchronizes `README.md`, `SECURITY.md`, `CHANGELOG.md`, and public
   `docs/` sources into generated content rather than maintaining a second copy.
+* **Bounded canonical history**: Canonical reasoning events were append-only
+  with no retention boundary, so a long-lived Svit grew without bound on disk
+  and a volatile one grew in host memory for its whole lifetime; `cut` bounded
+  only the process transaction log. `ThreadHistoryRetention` adds an explicit
+  host cut that reclaims every event at or below a boundary and records that
+  boundary durably. It fails closed unless a compaction checkpoint already
+  replaced the prefix, the boundary is inside the committed range, and no fork
+  inherits it (TM-AUD-002). The recorded boundary is a floor rather than a
+  deletion marker: reads start after it, a cursor below it expires, and
+  appended events never reuse a reclaimed sequence. Volatile Svit instances now
+  own their compaction checkpoints so they enforce the identical contract.
+  Retention stays manual host policy (`L-050`) and blob reclamation remains
+  cut-local (`L-052`).
+* **Reclaimed cut envelopes**: A process transaction `cut` deleted its covered
+  rows but left their content-addressed envelopes in `blobs`, so repeated cuts
+  accumulated unreachable bytes forever. The cut now collects those hashes
+  before deleting the rows and, once every row is gone, removes each hash no
+  base, transaction, thread event, checkpoint, or snapshot still references.
+  Content addressing makes the reference check mandatory rather than optional:
+  an identical envelope can remain reachable from another address. Reclamation
+  stays proportional to what the cut removed, and no collector runs on a
+  schedule (`L-052`, TM-DOS-009).
+* **Bounded committed tree**: `Limits` capped depth, entries, and bytes per
+  value but never the state those writes accumulate into, so a script
+  committing one small node per activation grew the committed root and every
+  snapshot of it without end. `max_tree_nodes` and `max_tree_text_bytes` are
+  now measured over the whole root inside `validate_root`, the single boundary
+  that already guards commit, restore, fork, and recovery, so an over-large
+  root cannot be committed, restored, or forked back in (TM-DOS-012). Both
+  limits are published under `/system/limits`, which moves snapshots to format
+  10. This retires `L-051`; its ID is not reused.
 * **Site delivery**: Connected the `svit-site` Worker to `everruns/svit` through
   Cloudflare Workers Builds. Production builds follow `main`, run from `/site`
   with pnpm, retain the unrestricted watch path required by synchronized root

@@ -314,8 +314,15 @@ before the referencing row and publishes the new head in that same transaction.
 
 Splitting individual large values into independently referenced blobs is
 **Under implementation**. Until then, the event byte cap rejects a mutation set
-whose complete canonical envelope is too large. Verified garbage collection
-is also deferred; unreachable content-addressed BLOBs may remain after a cut.
+whose complete canonical envelope is too large.
+
+A cut reclaims the BLOBs it orphans. Both the transaction cut and the thread
+history cut collect the envelope hashes their rows referenced, delete those
+rows, and then remove each hash that no base, transaction, thread event,
+checkpoint, or snapshot still references. Content addressing makes that check
+mandatory: an identical envelope may remain reachable from another address.
+Reclamation is therefore proportional to what the cut removed rather than a
+sweep of the whole store, and no periodic collector runs on its own.
 
 ## Resume
 
@@ -449,7 +456,9 @@ rather than exposing arbitrary SQL over guest values.
 
 A query sees only retained history. After a cut, events covered by the new base
 are unavailable unless archived separately; the base exposes only its boundary
-position, hashes, version, and current state.
+position, hashes, version, and current state. Canonical reasoning events have
+their own retention boundary in `thread_history_cuts`; see **Thread history
+retention** below.
 
 ## Cut
 
@@ -464,8 +473,9 @@ is quiescent. One Turso transaction:
 4. Update the address row from the expected old head to the snapshot base,
    retaining the covered position and setting the head hash to the base hash.
 5. Delete covered event and event-path rows, then commit all changes together.
-6. Resume at the old head position plus one with `previous_hash` set to the new
-   base hash. Unreachable blobs are reclaimed only by later verified GC.
+6. Reclaim every covered envelope BLOB that nothing else still references,
+   then resume at the old head position plus one with `previous_hash` set to
+   the new base hash.
 
 Cut does not change process version, root hash, or transaction positions. The new
 base records the prior anchor event, and the next event binds to that base hash.
@@ -476,6 +486,46 @@ If any child references the covered history, the transaction refuses the cut.
 The host must first detach those children with their own snapshot bases. The
 database may retain free pages after logical deletion; file-space reclamation
 is an engine-maintenance concern and is not part of cut semantics.
+
+## Thread history retention
+
+`cut` bounds the process transaction log. Canonical reasoning events are a
+separate append-only stream, so a long-lived Svit stays unbounded until the
+host reclaims a prefix of that stream too. `ThreadHistoryRetention` is that
+control, and it is host policy: no turn, commit, or compaction removes
+canonical history on its own.
+
+`cut_thread_events(session, through_sequence)` removes every retained event at
+or below the boundary and records the boundary durably. Three rules make the
+operation fail closed:
+
+1. The boundary must be a positive sequence at or below the committed high
+   watermark, otherwise `ThreadHistoryBoundary`.
+2. A compaction checkpoint must already cover the boundary, otherwise
+   `ThreadHistoryUncompacted`. The checkpoint is the evidence that the removed
+   turns are still represented in replacement context; without it the loop
+   would silently lose history it cannot reconstruct. `compacted_through`
+   reports the largest boundary the store currently accepts.
+3. No fork may inherit the prefix, otherwise `ThreadHistoryPinned`. A child
+   inherits from sequence one, so any retained `thread_event_refs` row overlaps
+   every cut. The child detaches by cutting its own view first.
+
+The recorded boundary is the session's floor, not a deletion marker. Sequence
+allocation takes the floor into account, so an appended event never reuses a
+reclaimed sequence even when every stored event is gone; reads start after the
+floor and report a page with a gap rather than a corrupt stream; and a cursor
+that predates the floor expires instead of silently skipping events. Cutting a
+boundary already reclaimed is idempotent, which keeps a retried cut safe after
+a crash.
+
+A cut reclaims the event blobs it orphans through the same verified
+unreferenced-blob check the rest of the adapter uses. A child cut moves only
+the child's floor: the parent keeps its own rows and bytes, because a process
+never deletes storage another address still reads.
+
+Volatile and durable Svit instances enforce identical rules. The volatile log
+owns its compaction checkpoints so the same evidence exists in memory, and the
+only difference is which storage the cut reclaims.
 
 ## Turso schema
 

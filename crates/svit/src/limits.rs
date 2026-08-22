@@ -42,6 +42,18 @@ pub struct Limits {
     pub max_mount_entries: usize,
     /// Maximum mount writes buffered by one activation.
     pub max_mount_writes: usize,
+    /// Maximum nodes in the whole committed process root.
+    ///
+    /// Per-value limits bound one write; this bounds the state every write
+    /// accumulates into, so a script that commits one small node per
+    /// activation cannot grow the root without end.
+    pub max_tree_nodes: usize,
+    /// Maximum UTF-8 bytes across every key, string, and script in the whole
+    /// committed process root.
+    ///
+    /// Paired with `max_tree_nodes` this bounds snapshot size within a constant
+    /// per-node encoding factor; it is not itself a serialized-byte limit.
+    pub max_tree_text_bytes: usize,
 }
 
 impl Default for Limits {
@@ -64,6 +76,8 @@ impl Default for Limits {
             max_staged_scripts: 32,
             max_mount_entries: 4096,
             max_mount_writes: 32,
+            max_tree_nodes: 100_000,
+            max_tree_text_bytes: 16 * 1024 * 1024,
         }
     }
 }
@@ -88,7 +102,9 @@ impl Limits {
             && self.max_messages <= 10_000
             && self.max_staged_scripts <= 10_000
             && self.max_mount_entries <= 1_000_000
-            && self.max_mount_writes <= 10_000;
+            && self.max_mount_writes <= 10_000
+            && self.max_tree_nodes <= 10_000_000
+            && self.max_tree_text_bytes <= 512 * 1024 * 1024;
         if !valid {
             return Err(Error::InvalidLimits(
                 "one or more limits exceed hard maxima",

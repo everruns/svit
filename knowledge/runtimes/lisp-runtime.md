@@ -172,7 +172,10 @@ isolation. Production use still requires an outer Wasm or OS boundary.
 Ketos enforces wall-clock execution time, call-stack size, value-stack size,
 namespace entries, abstract guest-memory units, integer bits, and syntax depth.
 Svit separately bounds nested exec depth, persistent values, source bytes,
-logs, messages, and staged scripts. Every limit failure rolls back the activation.
+logs, messages, and staged scripts. Those bound one activation and one value;
+`max_tree_nodes` and `max_tree_text_bytes` additionally bound the whole
+committed root, so state accumulated across many valid activations still fails
+closed. Every limit failure rolls back the activation.
 
 Ketos 0.12 does not expose deterministic instruction fuel. Therefore the
 execution deadline can vary with host load and cannot support cross-run

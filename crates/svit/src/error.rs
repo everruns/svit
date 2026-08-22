@@ -107,6 +107,19 @@ pub enum Error {
     /// The persistence engine could not complete an operation safely.
     #[error("persistence store unavailable")]
     PersistenceUnavailable,
+
+    /// A fork inherits the canonical event prefix a retention cut would remove.
+    #[error("thread history prefix is referenced by a fork")]
+    ThreadHistoryPinned,
+
+    /// No compaction checkpoint proves the requested prefix is already
+    /// represented in replacement context.
+    #[error("thread history prefix is not covered by a compaction checkpoint")]
+    ThreadHistoryUncompacted,
+
+    /// The requested retention boundary is outside the committed event range.
+    #[error("thread history retention boundary is out of range")]
+    ThreadHistoryBoundary,
 }
 
 /// Convenient result alias for the Svit API.

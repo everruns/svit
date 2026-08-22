@@ -45,5 +45,9 @@ name = "transaction_persistence"
 required-features = ["persistence-turso"]
 
 [[example]]
+name = "thread_retention"
+required-features = ["persistence-turso"]
+
+[[example]]
 name = "mounted_resources"
 required-features = ["turso-mount"]

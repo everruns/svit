@@ -1,8 +1,13 @@
 #![cfg(feature = "persistence-turso")]
 
+use everruns_core::Message;
+use everruns_core::compaction_checkpoint::{CompactionCheckpoint, CompactionCheckpointPayload};
+use everruns_core::events::{EventContext, EventRequest, InputMessageData};
+use everruns_host::{EventReadLimit, EventReadRequest};
+use everruns_provider::typed_id::{EventId, SessionId};
 use svit::{
-    DurableProcessHandle, Error, Mount, Process, ProcessId, ProcessStore, Script, TransactionQuery,
-    TursoProcessStore, Value, value,
+    DurableProcess, DurableProcessHandle, Error, Mount, Process, ProcessId, ProcessStore, Script,
+    TransactionQuery, TursoProcessStore, Value, value,
 };
 
 const COUNTER: &str = r#"
@@ -347,4 +352,213 @@ async fn a_resumed_process_reattaches_mount_authority_explicitly() {
         Some(value!("hello from a real folder\n"))
     );
     assert_eq!(resumed.version(), 0);
+}
+
+fn checkpoint(session_id: SessionId, source_sequence: i64, text: &str) -> CompactionCheckpoint {
+    CompactionCheckpoint {
+        id: EventId::new().uuid(),
+        session_id,
+        source_sequence,
+        provider_type: "test".into(),
+        model: "test-model".into(),
+        format_version: 1,
+        payload: CompactionCheckpointPayload::Summary { text: text.into() },
+    }
+}
+
+async fn thread_process(
+    store: &TursoProcessStore,
+    address: &str,
+    session_id: SessionId,
+) -> DurableProcess {
+    let mut process = Process::new(address).unwrap();
+    process
+        .replace_thread_state(
+            Value::from_json(serde_json::json!({
+                "format": "svit-thread@8",
+                "session_id": session_id.to_string(),
+                "process_id": address,
+                "instructions": null,
+                "system_prompt": "system",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    store.import(process).await.unwrap()
+}
+
+async fn append_events(handle: &DurableProcess, session_id: SessionId, count: usize) {
+    let log = handle.event_log();
+    for index in 0..count {
+        log.append(EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            InputMessageData::new(Message::user(format!("question {index}"))),
+        ))
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+// THREAT[TM-AUD-002]
+async fn compacted_thread_history_is_reclaimed_and_stays_readable() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let session_id = SessionId::new();
+    let handle = thread_process(&store, "svit://local/retention/cut", session_id).await;
+    append_events(&handle, session_id, 5).await;
+    handle
+        .compaction_checkpoint_store()
+        .install(checkpoint(session_id, 3, "summary through three"))
+        .await
+        .unwrap();
+
+    let retention = handle.thread_history_retention();
+    assert_eq!(retention.retained_from(session_id).await.unwrap(), 0);
+    assert_eq!(retention.compacted_through(session_id).await.unwrap(), 3);
+
+    let cut = retention.cut_thread_events(session_id, 3).await.unwrap();
+    assert_eq!(cut.removed_events(), 3);
+    assert_eq!(cut.retained_from(), 3);
+    assert_eq!(retention.retained_from(session_id).await.unwrap(), 3);
+
+    // The retained tail reads without a sequence gap.
+    let page = handle
+        .event_log()
+        .read_page(EventReadRequest::new(session_id, EventReadLimit::default()))
+        .await
+        .unwrap();
+    assert_eq!(page.events.len(), 2);
+    assert_eq!(page.events[0].sequence, Some(4));
+    assert_eq!(page.events[1].sequence, Some(5));
+    let recent = handle.recent_thread_events(session_id, 10).await.unwrap();
+    assert_eq!(recent.len(), 2);
+
+    // Sequence allocation never reuses a reclaimed sequence.
+    append_events(&handle, session_id, 1).await;
+    let recent = handle.recent_thread_events(session_id, 10).await.unwrap();
+    assert_eq!(
+        recent
+            .iter()
+            .map(|event| event.sequence)
+            .collect::<Vec<_>>(),
+        vec![Some(4), Some(5), Some(6)]
+    );
+
+    // Retention survives resume, and a repeated cut is idempotent.
+    drop(handle);
+    let resumed = store.resume("svit://local/retention/cut").await.unwrap();
+    let retention = resumed.thread_history_retention();
+    assert_eq!(retention.retained_from(session_id).await.unwrap(), 3);
+    let repeated = retention.cut_thread_events(session_id, 3).await.unwrap();
+    assert_eq!(repeated.removed_events(), 0);
+    assert_eq!(repeated.retained_from(), 3);
+    assert_eq!(
+        resumed
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+// THREAT[TM-AUD-002]
+async fn uncompacted_or_out_of_range_thread_history_cuts_fail_closed() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let session_id = SessionId::new();
+    let handle = thread_process(&store, "svit://local/retention/closed", session_id).await;
+    append_events(&handle, session_id, 3).await;
+    let retention = handle.thread_history_retention();
+
+    assert_eq!(retention.compacted_through(session_id).await.unwrap(), 0);
+    assert!(matches!(
+        retention.cut_thread_events(session_id, 1).await,
+        Err(Error::ThreadHistoryUncompacted)
+    ));
+    assert!(matches!(
+        retention.cut_thread_events(session_id, 0).await,
+        Err(Error::ThreadHistoryBoundary)
+    ));
+    assert!(matches!(
+        retention.cut_thread_events(session_id, 4).await,
+        Err(Error::ThreadHistoryBoundary)
+    ));
+
+    handle
+        .compaction_checkpoint_store()
+        .install(checkpoint(session_id, 1, "summary through one"))
+        .await
+        .unwrap();
+    // A checkpoint covers sequence one only; anything beyond it stays refused.
+    assert!(matches!(
+        retention.cut_thread_events(session_id, 2).await,
+        Err(Error::ThreadHistoryUncompacted)
+    ));
+
+    // Every refusal left the complete history in place.
+    assert_eq!(retention.retained_from(session_id).await.unwrap(), 0);
+    assert_eq!(
+        handle
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        3
+    );
+}
+
+#[tokio::test]
+// THREAT[TM-FORK-003] THREAT[TM-AUD-002]
+async fn a_fork_pins_the_thread_history_prefix_it_inherits() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let session_id = SessionId::new();
+    let parent = thread_process(&store, "svit://local/retention/parent", session_id).await;
+    append_events(&parent, session_id, 2).await;
+    parent
+        .compaction_checkpoint_store()
+        .install(checkpoint(session_id, 2, "summary through two"))
+        .await
+        .unwrap();
+    let child = parent.fork("svit://local/retention/child").await.unwrap();
+
+    assert!(matches!(
+        parent
+            .thread_history_retention()
+            .cut_thread_events(session_id, 2)
+            .await,
+        Err(Error::ThreadHistoryPinned)
+    ));
+    assert_eq!(
+        child
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // A child reclaims its own view without touching the parent's storage.
+    let child_cut = child
+        .thread_history_retention()
+        .cut_thread_events(session_id, 2)
+        .await
+        .unwrap();
+    assert_eq!(child_cut.retained_from(), 2);
+    assert!(
+        child
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        parent
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
 }

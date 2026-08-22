@@ -4,6 +4,30 @@ All notable changes to Svit will be documented here.
 
 ## Unreleased
 
+### Added
+
+- Bound canonical event history with an explicit retention cut.
+  `Svit::cut_thread_events` and the `ThreadHistoryRetention` contract reclaim
+  every event at or below a chosen boundary, and
+  `Svit::compacted_thread_events_through` reports the largest boundary that is
+  currently safe. A cut is refused unless a compaction checkpoint already
+  replaced the prefix, the boundary sits inside the committed range, and no
+  fork inherits it. The boundary is recorded durably, so reads start after it
+  and appended events never reuse a reclaimed sequence. Turso schema version 3
+  adds `thread_history_cuts`; older databases upgrade in place.
+- Give volatile Svit instances the same retention and compaction-checkpoint
+  surface as durable ones, so an in-memory reason/act loop no longer grows for
+  its whole lifetime.
+- Reclaim the content-addressed envelopes a process transaction `cut` orphans.
+  The cut now collects the hashes its covered rows referenced and removes each
+  one no base, transaction, thread event, checkpoint, or snapshot still needs,
+  so storage no longer accumulates unreachable envelopes across cuts.
+- Bound the committed process tree as a whole. `Limits::max_tree_nodes` and
+  `Limits::max_tree_text_bytes` are measured over the complete root at the same
+  boundary that validates a commit, restore, or fork, so state accumulated one
+  valid write at a time now fails closed instead of growing without end. Both
+  appear under `/system/limits`; snapshots move to format 10.
+
 ### Changed
 
 - Advance the Everruns `main` lock from `18296be8` to `66c20400`, including

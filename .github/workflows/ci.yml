@@ -89,6 +89,9 @@ jobs:
       - name: Run multi-client control
         run: cargo run --locked -p svit --example multi_client_control
 
+      - name: Run thread retention
+        run: cargo run --locked -p svit --example thread_retention
+
   audit:
     name: Dependency audit
     runs-on: ubuntu-latest
