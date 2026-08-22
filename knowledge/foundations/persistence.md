@@ -314,8 +314,15 @@ before the referencing row and publishes the new head in that same transaction.
 
 Splitting individual large values into independently referenced blobs is
 **Under implementation**. Until then, the event byte cap rejects a mutation set
-whose complete canonical envelope is too large. Verified garbage collection
-is also deferred; unreachable content-addressed BLOBs may remain after a cut.
+whose complete canonical envelope is too large.
+
+A cut reclaims the BLOBs it orphans. Both the transaction cut and the thread
+history cut collect the envelope hashes their rows referenced, delete those
+rows, and then remove each hash that no base, transaction, thread event,
+checkpoint, or snapshot still references. Content addressing makes that check
+mandatory: an identical envelope may remain reachable from another address.
+Reclamation is therefore proportional to what the cut removed rather than a
+sweep of the whole store, and no periodic collector runs on its own.
 
 ## Resume
 
@@ -466,8 +473,9 @@ is quiescent. One Turso transaction:
 4. Update the address row from the expected old head to the snapshot base,
    retaining the covered position and setting the head hash to the base hash.
 5. Delete covered event and event-path rows, then commit all changes together.
-6. Resume at the old head position plus one with `previous_hash` set to the new
-   base hash. Unreachable blobs are reclaimed only by later verified GC.
+6. Reclaim every covered envelope BLOB that nothing else still references,
+   then resume at the old head position plus one with `previous_hash` set to
+   the new base hash.
 
 Cut does not change process version, root hash, or transaction positions. The new
 base records the prior anchor event, and the next event binds to that base hash.

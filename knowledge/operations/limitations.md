@@ -65,7 +65,7 @@ the initial vertical slice. IDs are stable and never reused.
 | `L-048` | Port responses are activation-local in-memory values, not streams or temporary files | A script can reduce a response larger than the durable value envelope before committing a small result, but the complete response remains in process memory during the activation; generic temporary-workspace and streaming-transfer contracts are deferred |
 | `L-049` | Content hashes are recomputed on demand, not memoized in the value tree | Hashing a node costs one walk of its subtree, so `root_hash`, `stat`, and change publication remain proportional to the state they cover; memoizing a digest per node needs a `Value` representation change |
 | `L-050` | Thread history retention is a manual host call, not a policy the runtime schedules | Nothing reclaims canonical events on its own; a host that never calls `cut_thread_events` still grows without bound, and archiving the removed prefix before the cut is the host's responsibility |
-| `L-052` | Only thread-history cuts reclaim their orphaned blobs | A process transaction `cut` still leaves unreachable content-addressed BLOBs behind; general verified garbage collection across bases, snapshots, and transactions is deferred |
+| `L-052` | Reclamation happens only at a cut, never on a schedule | Both cuts reclaim the envelopes they orphan, but no collector sweeps BLOBs orphaned by other means, and the database keeps free pages after logical deletion until engine maintenance reclaims file space |
 
 Remove a limitation only when implementation, tests, public documentation, and
 the threat model all agree. Record the change in `knowledge/log.md` rather than

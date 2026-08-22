@@ -18,6 +18,10 @@ All notable changes to Svit will be documented here.
 - Give volatile Svit instances the same retention and compaction-checkpoint
   surface as durable ones, so an in-memory reason/act loop no longer grows for
   its whole lifetime.
+- Reclaim the content-addressed envelopes a process transaction `cut` orphans.
+  The cut now collects the hashes its covered rows referenced and removes each
+  one no base, transaction, thread event, checkpoint, or snapshot still needs,
+  so storage no longer accumulates unreachable envelopes across cuts.
 - Bound the committed process tree as a whole. `Limits::max_tree_nodes` and
   `Limits::max_tree_text_bytes` are measured over the complete root at the same
   boundary that validates a commit, restore, or fork, so state accumulated one

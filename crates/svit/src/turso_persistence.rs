@@ -1841,6 +1841,22 @@ impl TursoProcessStore {
         if changed != 1 {
             return Err(Error::PersistenceConflict);
         }
+        // THREAT[TM-DOS-009]: Collect the covered envelopes before their rows
+        // disappear so the same transaction can reclaim whatever they were the
+        // last reference to. Content addressing means an identical envelope may
+        // still be reachable from another address, base, or snapshot.
+        let mut rows = transaction
+            .query(
+                "SELECT event_blob_hash FROM events WHERE address = ?1",
+                [process.id().as_str()],
+            )
+            .await
+            .map_err(store_error)?;
+        let mut covered_blobs = std::collections::BTreeSet::new();
+        while let Some(row) = rows.next().await.map_err(store_error)? {
+            covered_blobs.insert(text(&row, 0)?);
+        }
+        drop(rows);
         transaction
             .execute(
                 "DELETE FROM event_paths WHERE address = ?1",
@@ -1863,6 +1879,11 @@ impl TursoProcessStore {
             .await
             .map_err(store_error)?;
         remove_recovery_checkpoint(&transaction, process.id()).await?;
+        // Reclaim after every row this cut removes is gone, so the reference
+        // check sees the post-cut graph rather than the one being replaced.
+        for hash in &covered_blobs {
+            delete_unreferenced_blob(&transaction, hash).await?;
+        }
         transaction.commit().await.map_err(store_error)?;
         Ok(TransactionHead {
             position: expected.position,
@@ -3299,5 +3320,85 @@ mod tests {
         let bytes = blob(&row, 2).unwrap();
         assert!(bytes.starts_with(br#"{"format":"#));
         assert!(!bytes.starts_with(br#"{"snapshot_format":"#));
+    }
+
+    async fn blob_count(store: &TursoProcessStore) -> u64 {
+        let connection = store.database.connect().unwrap();
+        let mut rows = connection
+            .query("SELECT COUNT(*) FROM blobs", ())
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        u64_column(&row, 0).unwrap()
+    }
+
+    /// Counts stored envelopes no base, transaction, thread event, checkpoint,
+    /// or snapshot still references.
+    async fn orphan_blob_count(store: &TursoProcessStore) -> u64 {
+        let connection = store.database.connect().unwrap();
+        let mut rows = connection
+            .query(
+                "SELECT COUNT(*) FROM blobs \
+                 WHERE NOT EXISTS (SELECT 1 FROM bases WHERE base_blob_hash = blobs.hash) \
+                 AND NOT EXISTS (SELECT 1 FROM events WHERE event_blob_hash = blobs.hash) \
+                 AND NOT EXISTS (SELECT 1 FROM thread_events WHERE event_blob_hash = blobs.hash) \
+                 AND NOT EXISTS (SELECT 1 FROM thread_compaction_checkpoints \
+                     WHERE payload_blob_hash = blobs.hash) \
+                 AND NOT EXISTS (SELECT 1 FROM snapshots WHERE snapshot_blob_hash = blobs.hash) \
+                 AND NOT EXISTS (SELECT 1 FROM recovery_checkpoints \
+                     WHERE snapshot_blob_hash = blobs.hash)",
+                (),
+            )
+            .await
+            .unwrap();
+        let row = rows.next().await.unwrap().unwrap();
+        u64_column(&row, 0).unwrap()
+    }
+
+    #[tokio::test]
+    // THREAT[TM-DOS-009]
+    async fn a_cut_reclaims_the_envelopes_it_orphans_and_keeps_the_rest() {
+        let store = TursoProcessStore::memory().await.unwrap();
+        let process = Process::builder("svit://local/persistence/cut-blobs")
+            .unwrap()
+            .memory("count", value!(0))
+            .build()
+            .unwrap();
+        let mut durable = store.create(process).await.unwrap();
+        for count in 1..=3 {
+            durable.write("/memory/count", value!(count)).await.unwrap();
+        }
+        let root_hash = durable.root_hash();
+
+        let before = blob_count(&store).await;
+        durable.cut().await.unwrap();
+        let after = blob_count(&store).await;
+        assert!(
+            after < before,
+            "cut reclaimed no envelopes: {before} before, {after} after"
+        );
+
+        // Reclamation removed only unreachable envelopes: the new base still
+        // resumes to the exact committed boundary.
+        drop(durable);
+        let resumed = store
+            .resume("svit://local/persistence/cut-blobs")
+            .await
+            .unwrap();
+        assert_eq!(resumed.version(), 3);
+        assert_eq!(resumed.read("/memory/count").unwrap(), Some(value!(3)));
+        assert_eq!(resumed.root_hash(), root_hash);
+
+        // Reclamation is complete: a cut leaves no envelope behind that
+        // nothing references. Before reclamation this counted the three
+        // covered transaction envelopes.
+        assert_eq!(orphan_blob_count(&store).await, 0);
+
+        // Cutting again re-anchors the base to the boundary it just installed,
+        // so it writes a new base envelope and still strands nothing.
+        let mut resumed = resumed;
+        resumed.cut().await.unwrap();
+        assert_eq!(orphan_blob_count(&store).await, 0);
+        assert_eq!(resumed.version(), 3);
     }
 }

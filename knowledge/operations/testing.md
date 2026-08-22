@@ -134,6 +134,10 @@ The following scenarios execute with assertions and deterministic output under
 - reasoning startup reads its compact Everruns checkpoint and required paged
   EventLog suffix without decoding history from `/thread`; canonical appends
   are observable through `SvitEvent::CanonicalEvent`.
+- a process transaction cut reclaims the envelopes it orphans and strands
+  nothing: no stored blob survives without a base, transaction, thread event,
+  checkpoint, or snapshot referencing it, and the cut boundary still resumes to
+  the same version and root hash;
 - a thread-history retention cut reclaims only a prefix a compaction checkpoint
   already replaced, refuses a boundary outside the committed range, refuses a
   prefix a fork inherits, is idempotent when repeated, survives resume, and

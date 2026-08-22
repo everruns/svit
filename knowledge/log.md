@@ -24,6 +24,15 @@
   own their compaction checkpoints so they enforce the identical contract.
   Retention stays manual host policy (`L-050`) and blob reclamation remains
   cut-local (`L-052`).
+* **Reclaimed cut envelopes**: A process transaction `cut` deleted its covered
+  rows but left their content-addressed envelopes in `blobs`, so repeated cuts
+  accumulated unreachable bytes forever. The cut now collects those hashes
+  before deleting the rows and, once every row is gone, removes each hash no
+  base, transaction, thread event, checkpoint, or snapshot still references.
+  Content addressing makes the reference check mandatory rather than optional:
+  an identical envelope can remain reachable from another address. Reclamation
+  stays proportional to what the cut removed, and no collector runs on a
+  schedule (`L-052`, TM-DOS-009).
 * **Bounded committed tree**: `Limits` capped depth, entries, and bytes per
   value but never the state those writes accumulate into, so a script
   committing one small node per activation grew the committed root and every
