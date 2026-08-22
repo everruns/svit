@@ -1,5 +1,12 @@
 # Svit Knowledge Update Log
 
+## 2026-08-22
+
+* **Tuika dependency refresh**: Updated Lampa from Tuika 0.10.0 to 0.11.0 and
+  `tuika-codeformatters` from 0.4.3 to 0.5.0. The formatter's new per-language
+  features remain enabled by default, preserving Lampa's existing highlighting
+  surface without configuration changes.
+
 ## 2026-08-21
 
 * **Visual identity**: Adopted a radiant sunrise above two sweeping horizons
