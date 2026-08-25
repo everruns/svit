@@ -3,27 +3,23 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::event;
-use ratatui::{Terminal, TerminalOptions, Viewport, buffer::Buffer};
+#[cfg(test)]
+use ratatui::buffer::Buffer;
 use svit::{
     Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value,
 };
 use tuika::components::{TreeList, TreeRow, TreeState};
-use tuika::mouse::{SelectionState, paint_selection, selected_text};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
-use tuika::term::{
-    clipboard,
-    hyperlink::{self, HyperlinkBackend},
-};
+use tuika::runner::{AsyncFrameSource, AsyncRunner, RunnerConfig, Signal, UpdateResult};
+#[cfg(test)]
+use tuika::term::hyperlink;
+use tuika::term::hyperlink::HyperlinkBackend;
 use tuika_codeformatters::TreeSitterHighlighter;
 
 type MemoryTreeRow = TreeRow<'static, String>;
 
 const MEMORY_WIDTH: u16 = 30;
-const FRAME_TIME: Duration = Duration::from_millis(50);
-/// Bounds input draining so continuous pointer motion cannot starve rendering.
-const MAX_READY_INPUT_EVENTS: usize = 64;
 const MAX_PREVIEW_BYTES: usize = 64 * 1024;
 const MAX_PREVIEW_ITEMS: usize = 200;
 const MAX_PREVIEW_DEPTH: usize = 2;
@@ -124,60 +120,11 @@ fn contains(rect: Rect, mouse: &Mouse) -> bool {
 
 /// Resolves a deliberate Ctrl/Cmd-click against the last rendered transcript.
 /// The target is either an explicit Markdown href or a visible HTTP(S) URL.
+#[cfg(test)]
 fn transcript_link_click(mouse: &Mouse, buffer: &Buffer, area: Rect) -> Option<String> {
     let mut activation = *mouse;
     activation.ctrl |= activation.super_key;
     hyperlink::ctrl_click_url(&activation, buffer, area)
-}
-
-/// Collects terminal input already available after the first event.
-///
-/// A trackpad can queue many wheel events between frames. Draining that queue
-/// lets a reversal take effect on the next render rather than replaying stale
-/// movement one event per frame.
-fn ready_terminal_events(
-    first: event::Event,
-    mut is_ready: impl FnMut() -> io::Result<bool>,
-    mut read: impl FnMut() -> io::Result<event::Event>,
-) -> io::Result<Vec<event::Event>> {
-    let mut events = vec![first];
-    while events.len() < MAX_READY_INPUT_EVENTS && is_ready()? {
-        events.push(read()?);
-    }
-    Ok(events)
-}
-
-/// Opens a user-selected web URL without invoking a shell.
-#[cfg(target_os = "macos")]
-fn open_link(url: &str) -> Result<(), String> {
-    std::process::Command::new("open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not open {url}: {error}"))
-}
-
-#[cfg(target_os = "linux")]
-fn open_link(url: &str) -> Result<(), String> {
-    std::process::Command::new("xdg-open")
-        .arg(url)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not open {url}: {error}"))
-}
-
-#[cfg(target_os = "windows")]
-fn open_link(url: &str) -> Result<(), String> {
-    std::process::Command::new("cmd")
-        .args(["/C", "start", "", url])
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("could not open {url}: {error}"))
-}
-
-#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
-fn open_link(_url: &str) -> Result<(), String> {
-    Err("opening links is not supported on this platform".into())
 }
 
 fn panel_body(rect: Rect) -> Rect {
@@ -658,9 +605,6 @@ struct App {
     memory_viewport_height: usize,
     memory_window: VirtualWindow,
     panel_bounds: PanelBounds,
-    selection_area: Rect,
-    selection: SelectionState,
-    pending_copy: bool,
     composer: TextInputState,
     transcript_scroll: ScrollState,
     /// Wrapped transcript rows from the frame that established the current viewport.
@@ -701,9 +645,6 @@ impl App {
             memory_viewport_height: usize::MAX,
             memory_window: VirtualWindow::new(1, 1, 0),
             panel_bounds: PanelBounds::default(),
-            selection_area: Rect::default(),
-            selection: SelectionState::new(),
-            pending_copy: false,
             composer: TextInputState::new(),
             transcript_scroll: ScrollState::new(),
             transcript_content_height: 1,
@@ -836,7 +777,6 @@ impl App {
                 serde_json::to_value(&message).expect("Svit messages serialize"),
             ));
             self.refresh_thread_history();
-            self.clear_selection();
             self.timeline
                 .push(TimelineEntry::Message(Box::new(message)));
             return true;
@@ -915,97 +855,17 @@ impl App {
             memory: probes.memory.rect(),
             preview: probes.preview.rect(),
         };
-        self.selection_area = probes.transcript.rect();
-        self.transcript_viewport_height = usize::from(self.selection_area.height).max(1);
+        self.transcript_viewport_height = usize::from(probes.transcript.rect().height).max(1);
         self.transcript_scroll.clamp(
             self.transcript_content_height,
             self.transcript_viewport_height,
         );
     }
 
-    /// Routes mouse capture through Tuika's text selection before panel clicks.
-    ///
-    /// A drag must begin in the transcript. Subsequent drag and release cells
-    /// are clamped to its visible rect, while a press elsewhere clears the
-    /// highlight and remains available to the memory tree or preview.
-    fn route_selection_mouse(&mut self, mouse: &Mouse) -> bool {
-        if !mouse.plain() {
-            return false;
-        }
-        match mouse.kind {
-            MouseKind::Down(MouseButton::Left) => {
-                if !contains(self.selection_area, mouse) {
-                    self.clear_selection();
-                    return false;
-                }
-                self.focus = Focus::Composer;
-                self.pending_copy = false;
-                let _ = self.selection.handle(mouse);
-                true
-            }
-            MouseKind::Drag(MouseButton::Left) | MouseKind::Up(MouseButton::Left) => {
-                if self.selection_area.width == 0 || self.selection_area.height == 0 {
-                    return false;
-                }
-                let mut bounded = *mouse;
-                bounded.column = bounded.column.clamp(
-                    self.selection_area.x,
-                    self.selection_area.right().saturating_sub(1),
-                );
-                bounded.row = bounded.row.clamp(
-                    self.selection_area.y,
-                    self.selection_area.bottom().saturating_sub(1),
-                );
-                let changed = self.selection.handle(&bounded);
-                if changed
-                    && matches!(mouse.kind, MouseKind::Up(MouseButton::Left))
-                    && self.selection.range().is_some()
-                {
-                    self.pending_copy = true;
-                }
-                changed
-            }
-            _ => false,
-        }
-    }
-
-    fn clear_selection(&mut self) {
-        self.selection.clear();
-        self.pending_copy = false;
-    }
-
-    /// Resolves double-click selection, extracts deferred clipboard text, and
-    /// paints the active range over the finished transcript frame.
-    fn finish_selection_frame(&mut self, buffer: &mut Buffer, theme: &Theme) -> Option<String> {
-        if self.selection.resolve(buffer, self.selection_area) {
-            self.pending_copy = true;
-        }
-        let Some(range) = self.selection.range() else {
-            self.pending_copy = false;
-            return None;
-        };
-        let copied = self
-            .pending_copy
-            .then(|| selected_text(buffer, self.selection_area, range));
-        self.pending_copy = false;
-        paint_selection(
-            buffer,
-            self.selection_area,
-            range,
-            Style::default()
-                .fg(theme.selection_fg)
-                .bg(theme.selection_bg),
-        );
-        copied
-    }
-
     fn route_mouse(&mut self, event: &Event) -> bool {
         let Event::Mouse(mouse) = event else {
             return false;
         };
-        if self.route_selection_mouse(mouse) {
-            return true;
-        }
         let Some(target) = self.panel_bounds.focus_at(mouse) else {
             return false;
         };
@@ -1028,7 +888,6 @@ impl App {
                 true
             }
             MouseKind::ScrollUp | MouseKind::ScrollDown if mouse.plain() => {
-                self.clear_selection();
                 self.focus = target;
                 let down = mouse.kind == MouseKind::ScrollDown;
                 match target {
@@ -1088,15 +947,7 @@ impl App {
                 ..
             })
         ) {
-            if self.selection.is_active() {
-                self.pending_copy = true;
-                return AppAction::Continue;
-            }
             return AppAction::Quit;
-        }
-
-        if matches!(event, Event::Key(_) | Event::Resize { .. }) {
-            self.clear_selection();
         }
 
         if matches!(
@@ -1243,10 +1094,6 @@ impl App {
             _ => self.composer.handle(event),
         }
     }
-
-    fn cursor(&self, probes: &UiProbes) -> Option<(u16, u16)> {
-        (self.focus == Focus::Composer).then(|| self.composer.cursor_screen(probes.composer.rect()))
-    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -1306,6 +1153,83 @@ fn centered_ukraine_banner(width: usize) -> String {
     )
 }
 
+struct LampaFrameSource<'a> {
+    app: &'a mut App,
+    svit: &'a Svit,
+    inbox: &'a Inbox,
+    events: &'a mut Events,
+    outbox: &'a mut Outbox,
+    theme: &'a Theme,
+    probes: &'a UiProbes,
+    area: Rect,
+}
+
+impl AsyncFrameSource for LampaFrameSource<'_> {
+    async fn update(&mut self, signal: Signal) -> UpdateResult {
+        if matches!(signal, Signal::Tick) {
+            while let Ok(event) = self.events.try_recv() {
+                match event {
+                    SvitEvent::Committed(change) => {
+                        self.app.refresh_process(&change);
+                    }
+                    SvitEvent::CanonicalEvent(event) => {
+                        self.app.push_thread_event(serialized_value(
+                            serde_json::to_value(&*event).expect("Svit events serialize"),
+                        ))
+                    }
+                    SvitEvent::Message(message) => {
+                        self.app.push_message(*message);
+                    }
+                    SvitEvent::Failed(error) => self.app.push_error(error),
+                }
+            }
+            let mut completed = false;
+            while self.outbox.try_recv().is_ok() {
+                completed = true;
+            }
+            if completed {
+                self.app.finish_turn();
+            }
+        }
+
+        let event = match signal {
+            Signal::Event(event) => {
+                if let Event::Resize { width, height } = event {
+                    self.area = Rect::new(0, 0, width, height);
+                }
+                Some(event)
+            }
+            Signal::Tick => None,
+            Signal::Message(message) => match message {},
+        };
+        let Some(event) = event else {
+            return UpdateResult::Dirty;
+        };
+        match self.app.handle(&event) {
+            AppAction::Continue => UpdateResult::Dirty,
+            AppAction::Submit(text) => {
+                let message = Message::user(text);
+                if let Err(error) = self.inbox.send(message.clone()).await {
+                    self.app.push_error(error.to_string());
+                } else {
+                    self.app.push_user(message);
+                }
+                UpdateResult::Dirty
+            }
+            AppAction::Quit => UpdateResult::Exit,
+        }
+    }
+
+    fn frame(&mut self, _frame: u64, paint: &mut dyn FnMut(&dyn tuika::View)) {
+        let history = Arc::clone(&self.app.thread_history);
+        let view = ThreadHistoryView::new(self.svit, &history);
+        self.app.resolve(&view);
+        let root = build_view(self.app, self.area, self.theme, self.probes);
+        paint(root.as_ref());
+        self.app.capture_panel_bounds(self.probes);
+    }
+}
+
 async fn run_terminal(
     app: &mut App,
     svit: &Svit,
@@ -1315,109 +1239,28 @@ async fn run_terminal(
 ) -> Result<(), String> {
     let theme = lampa_theme();
     let probes = UiProbes::default();
-    let _session = TerminalSession::enter().map_err(|error| error.to_string())?;
-    let mut terminal = Terminal::with_options(
-        HyperlinkBackend::new(io::stdout(), true),
-        TerminalOptions {
-            viewport: Viewport::Fullscreen,
-        },
-    )
-    .map_err(|error| error.to_string())?;
+    let config = RunnerConfig {
+        tick_rate: Duration::from_millis(100),
+        ..RunnerConfig::default()
+    };
+    let backend = HyperlinkBackend::new(io::stdout(), true);
+    let (width, height) = crossterm::terminal::size().map_err(|error| error.to_string())?;
+    let source = LampaFrameSource {
+        app,
+        svit,
+        inbox,
+        events,
+        outbox,
+        theme: &theme,
+        probes: &probes,
+        area: Rect::new(0, 0, width, height),
+    };
 
-    let result = async {
-        loop {
-            while let Ok(event) = events.try_recv() {
-                match event {
-                    SvitEvent::Committed(change) => app.refresh_process(&change),
-                    SvitEvent::CanonicalEvent(event) => app.push_thread_event(serialized_value(
-                        serde_json::to_value(&*event).expect("Svit events serialize"),
-                    )),
-                    SvitEvent::Message(message) => {
-                        app.push_message(*message);
-                    }
-                    SvitEvent::Failed(error) => app.push_error(error),
-                }
-            }
-            let mut turn_completed = false;
-            while outbox.try_recv().is_ok() {
-                turn_completed = true;
-            }
-            if turn_completed {
-                app.finish_turn();
-            }
-            // The tree resolves here, once per frame, so the console fetches
-            // only the nodes the visible tree and current selection need.
-            let history = Arc::clone(&app.thread_history);
-            let view = ThreadHistoryView::new(svit, &history);
-            app.resolve(&view);
-
-            let mut copied = None;
-            terminal
-                .draw(|frame| {
-                    let area = frame.area();
-                    let root = build_view(app, area, &theme, &probes);
-                    paint(frame.buffer_mut(), area, &theme, root.as_ref(), &[]);
-                    app.capture_panel_bounds(&probes);
-                    copied = app.finish_selection_frame(frame.buffer_mut(), &theme);
-                    if let Some(position) = app.cursor(&probes) {
-                        frame.set_cursor_position(position);
-                    }
-                })
-                .map_err(|error| error.to_string())?;
-            if let Some(text) = copied {
-                clipboard::write(&mut io::stdout(), &text).map_err(|error| error.to_string())?;
-            }
-
-            if event::poll(FRAME_TIME).map_err(|error| error.to_string())? {
-                let mut quit = false;
-                let first = event::read().map_err(|error| error.to_string())?;
-                let ready =
-                    ready_terminal_events(first, || event::poll(Duration::ZERO), event::read)
-                        .map_err(|error| error.to_string())?;
-                for raw_event in ready {
-                    if let Some(event) = translate_event(raw_event) {
-                        if let Event::Mouse(mouse) = &event
-                            && let Some(url) = transcript_link_click(
-                                mouse,
-                                terminal.current_buffer_mut(),
-                                app.selection_area,
-                            )
-                        {
-                            if let Err(error) = open_link(&url) {
-                                app.timeline.push(TimelineEntry::Event {
-                                    label: "ERROR",
-                                    text: error,
-                                });
-                            }
-                            continue;
-                        }
-                        match app.handle(&event) {
-                            AppAction::Continue => {}
-                            AppAction::Submit(text) => {
-                                let message = Message::user(text);
-                                inbox
-                                    .send(message.clone())
-                                    .await
-                                    .map_err(|error| error.to_string())?;
-                                app.push_user(message);
-                            }
-                            AppAction::Quit => {
-                                quit = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if quit {
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-    .await;
-    let _ = terminal.clear();
-    result
+    AsyncRunner::new(config)
+        .with_text_selection(true)
+        .run_with_backend(&theme, backend, source)
+        .await
+        .map_err(|error| error.to_string())
 }
 
 fn tree_rows(nodes: &MemoryTree) -> Vec<MemoryTreeRow> {
@@ -1650,11 +1493,7 @@ fn conversation_view(
     content_width: u16,
 ) -> Element {
     let lines = timeline_lines(&app.timeline, content_width, theme);
-    let viewport_height = if app.selection_area.height == 0 {
-        20
-    } else {
-        usize::from(app.selection_area.height)
-    };
+    let viewport_height = app.transcript_viewport_height.max(1);
     let wrapped_height = tuika::components::text::wrap_lines(&lines, content_width).len();
     app.transcript_content_height = if wrapped_height > viewport_height {
         tuika::components::text::wrap_lines(&lines, content_width.saturating_sub(1)).len()
@@ -3825,60 +3664,6 @@ mod tests {
     }
 
     #[test]
-    fn ready_terminal_events_drains_a_queued_wheel_reversal_in_one_frame() {
-        let wheel = |kind| {
-            event::Event::Mouse(event::MouseEvent {
-                kind,
-                column: 50,
-                row: 10,
-                modifiers: event::KeyModifiers::NONE,
-            })
-        };
-        let first = wheel(event::MouseEventKind::ScrollUp);
-        let mut readiness = [true, true, false].into_iter();
-        let mut remaining = [
-            wheel(event::MouseEventKind::ScrollUp),
-            wheel(event::MouseEventKind::ScrollDown),
-        ]
-        .into_iter();
-
-        let events = ready_terminal_events(
-            first,
-            || Ok(readiness.next().unwrap_or(false)),
-            || Ok(remaining.next().expect("ready event must be readable")),
-        )
-        .expect("pending terminal input should drain");
-
-        assert_eq!(
-            events,
-            [
-                wheel(event::MouseEventKind::ScrollUp),
-                wheel(event::MouseEventKind::ScrollUp),
-                wheel(event::MouseEventKind::ScrollDown),
-            ]
-        );
-    }
-
-    #[test]
-    fn ready_terminal_events_has_a_per_frame_limit() {
-        let first = event::Event::Resize(80, 24);
-        let mut read_count = 0_u16;
-
-        let events = ready_terminal_events(
-            first,
-            || Ok(true),
-            || {
-                read_count += 1;
-                Ok(event::Event::Resize(80 + read_count, 24))
-            },
-        )
-        .expect("continuous terminal input should be bounded");
-
-        assert_eq!(events.len(), MAX_READY_INPUT_EVENTS);
-        assert_eq!(read_count as usize, MAX_READY_INPUT_EVENTS - 1);
-    }
-
-    #[test]
     fn clicking_a_panel_activates_it() {
         let mut app = test_app(value!({"memory": {}}), 0);
         let probes = layout(&mut app, 90, 24);
@@ -3897,7 +3682,7 @@ mod tests {
     }
 
     #[test]
-    fn dragging_transcript_text_is_consumed_without_changing_the_memory_tree() {
+    fn dragging_transcript_text_does_not_change_the_memory_tree() {
         let mut app = test_app(value!({"memory": {"alpha": 1}}), 0);
         app.app
             .push_message(Message::assistant("hello selectable world"));
@@ -3905,65 +3690,19 @@ mod tests {
         let transcript = probes.transcript.rect();
         let selected = app.app.tree.selected().cloned();
 
-        let down = Event::Mouse(Mouse::at(
-            MouseKind::Down(MouseButton::Left),
-            transcript.x,
-            transcript.y + 1,
-        ));
-        let drag = Event::Mouse(Mouse::at(
-            MouseKind::Drag(MouseButton::Left),
-            transcript.x + 4,
-            transcript.y + 1,
-        ));
-        let up = Event::Mouse(Mouse::at(
-            MouseKind::Up(MouseButton::Left),
-            transcript.x + 4,
-            transcript.y + 1,
-        ));
-
-        assert!(app.app.route_mouse(&down));
-        assert!(app.app.route_mouse(&drag));
-        assert!(app.app.route_mouse(&up));
-        assert_eq!(app.app.tree.selected(), selected.as_ref());
-
-        let theme = lampa_theme();
-        let root = build_view(&mut app.app, Rect::new(0, 0, 90, 24), &theme, &probes);
-        let mut buffer = render(root.as_ref(), 90, 24, &theme);
-        app.app.capture_panel_bounds(&probes);
-        assert_eq!(
-            app.app.finish_selection_frame(&mut buffer, &theme),
-            Some("hello".into())
-        );
-        for column in transcript.x..=transcript.x + 4 {
-            assert_eq!(buffer[(column, transcript.y + 1)].bg, theme.selection_bg);
-        }
-    }
-
-    #[test]
-    fn ctrl_c_copies_an_active_selection_instead_of_quitting() {
-        let mut app = test_app(value!({}), 0);
-        app.app.push_message(Message::assistant("select me"));
-        let probes = layout(&mut app, 90, 24);
-        let transcript = probes.transcript.rect();
         for kind in [
             MouseKind::Down(MouseButton::Left),
             MouseKind::Drag(MouseButton::Left),
             MouseKind::Up(MouseButton::Left),
         ] {
-            let column = if matches!(kind, MouseKind::Down(_)) {
-                transcript.x
-            } else {
-                transcript.x + 5
-            };
-            let _ = app
-                .app
-                .route_mouse(&Event::Mouse(Mouse::at(kind, column, transcript.y + 1)));
+            let _ = app.app.route_mouse(&Event::Mouse(Mouse::at(
+                kind,
+                transcript.x + 1,
+                transcript.y + 1,
+            )));
         }
-        let mut ctrl_c = Key::new(KeyCode::Char('c'));
-        ctrl_c.ctrl = true;
 
-        assert_eq!(app.app.handle(&Event::Key(ctrl_c)), AppAction::Continue);
-        assert!(app.app.pending_copy);
+        assert_eq!(app.app.tree.selected(), selected.as_ref());
     }
 
     #[test]
