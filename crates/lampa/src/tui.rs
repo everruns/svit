@@ -1240,6 +1240,7 @@ async fn run_terminal(
     let theme = lampa_theme();
     let probes = UiProbes::default();
     let config = RunnerConfig {
+        screen_mode: ScreenMode::Alternate,
         tick_rate: Duration::from_millis(100),
         ..RunnerConfig::default()
     };
