@@ -960,6 +960,8 @@ async fn system_prompt_teaches_the_script_library_lifecycle() {
     assert!(prompt.contains("A port response is activation-local"));
     assert!(prompt.contains("(jq filter value)"));
     assert!(prompt.contains("(search path pattern)"));
+    assert!(prompt.contains("(runtime-builtins)"));
+    assert!(prompt.contains("before writing or modifying Lisp"));
 }
 
 #[tokio::test]

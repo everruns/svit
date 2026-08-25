@@ -287,3 +287,40 @@ fn safe_call_does_not_catch_resource_limits() {
         Err(Error::ResourceLimitExceeded(limit)) if limit == "call stack"
     ));
 }
+
+#[test]
+fn runtime_builtins_catalog_describes_guest_helpers() {
+    let mut process = Process::builder("svit://local/tests/runtime-builtins")
+        .unwrap()
+        .library(
+            "runtime-builtins",
+            svit::Script::new(
+                r#"
+            (define (main input)
+              (let ((catalog (runtime-builtins)))
+                (list
+                  (list? catalog)
+                  (map-get (list-get catalog 0) "name")
+                  (string? (map-get (list-get catalog 0) "signature"))
+                  (string? (map-get (list-get catalog 0) "description"))
+                  (map-get (list-get catalog 0) "category")
+                  (map-get (list-get catalog 30) "name"))))
+            "#,
+            ),
+        )
+        .build()
+        .unwrap();
+
+    let result = process.exec("/lib/runtime-builtins", Value::Null).unwrap();
+    assert_eq!(
+        result.output,
+        value!([
+            true,
+            "runtime-builtins",
+            true,
+            true,
+            "discovery",
+            "safe-call"
+        ])
+    );
+}

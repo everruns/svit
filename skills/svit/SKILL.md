@@ -19,6 +19,7 @@ Load only the reference needed:
 - Core concepts and terminology: `references/concepts.md`
 - Example selection: `references/examples.md`
 - Security boundary and current gaps: `references/security.md`
+- Lisp helper discovery and structured agent scripting: `references/lisp-runtime.md`; call `(runtime-builtins)` in the target process before authoring Lisp.
 
 ## Response rules
 

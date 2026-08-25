@@ -72,6 +72,9 @@ The following scenarios execute with assertions and deterministic output under
 - the agent reads its projected instructions and composed system prompt from
   bounded `/thread` metadata, while Everruns reconstructs message history and
   canonical events from the paged EventLog during a turn.
+- `(runtime-builtins)` exposes Svit helper names, signatures, categories, and
+  descriptions, and the canonical model prompt tells agents to inspect it before
+  authoring Lisp;
 - Svit Lisp generic JSON, map, list, predicate, explicit-dispatch, and
   recoverable-result helpers operate on bounded values without weakening hard
   failures; `(search path pattern)` reads the transactional process tree and

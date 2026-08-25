@@ -118,6 +118,11 @@ The boundary rejects ratios, oversized integers, names, characters, paths,
 bytes, structs, functions, lambdas, quotations, and foreign values not created
 by Svit. Script records never enter the guest data model.
 
+`runtime-builtins` returns the canonical catalog of Svit-provided guest helpers as
+validated maps containing name, signature, category, and description. Ketos core
+language forms are outside this Svit-helper catalog. The canonical model system
+prompt directs agents to inspect this catalog before writing or modifying Lisp.
+
 Generic structured-data built-ins expose validated JSON-compatible values:
 `json-parse`, `json-stringify`, `map-get`, `map-has?`, `map-set`, `list-get`,
 and the `map?`, `list?`, `string?`, `number?`, `boolean?`, and `null?`

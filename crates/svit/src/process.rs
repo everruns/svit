@@ -28,6 +28,202 @@ use crate::mounts::{Mount, MountDescriptor, MountPath, MountRegistry, MountView}
 use crate::persistence::Mutation;
 use crate::{Error, Limits, Ports, Result, Script, Value};
 
+#[derive(Clone, Copy)]
+struct RuntimeBuiltinDescriptor {
+    name: &'static str,
+    signature: &'static str,
+    description: &'static str,
+    category: &'static str,
+}
+
+const RUNTIME_BUILTINS: &[RuntimeBuiltinDescriptor] = &[
+    RuntimeBuiltinDescriptor {
+        name: "runtime-builtins",
+        signature: "(runtime-builtins)",
+        description: "Return metadata for Svit-provided Lisp runtime helpers.",
+        category: "discovery",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-map",
+        signature: "(value-map key value ...)",
+        description: "Construct a validated persistent map from text/value pairs.",
+        category: "persistent-value",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-array",
+        signature: "(value-array value ...)",
+        description: "Construct a validated persistent array.",
+        category: "persistent-value",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-null?",
+        signature: "(value-null? value)",
+        description: "Return whether value is persistent Svit null.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-get",
+        signature: "(value-get value path)",
+        description: "Read a path from a structured value, returning null when absent.",
+        category: "persistent-value",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "jq",
+        signature: "(jq filter value)",
+        description: "Apply a bounded jq filter to explicit structured data.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "search",
+        signature: "(search path pattern)",
+        description: "Search bounded text under a process-tree path.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "discover",
+        signature: "(discover path)",
+        description: "List immediate children under a memory-tree path.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "read",
+        signature: "(read path)",
+        description: "Read one value from the transactional memory tree.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "stat",
+        signature: "(stat path)",
+        description: "Return metadata for one memory-tree node.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "write",
+        signature: "(write path value)",
+        description: "Stage a validated value at a writable process-tree path.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "remove",
+        signature: "(remove path)",
+        description: "Stage removal of a writable process-tree node.",
+        category: "memory-tree",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "exec",
+        signature: "(exec path input)",
+        description: "Execute a named library script transactionally with bounded nesting.",
+        category: "scripts",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "port-call",
+        signature: "(port-call name input)",
+        description: "Invoke an explicitly attached host port through activation suspension.",
+        category: "ports",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "log-info!",
+        signature: "(log-info! message [fields])",
+        description: "Stage a bounded informational log record.",
+        category: "effects",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "send!",
+        signature: "(send! address body)",
+        description: "Stage a validated message intent for atomic commit.",
+        category: "effects",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "json-parse",
+        signature: "(json-parse text)",
+        description: "Parse bounded JSON into a structured Svit value; invalid JSON fails.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "json-stringify",
+        signature: "(json-stringify value)",
+        description: "Encode a JSON-compatible Lisp or Svit value as canonical compact JSON.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "json-parse-safe",
+        signature: "(json-parse-safe text)",
+        description: "Parse JSON and return an ok/value or ok/error result map.",
+        category: "recoverable",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "map?",
+        signature: "(map? value)",
+        description: "Return whether value is a persistent Svit map.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "map-get",
+        signature: "(map-get map key)",
+        description: "Return a map entry; an absent key fails.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "map-get-safe",
+        signature: "(map-get-safe map key)",
+        description: "Read a map entry and return an ok/value or ok/error result map.",
+        category: "recoverable",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "map-has?",
+        signature: "(map-has? map key)",
+        description: "Return whether a map contains key.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "map-set",
+        signature: "(map-set map key value)",
+        description: "Return a new persistent map with key set to value.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "list?",
+        signature: "(list? value)",
+        description: "Return whether value is a native Lisp list or persistent Svit array.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "list-get",
+        signature: "(list-get list index)",
+        description: "Return an item from a persistent Svit array by zero-based index.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "string?",
+        signature: "(string? value)",
+        description: "Return whether value is a string.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "number?",
+        signature: "(number? value)",
+        description: "Return whether value is an integer or finite float.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "boolean?",
+        signature: "(boolean? value)",
+        description: "Return whether value is a Boolean.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "null?",
+        signature: "(null? value)",
+        description: "Return whether value is Svit null.",
+        category: "predicate",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "safe-call",
+        signature: "(safe-call function argument ...)",
+        description: "Call a function and return a result map for recoverable guest errors; hard failures propagate.",
+        category: "recoverable",
+    },
+];
 const SNAPSHOT_FORMAT: u32 = 10;
 const INLINE_SCRIPT_PREFIX: &str = "\0svit:inline:";
 const RUNTIME_LANGUAGE: &str = "svit-lisp@2";
@@ -2536,7 +2732,30 @@ fn install_guest_api(
     });
 }
 
+fn runtime_builtin_catalog() -> Value {
+    Value::Array(
+        RUNTIME_BUILTINS
+            .iter()
+            .map(|builtin| {
+                Value::Map(BTreeMap::from([
+                    ("category".into(), Value::String(builtin.category.into())),
+                    (
+                        "description".into(),
+                        Value::String(builtin.description.into()),
+                    ),
+                    ("name".into(), Value::String(builtin.name.into())),
+                    ("signature".into(), Value::String(builtin.signature.into())),
+                ]))
+            })
+            .collect(),
+    )
+}
+
 fn install_structured_value_functions(interpreter: &KetosInterpreter, limits: &Limits) {
+    install_guest_function(interpreter, "runtime-builtins", |_, args| {
+        expect_arity(args, 0, "runtime-builtins")?;
+        persistent_to_ketos(&runtime_builtin_catalog()).map_err(guest_from_svit)
+    });
     let parse_limits = limits.clone();
     install_guest_function(interpreter, "json-parse", move |_, args| {
         expect_arity(args, 1, "json-parse")?;
