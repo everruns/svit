@@ -2300,6 +2300,8 @@ fn install_guest_api(
         )))
     });
 
+    install_structured_value_functions(interpreter, limits);
+
     let get_limits = limits.clone();
     install_guest_function(interpreter, "value-get", move |_, args| {
         expect_arity(args, 2, "value-get")?;
@@ -2532,6 +2534,194 @@ fn install_guest_api(
         messages.push(StagedMessage { to, body });
         Ok(KetosValue::Unit)
     });
+}
+
+fn install_structured_value_functions(interpreter: &KetosInterpreter, limits: &Limits) {
+    let parse_limits = limits.clone();
+    install_guest_function(interpreter, "json-parse", move |_, args| {
+        expect_arity(args, 1, "json-parse")?;
+        json_parse_value(&guest_string(&args[0], "json-parse")?, &parse_limits)
+    });
+    let stringify_limits = limits.clone();
+    install_guest_function(interpreter, "json-stringify", move |_, args| {
+        expect_arity(args, 1, "json-stringify")?;
+        let value = persistent_from_ketos(&args[0], &stringify_limits).map_err(guest_from_svit)?;
+        let text = serde_json::to_string(&value.to_json())
+            .map_err(|_| guest_failure("json stringify failed"))?;
+        Ok(KetosValue::String(text.into()))
+    });
+    let safe_parse_limits = limits.clone();
+    install_guest_function(interpreter, "json-parse-safe", move |_, args| {
+        expect_arity(args, 1, "json-parse-safe")?;
+        let result = guest_string(&args[0], "json-parse-safe")
+            .and_then(|text| json_parse_value(&text, &safe_parse_limits))
+            .and_then(|value| {
+                persistent_from_ketos(&value, &safe_parse_limits).map_err(guest_from_svit)
+            });
+        safe_result(recoverable_result(result)?, &safe_parse_limits)
+    });
+    install_guest_function(interpreter, "map?", |_, args| {
+        expect_arity(args, 1, "map?")?;
+        Ok(KetosValue::Bool(matches!(
+            guest_persistent(&args[0]),
+            Some(Value::Map(_))
+        )))
+    });
+    install_guest_function(interpreter, "list?", |_, args| {
+        expect_arity(args, 1, "list?")?;
+        Ok(KetosValue::Bool(
+            matches!(args[0], KetosValue::List(_))
+                || matches!(guest_persistent(&args[0]), Some(Value::Array(_))),
+        ))
+    });
+    install_guest_function(interpreter, "string?", |_, args| {
+        expect_arity(args, 1, "string?")?;
+        Ok(KetosValue::Bool(matches!(args[0], KetosValue::String(_))))
+    });
+    install_guest_function(interpreter, "number?", |_, args| {
+        expect_arity(args, 1, "number?")?;
+        Ok(KetosValue::Bool(matches!(
+            args[0],
+            KetosValue::Integer(_) | KetosValue::Float(_)
+        )))
+    });
+    install_guest_function(interpreter, "boolean?", |_, args| {
+        expect_arity(args, 1, "boolean?")?;
+        Ok(KetosValue::Bool(matches!(args[0], KetosValue::Bool(_))))
+    });
+    install_guest_function(interpreter, "null?", |_, args| {
+        expect_arity(args, 1, "null?")?;
+        Ok(KetosValue::Bool(matches!(
+            guest_persistent(&args[0]),
+            Some(Value::Null)
+        )))
+    });
+    install_guest_function(interpreter, "map-get", |_, args| map_get(args));
+    install_guest_function(interpreter, "list-get", |_, args| {
+        expect_arity(args, 2, "list-get")?;
+        let list = match guest_persistent(&args[0]) {
+            Some(Value::Array(values)) => values,
+            _ => return guest_error("list-get expects a structured list"),
+        };
+        let index = match &args[1] {
+            KetosValue::Integer(value) => value
+                .to_usize()
+                .ok_or_else(|| guest_failure("list-get expects a non-negative index"))?,
+            _ => return guest_error("list-get expects an integer index"),
+        };
+        list.get(index)
+            .ok_or_else(|| guest_failure("list index is out of bounds"))
+            .and_then(|value| persistent_to_ketos(value).map_err(guest_from_svit))
+    });
+    let safe_get_limits = limits.clone();
+    install_guest_function(interpreter, "map-get-safe", move |_, args| {
+        let result = map_get(args).and_then(|value| {
+            persistent_from_ketos(&value, &safe_get_limits).map_err(guest_from_svit)
+        });
+        safe_result(recoverable_result(result)?, &safe_get_limits)
+    });
+    install_guest_function(interpreter, "map-has?", |_, args| {
+        expect_arity(args, 2, "map-has?")?;
+        let map = guest_map(&args[0], "map-has?")?;
+        let key = guest_string(&args[1], "map-has?")?;
+        Ok(KetosValue::Bool(map.contains_key(&key)))
+    });
+    let set_limits = limits.clone();
+    install_guest_function(interpreter, "map-set", move |_, args| {
+        expect_arity(args, 3, "map-set")?;
+        let mut map = guest_map(&args[0], "map-set")?.clone();
+        let key = guest_string(&args[1], "map-set")?;
+        let value = persistent_from_ketos(&args[2], &set_limits).map_err(guest_from_svit)?;
+        map.insert(key, value);
+        persistent_to_ketos(&Value::Map(map)).map_err(guest_from_svit)
+    });
+    let call_limits = limits.clone();
+    install_guest_function(interpreter, "safe-call", move |ctx, args| {
+        let Some((function, call_args)) = args.split_first() else {
+            return guest_error("safe-call expects at least one argument");
+        };
+        let result = ketos::exec::call_function(ctx, function.clone(), call_args.to_vec())
+            .and_then(|value| persistent_from_ketos(&value, &call_limits).map_err(guest_from_svit));
+        safe_result(recoverable_result(result)?, &call_limits)
+    });
+}
+
+fn json_parse_value(text: &str, limits: &Limits) -> std::result::Result<KetosValue, KetosError> {
+    let json: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| guest_failure("invalid JSON"))?;
+    let value = Value::from_json(json).map_err(guest_from_svit)?;
+    value.validate(limits, false).map_err(guest_from_svit)?;
+    persistent_to_ketos(&value).map_err(guest_from_svit)
+}
+
+fn guest_persistent(value: &KetosValue) -> Option<&Value> {
+    match value {
+        KetosValue::Foreign(value) => value
+            .downcast_ref::<GuestPersistent>()
+            .map(|value| &value.0),
+        _ => None,
+    }
+}
+
+fn guest_map<'a>(
+    value: &'a KetosValue,
+    function: &str,
+) -> std::result::Result<&'a BTreeMap<String, Value>, KetosError> {
+    match guest_persistent(value) {
+        Some(Value::Map(map)) => Ok(map),
+        _ => guest_error(format!("{function} expects a map")),
+    }
+}
+
+fn map_get(args: &[KetosValue]) -> std::result::Result<KetosValue, KetosError> {
+    expect_arity(args, 2, "map-get")?;
+    let map = guest_map(&args[0], "map-get")?;
+    let key = guest_string(&args[1], "map-get")?;
+    map.get(&key)
+        .ok_or_else(|| guest_failure("map key is absent"))
+        .and_then(|value| persistent_to_ketos(value).map_err(guest_from_svit))
+}
+
+fn recoverable_result(
+    result: std::result::Result<Value, KetosError>,
+) -> std::result::Result<std::result::Result<Value, KetosError>, KetosError> {
+    match result {
+        Err(error) if is_hard_guest_error(&error) => Err(error),
+        result => Ok(result),
+    }
+}
+
+fn is_hard_guest_error(error: &KetosError) -> bool {
+    match error {
+        KetosError::RestrictError(_) => true,
+        KetosError::Custom(error) => matches!(
+            error.downcast_ref::<GuestFailure>(),
+            Some(GuestFailure::PortPending | GuestFailure::Execution | GuestFailure::Resource(_))
+        ),
+        _ => false,
+    }
+}
+
+fn safe_result(
+    result: std::result::Result<Value, KetosError>,
+    limits: &Limits,
+) -> std::result::Result<KetosValue, KetosError> {
+    let value = match result {
+        Ok(value) => Value::Map(BTreeMap::from([
+            ("ok".into(), Value::Bool(true)),
+            ("value".into(), value),
+        ])),
+        Err(error) => Value::Map(BTreeMap::from([
+            ("error".into(), Value::String(sanitize_diagnostic(error))),
+            ("ok".into(), Value::Bool(false)),
+        ])),
+    };
+    value.validate(limits, false).map_err(guest_from_svit)?;
+    persistent_to_ketos(&value).map_err(guest_from_svit)
+}
+
+fn guest_failure(message: impl Into<String>) -> KetosError {
+    KetosError::custom(GuestFailure::Script(message.into()))
 }
 
 fn install_guest_function<F>(interpreter: &KetosInterpreter, name: &str, function: F)

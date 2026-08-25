@@ -118,6 +118,19 @@ The boundary rejects ratios, oversized integers, names, characters, paths,
 bytes, structs, functions, lambdas, quotations, and foreign values not created
 by Svit. Script records never enter the guest data model.
 
+Generic structured-data built-ins expose validated JSON-compatible values:
+`json-parse`, `json-stringify`, `map-get`, `map-has?`, `map-set`, `list-get`,
+and the `map?`, `list?`, `string?`, `number?`, `boolean?`, and `null?`
+predicates. JSON parsing and derived maps pass through the same value limits as
+activation input and commit values.
+
+`json-parse-safe`, `map-get-safe`, and `safe-call` return a map containing
+`"ok"` plus `"value"` on success or a sanitized `"error"` on a recoverable
+guest failure. Execution limits, resource failures, and port suspension remain
+hard failures and cannot be converted into data. Validated functions dispatch
+through ordinary Lisp application; the existing Ketos execution and call-stack
+budgets bound loops and recursion.
+
 ## Process operation semantics
 
 All process operations use absolute paths. `discover` and `read` traverse the

@@ -72,7 +72,9 @@ The following scenarios execute with assertions and deterministic output under
 - the agent reads its projected instructions and composed system prompt from
   bounded `/thread` metadata, while Everruns reconstructs message history and
   canonical events from the paged EventLog during a turn.
-- Svit Lisp `(search path pattern)` reads the transactional process tree and
+- Svit Lisp generic JSON, map, list, predicate, explicit-dispatch, and
+  recoverable-result helpers operate on bounded values without weakening hard
+  failures; `(search path pattern)` reads the transactional process tree and
   `(jq filter value)` filters explicit JSON; focused tests cover
   data limits, unrestricted standard HTTP,
   allowlist-denied and host-routed HTTP, nested model selection, and local

@@ -94,7 +94,9 @@ Required for the initial vertical slice.
   is marked unauthenticated and cannot be modified through the memory mutation
   API.
 - `TM-INF-001`: all guest-visible failures are capped and exclude host paths,
-  Rust backtraces, pointers, and raw interpreter debug output.
+  Rust backtraces, pointers, and raw interpreter debug output; recoverable Lisp
+  result helpers expose only sanitized diagnostics and propagate hard resource,
+  execution, and port-suspension failures.
 - `TM-AUD-001`: guest writes to `/thread` fail without mutation; bounded thread
   metadata rejects materialized history; the paged event log rejects foreign
   sessions, duplicate IDs, or invalid sequences; and durable forks preserve
