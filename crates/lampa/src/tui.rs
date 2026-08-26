@@ -1242,7 +1242,6 @@ async fn run_terminal(
     let config = RunnerConfig {
         screen_mode: ScreenMode::Alternate,
         tick_rate: Duration::from_millis(100),
-        ..RunnerConfig::default()
     };
     let backend = HyperlinkBackend::new(io::stdout(), true);
     let (width, height) = crossterm::terminal::size().map_err(|error| error.to_string())?;
