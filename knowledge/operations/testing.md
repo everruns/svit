@@ -75,9 +75,10 @@ The following scenarios execute with assertions and deterministic output under
 - `(runtime-builtins)` exposes Svit helper names, signatures, categories, and
   descriptions, and the canonical model prompt tells agents to inspect it before
   authoring Lisp;
-- Svit Lisp generic JSON, map, list, predicate, explicit-dispatch, and
-  recoverable-result helpers operate on bounded values without weakening hard
-  failures; `(search path pattern)` reads the transactional process tree and
+- Svit Lisp generic JSON, map, list, predicate, result-composition, typed-path,
+  and explicit-dispatch helpers operate on bounded values; unknown handlers fail
+  closed and safe helpers do not weaken hard failures; `(search path pattern)`
+  reads the transactional process tree and
   `(jq filter value)` filters explicit JSON; focused tests cover
   data limits, unrestricted standard HTTP,
   allowlist-denied and host-routed HTTP, nested model selection, and local

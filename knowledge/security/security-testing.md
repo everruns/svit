@@ -64,6 +64,10 @@ Required for the initial vertical slice.
   executable, or environment input.
 - `TM-ESC-004`: build-time script compilation rejects module loading while
   evaluating guest macros and constants under null I/O.
+- `TM-ESC-005`: dispatch tables reject non-functions, duplicate names, and
+  unknown names; focused tests prove only explicit handlers execute and safe
+  dispatch propagates hard resource failures.
+
 - `TM-CAP-003`: folder imports reject symbolic links and special files, and
   mounted data remains read-only through host and guest path operations.
 - `TM-CAP-004`: HTTP is denied without a matching host allowlist entry, and an

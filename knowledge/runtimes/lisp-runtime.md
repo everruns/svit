@@ -136,6 +136,13 @@ hard failures and cannot be converted into data. Validated functions dispatch
 through ordinary Lisp application; the existing Ketos execution and call-stack
 budgets bound loops and recursion.
 
+Result combinators (`result-ok`, `result-error`, predicates, accessors, map,
+and-then, and or-else) compose the same result-map contract. `value-at`,
+`value-at-safe`, and `value-has-path?` traverse typed string-key/integer-index
+paths without evaluating expressions. `dispatch-table` stores only explicitly
+supplied ephemeral function values; `dispatch` and `dispatch-safe` reject
+unknown names, and the safe form preserves hard failures.
+
 ## Process operation semantics
 
 All process operations use absolute paths. `discover` and `read` traverse the

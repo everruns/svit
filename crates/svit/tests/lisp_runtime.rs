@@ -304,7 +304,7 @@ fn runtime_builtins_catalog_describes_guest_helpers() {
                   (string? (map-get (list-get catalog 0) "signature"))
                   (string? (map-get (list-get catalog 0) "description"))
                   (map-get (list-get catalog 0) "category")
-                  (map-get (list-get catalog 30) "name"))))
+                  (map-get (list-get catalog 44) "name"))))
             "#,
             ),
         )
@@ -323,4 +323,151 @@ fn runtime_builtins_catalog_describes_guest_helpers() {
             "safe-call"
         ])
     );
+}
+
+#[test]
+fn result_helpers_compose_recoverable_values() {
+    let mut process = Process::builder("svit://local/tests/result-helpers")
+        .unwrap()
+        .library(
+            "result-helpers",
+            svit::Script::new(
+                r#"
+            (define (main input)
+              (let ((ok (result-map (lambda (value) (+ value 1)) (result-ok 4)))
+                    (chained (result-and-then
+                               (lambda (value) (result-ok (+ value 2)))
+                               (result-ok 5)))
+                    (failed (result-and-then
+                              (lambda (value) (result-ok (+ value 1)))
+                              (result-error "nope")))
+                    (recovered (result-or-else
+                                 (lambda (message) (result-ok message))
+                                 (result-error "recovered"))))
+                (list
+                  (result-ok? ok)
+                  (result-value ok)
+                  (result-value chained)
+                  (result-ok? failed)
+                  (result-error-message failed)
+                  (result-value recovered))))
+            "#,
+            ),
+        )
+        .build()
+        .unwrap();
+
+    let result = process.exec("/lib/result-helpers", Value::Null).unwrap();
+    assert_eq!(
+        result.output,
+        value!([true, 5, 7, false, "nope", "recovered"])
+    );
+}
+
+#[test]
+fn value_path_helpers_traverse_maps_and_lists() {
+    let mut process = Process::builder("svit://local/tests/value-path")
+        .unwrap()
+        .library(
+            "value-path",
+            svit::Script::new(
+                r#"
+            (define (main input)
+              (let ((value (json-parse
+                    "{\"choices\":[{\"message\":{\"content\":\"done\"}}]}"))
+                    (path (list "choices" 0 "message" "content")))
+                (list
+                  (value-at value path)
+                  (value-has-path? value path)
+                  (result-ok? (value-at-safe value (list "choices" 2))))))
+            "#,
+            ),
+        )
+        .build()
+        .unwrap();
+
+    let result = process.exec("/lib/value-path", Value::Null).unwrap();
+    assert_eq!(result.output, value!(["done", true, false]));
+}
+
+// THREAT[TM-ESC-005]
+#[test]
+fn dispatch_selects_only_explicit_handlers() {
+    let mut process = Process::builder("svit://local/tests/dispatch-table")
+        .unwrap()
+        .library(
+            "dispatch-table",
+            svit::Script::new(
+                r#"
+            (define search (lambda (arguments) (map-get arguments "query")))
+            (define finish (lambda (arguments) (map-get arguments "answer")))
+            (define handlers (dispatch-table "search" search "finish" finish))
+            (define (main input)
+              (list
+                (dispatch handlers "search" (value-map "query" "billing"))
+                (result-ok? (dispatch-safe handlers "missing" (value-map)))))
+            "#,
+            ),
+        )
+        .build()
+        .unwrap();
+
+    let result = process.exec("/lib/dispatch-table", Value::Null).unwrap();
+    assert_eq!(result.output, value!(["billing", false]));
+}
+
+// THREAT[TM-ESC-005]
+#[test]
+fn dispatch_safe_does_not_catch_resource_limits() {
+    let mut process = Process::builder("svit://local/tests/dispatch-limit")
+        .unwrap()
+        .limits(Limits {
+            max_call_stack: 8,
+            ..Limits::default()
+        })
+        .library(
+            "dispatch-limit",
+            svit::Script::new(
+                r#"
+            (define (descend n)
+              (if (= n 0) 0 (+ 1 (descend (- n 1)))))
+            (define handlers (dispatch-table "descend" descend))
+            (define (main input)
+              (dispatch-safe handlers "descend" 100))
+            "#,
+            ),
+        )
+        .build()
+        .unwrap();
+
+    assert!(matches!(
+        process.exec("/lib/dispatch-limit", Value::Null),
+        Err(Error::ResourceLimitExceeded(limit)) if limit == "call stack"
+    ));
+}
+
+// THREAT[TM-ESC-005]
+#[test]
+fn dispatch_tables_reject_duplicate_names_and_non_functions() {
+    for (address, expression) in [
+        (
+            "svit://local/tests/dispatch-duplicate",
+            "(dispatch-table \"handler\" (lambda (value) value) \"handler\" (lambda (value) value))",
+        ),
+        (
+            "svit://local/tests/dispatch-non-function",
+            "(dispatch-table \"handler\" 42)",
+        ),
+    ] {
+        let mut process = Process::builder(address)
+            .unwrap()
+            .library(
+                "invalid-dispatch",
+                svit::Script::new(format!("(define (main input) {expression})")),
+            )
+            .build()
+            .unwrap();
+
+        assert!(process.exec("/lib/invalid-dispatch", Value::Null).is_err());
+    }
 }

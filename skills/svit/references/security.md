@@ -20,6 +20,10 @@ The runnable reasoning loop uses this store for inbox, thread, memory,
 built-in-catalog, and acknowledgement transitions. Durable control receipts
 and distributed ownership fencing are not implemented.
 
+Lisp dispatch tables are ephemeral and accept only explicit unique
+name/function pairs. Unknown names fail closed, and `dispatch-safe` does not
+convert hard resource, execution, or port-suspension failures into data.
+
 The embedded interpreter runs in the native host process. Svit therefore does
 not yet claim formal isolation or production readiness for mutually hostile
 tenants. Consult `knowledge/security/threat-model.md` and

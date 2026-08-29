@@ -218,6 +218,90 @@ const RUNTIME_BUILTINS: &[RuntimeBuiltinDescriptor] = &[
         category: "predicate",
     },
     RuntimeBuiltinDescriptor {
+        name: "result-ok",
+        signature: "(result-ok value)",
+        description: "Construct a successful result map.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-error",
+        signature: "(result-error message)",
+        description: "Construct a failed result map with a bounded message.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-ok?",
+        signature: "(result-ok? result)",
+        description: "Return whether a result map is successful.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-value",
+        signature: "(result-value result)",
+        description: "Read the value from a successful result map.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-error-message",
+        signature: "(result-error-message result)",
+        description: "Read the message from a failed result map.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-map",
+        signature: "(result-map function result)",
+        description: "Map a function over a successful result; failures pass through.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-and-then",
+        signature: "(result-and-then function result)",
+        description: "Chain a result-returning function after a successful result.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "result-or-else",
+        signature: "(result-or-else function result)",
+        description: "Recover a failed result with a result-returning function.",
+        category: "result",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-at",
+        signature: "(value-at value path)",
+        description: "Traverse maps and arrays using a list of string keys and integer indices.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-at-safe",
+        signature: "(value-at-safe value path)",
+        description: "Traverse a structured path and return a result map.",
+        category: "recoverable",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "value-has-path?",
+        signature: "(value-has-path? value path)",
+        description: "Return whether a structured value contains a path.",
+        category: "structured-data",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "dispatch-table",
+        signature: "(dispatch-table name function ...)",
+        description: "Construct an ephemeral table of explicitly supplied functions.",
+        category: "dispatch",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "dispatch",
+        signature: "(dispatch table name arguments)",
+        description: "Call one explicitly registered handler; unknown names fail closed.",
+        category: "dispatch",
+    },
+    RuntimeBuiltinDescriptor {
+        name: "dispatch-safe",
+        signature: "(dispatch-safe table name arguments)",
+        description: "Dispatch and return a result map for recoverable failures.",
+        category: "dispatch",
+    },
+    RuntimeBuiltinDescriptor {
         name: "safe-call",
         signature: "(safe-call function argument ...)",
         description: "Call a function and return a result map for recoverable guest errors; hard failures propagate.",
@@ -2854,6 +2938,107 @@ fn install_structured_value_functions(interpreter: &KetosInterpreter, limits: &L
         map.insert(key, value);
         persistent_to_ketos(&Value::Map(map)).map_err(guest_from_svit)
     });
+    let result_ok_limits = limits.clone();
+    install_guest_function(interpreter, "result-ok", move |_, args| {
+        expect_arity(args, 1, "result-ok")?;
+        result_to_ketos(true, "value", args[0].clone(), &result_ok_limits)
+    });
+    let result_error_limits = limits.clone();
+    install_guest_function(interpreter, "result-error", move |_, args| {
+        expect_arity(args, 1, "result-error")?;
+        let message = guest_string(&args[0], "result-error")?;
+        result_to_ketos(
+            false,
+            "error",
+            KetosValue::from(message),
+            &result_error_limits,
+        )
+    });
+    install_guest_function(interpreter, "result-ok?", |_, args| {
+        expect_arity(args, 1, "result-ok?")?;
+        Ok(KetosValue::Bool(result_parts(&args[0])?.0))
+    });
+    install_guest_function(interpreter, "result-value", |_, args| {
+        expect_arity(args, 1, "result-value")?;
+        let (ok, payload) = result_parts(&args[0])?;
+        if ok {
+            persistent_to_ketos(payload).map_err(guest_from_svit)
+        } else {
+            guest_error("result-value expects a successful result")
+        }
+    });
+    install_guest_function(interpreter, "result-error-message", |_, args| {
+        expect_arity(args, 1, "result-error-message")?;
+        let (ok, payload) = result_parts(&args[0])?;
+        if ok {
+            guest_error("result-error-message expects a failed result")
+        } else {
+            persistent_to_ketos(payload).map_err(guest_from_svit)
+        }
+    });
+    let result_limits = limits.clone();
+    install_guest_function(interpreter, "result-map", move |ctx, args| {
+        result_transform(ctx, args, &result_limits, ResultTransform::Map)
+    });
+    let and_then_limits = limits.clone();
+    install_guest_function(interpreter, "result-and-then", move |ctx, args| {
+        result_transform(ctx, args, &and_then_limits, ResultTransform::AndThen)
+    });
+    let or_else_limits = limits.clone();
+    install_guest_function(interpreter, "result-or-else", move |ctx, args| {
+        result_transform(ctx, args, &or_else_limits, ResultTransform::OrElse)
+    });
+    let path_limits = limits.clone();
+    install_guest_function(interpreter, "value-at", move |_, args| {
+        expect_arity(args, 2, "value-at")?;
+        let value = persistent_from_ketos(&args[0], &path_limits).map_err(guest_from_svit)?;
+        let path = path_components(&args[1])?;
+        persistent_to_ketos(value_at_path(&value, &path)?).map_err(guest_from_svit)
+    });
+    let safe_path_limits = limits.clone();
+    install_guest_function(interpreter, "value-at-safe", move |_, args| {
+        expect_arity(args, 2, "value-at-safe")?;
+        let result = persistent_from_ketos(&args[0], &safe_path_limits)
+            .map_err(guest_from_svit)
+            .and_then(|value| {
+                path_components(&args[1]).and_then(|path| value_at_path(&value, &path).cloned())
+            });
+        safe_result(recoverable_result(result)?, &safe_path_limits)
+    });
+    let has_path_limits = limits.clone();
+    install_guest_function(interpreter, "value-has-path?", move |_, args| {
+        expect_arity(args, 2, "value-has-path?")?;
+        let value = persistent_from_ketos(&args[0], &has_path_limits).map_err(guest_from_svit)?;
+        let path = path_components(&args[1])?;
+        Ok(KetosValue::Bool(value_at_path(&value, &path).is_ok()))
+    });
+    // THREAT[TM-ESC-005]: Dispatch authority is the explicit ephemeral table;
+    // names cannot resolve arbitrary guest or host functions.
+    install_guest_function(interpreter, "dispatch-table", |_, args| {
+        if args.len() % 2 != 0 {
+            return guest_error("dispatch-table expects name/function pairs");
+        }
+        let mut entries = Vec::with_capacity(args.len() / 2);
+        for pair in args.chunks_exact(2) {
+            let name = guest_string(&pair[0], "dispatch-table")?;
+            if entries.iter().any(|(existing, _)| existing == &name) {
+                return guest_error("dispatch-table handler names must be unique");
+            }
+            if !matches!(pair[1], KetosValue::Function(_) | KetosValue::Lambda(_)) {
+                return guest_error("dispatch-table values must be functions");
+            }
+            entries.push((name, pair[1].clone()));
+        }
+        Ok(KetosValue::new_foreign(GuestDispatchTable(entries)))
+    });
+    let dispatch_limits = limits.clone();
+    install_guest_function(interpreter, "dispatch", move |ctx, args| {
+        dispatch_call(ctx, args, &dispatch_limits, false)
+    });
+    let safe_dispatch_limits = limits.clone();
+    install_guest_function(interpreter, "dispatch-safe", move |ctx, args| {
+        dispatch_call(ctx, args, &safe_dispatch_limits, true)
+    });
     let call_limits = limits.clone();
     install_guest_function(interpreter, "safe-call", move |ctx, args| {
         let Some((function, call_args)) = args.split_first() else {
@@ -2899,6 +3084,153 @@ fn map_get(args: &[KetosValue]) -> std::result::Result<KetosValue, KetosError> {
     map.get(&key)
         .ok_or_else(|| guest_failure("map key is absent"))
         .and_then(|value| persistent_to_ketos(value).map_err(guest_from_svit))
+}
+
+#[derive(Clone, Debug)]
+struct GuestDispatchTable(Vec<(String, KetosValue)>);
+
+impl ForeignValue for GuestDispatchTable {
+    fn type_name(&self) -> &'static str {
+        "svit-dispatch-table"
+    }
+
+    fn size(&self) -> usize {
+        self.0.len().max(1)
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ResultTransform {
+    Map,
+    AndThen,
+    OrElse,
+}
+
+#[derive(Clone, Debug)]
+enum PathComponent {
+    Key(String),
+    Index(usize),
+}
+
+fn result_to_ketos(
+    ok: bool,
+    payload_name: &str,
+    payload: KetosValue,
+    limits: &Limits,
+) -> std::result::Result<KetosValue, KetosError> {
+    let payload = persistent_from_ketos(&payload, limits).map_err(guest_from_svit)?;
+    let result = Value::Map(BTreeMap::from([
+        ("ok".into(), Value::Bool(ok)),
+        (payload_name.into(), payload),
+    ]));
+    result.validate(limits, false).map_err(guest_from_svit)?;
+    persistent_to_ketos(&result).map_err(guest_from_svit)
+}
+
+fn result_parts(value: &KetosValue) -> std::result::Result<(bool, &Value), KetosError> {
+    let map = guest_map(value, "result helper")?;
+    let ok = match map.get("ok") {
+        Some(Value::Bool(ok)) => *ok,
+        _ => return guest_error("result map requires a Boolean ok field"),
+    };
+    let payload = map
+        .get(if ok { "value" } else { "error" })
+        .ok_or_else(|| guest_failure("result map is missing its payload"))?;
+    Ok((ok, payload))
+}
+
+fn result_transform(
+    ctx: &KetosContext,
+    args: &mut [KetosValue],
+    limits: &Limits,
+    transform: ResultTransform,
+) -> std::result::Result<KetosValue, KetosError> {
+    expect_arity(args, 2, "result transform")?;
+    let (ok, payload) = result_parts(&args[1])?;
+    let should_call = match transform {
+        ResultTransform::Map | ResultTransform::AndThen => ok,
+        ResultTransform::OrElse => !ok,
+    };
+    if !should_call {
+        return Ok(args[1].clone());
+    }
+    let argument = persistent_to_ketos(payload).map_err(guest_from_svit)?;
+    let value = ketos::exec::call_function(ctx, args[0].clone(), vec![argument])?;
+    match transform {
+        ResultTransform::Map => {
+            let value = persistent_from_ketos(&value, limits).map_err(guest_from_svit)?;
+            safe_result(Ok(value), limits)
+        }
+        ResultTransform::AndThen | ResultTransform::OrElse => {
+            result_parts(&value)?;
+            Ok(value)
+        }
+    }
+}
+
+fn path_components(value: &KetosValue) -> std::result::Result<Vec<PathComponent>, KetosError> {
+    let KetosValue::List(values) = value else {
+        return guest_error("value path must be a Lisp list");
+    };
+    values
+        .iter()
+        .map(|component| match component {
+            KetosValue::String(key) => Ok(PathComponent::Key(key.to_string())),
+            KetosValue::Integer(index) => index
+                .to_usize()
+                .map(PathComponent::Index)
+                .ok_or_else(|| guest_failure("path index must be non-negative")),
+            _ => guest_error("path components must be strings or non-negative integers"),
+        })
+        .collect()
+}
+
+fn value_at_path<'a>(
+    mut value: &'a Value,
+    path: &[PathComponent],
+) -> std::result::Result<&'a Value, KetosError> {
+    for component in path {
+        value = match (value, component) {
+            (Value::Map(map), PathComponent::Key(key)) => map
+                .get(key)
+                .ok_or_else(|| guest_failure("value path key is absent"))?,
+            (Value::Array(values), PathComponent::Index(index)) => values
+                .get(*index)
+                .ok_or_else(|| guest_failure("value path index is out of bounds"))?,
+            _ => return guest_error("value path component does not match its container"),
+        };
+    }
+    Ok(value)
+}
+
+fn dispatch_call(
+    ctx: &KetosContext,
+    args: &mut [KetosValue],
+    limits: &Limits,
+    safe: bool,
+) -> std::result::Result<KetosValue, KetosError> {
+    expect_arity(args, 3, if safe { "dispatch-safe" } else { "dispatch" })?;
+    let table = match &args[0] {
+        KetosValue::Foreign(value) => value.downcast_ref::<GuestDispatchTable>(),
+        _ => None,
+    }
+    .ok_or_else(|| guest_failure("dispatch expects a dispatch table"))?;
+    let name = guest_string(&args[1], "dispatch")?;
+    let result = table
+        .0
+        .iter()
+        .find(|(candidate, _)| candidate == &name)
+        .ok_or_else(|| guest_failure("dispatch handler is not registered"))
+        .and_then(|(_, function)| {
+            ketos::exec::call_function(ctx, function.clone(), vec![args[2].clone()])
+        })
+        .and_then(|value| persistent_from_ketos(&value, limits).map_err(guest_from_svit));
+    if safe {
+        safe_result(recoverable_result(result)?, limits)
+    } else {
+        let value = result?;
+        persistent_to_ketos(&value).map_err(guest_from_svit)
+    }
 }
 
 fn recoverable_result(

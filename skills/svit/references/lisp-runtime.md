@@ -19,6 +19,49 @@ It returns a list of maps. Each map contains:
 
 Use this runtime result as the authoritative catalog for the running Svit version. Ketos core language forms such as `define`, `lambda`, `if`, `let`, recursion, arithmetic, and ordinary function application are language features and are not listed in this Svit-helper catalog.
 
+## Result composition
+
+Result helpers use the same `"ok"` plus `"value"` or `"error"` maps as the safe runtime operations:
+
+```lisp
+(result-ok value)
+(result-error message)
+(result-ok? result)
+(result-value result)
+(result-error-message result)
+(result-map function result)
+(result-and-then function result)
+(result-or-else function result)
+```
+
+`result-map` transforms a successful value. `result-and-then` chains a function that returns another result. `result-or-else` receives the error value and may recover with another result. A branch that does not apply returns the original result unchanged.
+
+## Structured paths
+
+Use a Lisp list of string map keys and non-negative integer array indices:
+
+```lisp
+(value-at response (list "choices" 0 "message" "content"))
+(value-at-safe response (list "choices" 0 "message" "content"))
+(value-has-path? response (list "choices" 0))
+```
+
+`value-at` fails when a component is absent or does not match its container. `value-at-safe` returns a result map. `value-has-path?` returns false for a well-formed path that does not resolve.
+
+## Fail-closed dispatch tables
+
+A dispatch table is ephemeral and can contain only explicitly supplied Lisp functions:
+
+```lisp
+(define handlers
+  (dispatch-table "search" search "finish" finish))
+
+(dispatch handlers response-type arguments)
+(dispatch-safe handlers response-type arguments)
+```
+
+Names must be unique. Unknown names fail closed. `dispatch-safe` converts recoverable handler failures into result maps but propagates resource limits, execution failures, and port suspension.
+
 ## Structured agent data
 
 Use JSON and map helpers to validate and inspect model or port responses rather than branching on opaque text:
