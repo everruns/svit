@@ -389,8 +389,12 @@ acknowledges the exact queue head only after a successful Everruns turn. A faile
 turn leaves its input committed for recovery. Hosts may send while a turn is
 running; those messages remain ordered and begin subsequent turns. Both APIs
 use Everruns `Message` values with ordered `ContentPart` values, preserving text,
-images, actor metadata, and assistant role instead of reducing the boundary to
-strings. Live outbox receivers may await completion before, during, or after
+images, files, provider reasoning artifacts, actor metadata, and assistant role
+instead of reducing the boundary to strings. Reasoning artifacts carry opaque
+provider replay state (`signature`, `encrypted`) that every current provider
+requires replayed verbatim in its issued position, so the canonical event stream
+stores the part whole. That state is host-owned: it never reaches `/thread`, and
+a host console renders only `ReasoningContentPart::display_text`. Live outbox receivers may await completion before, during, or after
 any turn. `block` stops admission, drains the committed queue, and joins the
 loop.
 

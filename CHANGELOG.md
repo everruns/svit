@@ -6,6 +6,15 @@ All notable changes to Svit will be documented here.
 
 ### Added
 
+- Carry provider reasoning artifacts and file references across the message
+  boundary. Everruns `ContentPart` gained `Reasoning` and `File`; Svit
+  re-exports `ReasoningContentPart` and `ReasoningText`, stores each reasoning
+  part whole in the canonical event stream so providers can replay it verbatim
+  in its issued position, and keeps that replay state host-owned: it never
+  reaches the guest-visible `/thread` projection. Lampa shows readable
+  reasoning on its own `thinking` channel and file parts by filename, and never
+  renders a provider signature or encrypted payload.
+
 - Bound canonical event history with an explicit retention cut.
   `Svit::cut_thread_events` and the `ThreadHistoryRetention` contract reclaim
   every event at or below a chosen boundary, and

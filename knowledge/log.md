@@ -1,5 +1,28 @@
 # Svit Knowledge Update Log
 
+## 2026-09-15
+
+* **Everruns refresh**: Updated the pinned Everruns workspace from `66c20400`
+  to `74841cbb` (`everruns` 0.18.2 to 0.21.0, `everruns-host` 0.20.1 to 0.21.0,
+  `everruns-provider` 0.22.0). `ContentPart` gained two variants, `File` and
+  `Reasoning`, so Svit's message boundary now carries file references and
+  provider reasoning artifacts without host translation.
+* **Reasoning artifacts**: A reasoning part carries readable text alongside
+  opaque provider replay state (`signature`, `encrypted`, `item_id`). Providers
+  verify that state against the exact position it was issued in, so the
+  canonical event stream stores the part whole and the projection returns it
+  unchanged. Validation is unchanged: the part is ordinary guest-shaped JSON
+  measured against the same process limits as any other event payload.
+* **Replay state stays host-owned**: Reasoning never reaches the guest. No
+  builtin exposes thread messages, and `/thread` remains bounded metadata
+  (TM-AUD-001), so the bump adds no guest-visible surface and needs no new
+  threat ID. Lampa renders only `display_text`; `signature` and `encrypted` are
+  replay state rather than content and are never drawn. Opaque-only reasoning
+  does not pull a tool-only message out of the compact tool row.
+* **Dependency posture**: Everruns is a sibling project, so its types are
+  re-exported directly (`ReasoningContentPart`, `ReasoningText`) rather than
+  wrapped. No new license or advisory exception was required.
+
 ## 2026-08-22
 
 * **Tuika dependency refresh**: Updated Lampa from Tuika 0.10.0 to 0.11.0 and
