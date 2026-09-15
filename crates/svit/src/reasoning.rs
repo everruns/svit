@@ -2145,7 +2145,8 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
 
 #[cfg(test)]
 mod tests {
-    use everruns_core::events::{EventContext, InputMessageData};
+    use everruns_core::events::{EventContext, InputMessageData, OutputMessageCompletedData};
+    use everruns_provider::reasoning::{ReasoningContentPart, ReasoningText};
 
     use super::*;
 
@@ -2277,6 +2278,76 @@ mod tests {
         assert!(thread.get("events").is_none());
         assert!(thread.get("messages").is_none());
         assert_eq!(process.snapshot().unwrap().len(), snapshot_bytes);
+    }
+
+    #[tokio::test]
+    async fn reasoning_artifacts_survive_the_canonical_event_projection() {
+        // Providers require every reasoning artifact replayed verbatim, in the
+        // position it was issued. The canonical event stream is the only place
+        // that state is durable, so validation must accept it and the
+        // projection must return it unchanged rather than dropping the part.
+        let session_id = SessionId::new();
+        let process = Process::builder("svit://local/reasoning-artifacts")
+            .unwrap()
+            .build()
+            .unwrap();
+        let process = ProcessState::volatile(process);
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let event_log = ProcessEventLog::new(process.clone());
+        let reasoning = ReasoningContentPart::opaque("anthropic")
+            .with_signature("provider-signature")
+            .with_encrypted("provider-payload")
+            .with_text(ReasoningText::Plain {
+                text: "Read /memory before writing.".into(),
+            })
+            .with_tokens(42);
+        let mut message = Message::assistant("Committed the note.");
+        message
+            .content
+            .insert(0, ContentPart::reasoning(reasoning.clone()));
+
+        event_log
+            .append(EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                OutputMessageCompletedData::new(message),
+            ))
+            .await
+            .unwrap();
+
+        let page = event_log
+            .read_page(EventReadRequest::new(
+                session_id,
+                everruns_host::EventReadLimit::default(),
+            ))
+            .await
+            .unwrap();
+        let projected = messages_from_events(&page.events);
+        let [projected] = projected.as_slice() else {
+            panic!("expected exactly one projected message");
+        };
+        assert_eq!(
+            projected.reasoning_parts().collect::<Vec<_>>(),
+            vec![&reasoning],
+            "replay state must round trip through the canonical event stream"
+        );
+        assert_eq!(projected.text(), Some("Committed the note."));
+
+        // THREAT[TM-AUD-001]: canonical history stays host-owned. Reasoning
+        // artifacts must not reach the guest-visible `/thread` projection.
+        let view = process.view();
+        let thread = view
+            .lock()
+            .unwrap()
+            .read("/thread")
+            .unwrap()
+            .unwrap()
+            .to_json();
+        assert!(thread.get("messages").is_none());
+        assert!(!thread.to_string().contains("provider-signature"));
+        assert!(!thread.to_string().contains("provider-payload"));
     }
 
     #[tokio::test]

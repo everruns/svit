@@ -6,7 +6,8 @@ use std::time::Duration;
 #[cfg(test)]
 use ratatui::buffer::Buffer;
 use svit::{
-    Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, Svit, SvitEvent, Value,
+    Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, ReasoningContentPart, Svit,
+    SvitEvent, Value,
 };
 use tuika::components::{TreeList, TreeRow, TreeState};
 use tuika::prelude::*;
@@ -1972,6 +1973,18 @@ fn timeline_lines(
                         ContentPart::Image(_) | ContentPart::ImageFile(_) => {
                             lines.push(Line::from("[image]"));
                         }
+                        ContentPart::File(part) => {
+                            lines.push(Line::from(Span::styled(
+                                format!(
+                                    "[file: {}]",
+                                    part.filename.as_deref().unwrap_or("attachment")
+                                ),
+                                theme.muted_style(),
+                            )));
+                        }
+                        ContentPart::Reasoning(part) => {
+                            lines.extend(reasoning_lines(part, theme));
+                        }
                         ContentPart::ToolCall(call) => {
                             if !completed_tool_calls.contains(call.id.as_str()) {
                                 lines.push(compact_tool_line(
@@ -2047,10 +2060,34 @@ fn message_only_has_tools(message: &Message) -> bool {
         match part {
             ContentPart::ToolCall(_) | ContentPart::ToolResult(_) => has_tool = true,
             ContentPart::Text(part) if part.text.trim().is_empty() => {}
+            // Opaque reasoning carries replay state, not content. It must not
+            // pull a tool-only message out of the compact tool rendering.
+            ContentPart::Reasoning(part) if part.display_text().is_none() => {}
             _ => return false,
         }
     }
     has_tool
+}
+
+/// Render readable reasoning on its own muted channel.
+///
+/// Only `display_text` is ever shown: `signature` and `encrypted` are opaque
+/// provider replay state and must never reach the screen.
+fn reasoning_lines(part: &ReasoningContentPart, theme: &Theme) -> Vec<Line<'static>> {
+    let Some(text) = part.display_text() else {
+        return Vec::new();
+    };
+    let mut lines = vec![Line::from(Span::styled(
+        "thinking",
+        Style::default()
+            .fg(theme.muted)
+            .add_modifier(Modifier::BOLD),
+    ))];
+    lines.extend(
+        text.lines()
+            .map(|line| Line::from(Span::styled(line.to_owned(), theme.muted_style()))),
+    );
+    lines
 }
 
 fn append_compact_tools(
@@ -2353,7 +2390,7 @@ fn status_view(app: &App, theme: &Theme) -> Element {
 mod tests {
     use super::*;
     use everruns_test_support::{LLMSIM_MODEL_ID, LlmSimConfig, llm_sim_provider};
-    use svit::{Mount, Reasoner, value};
+    use svit::{Mount, Reasoner, ReasoningText, value};
     use tuika::testing::{grid, render};
 
     /// A [`MemoryView`] over one in-memory value.
@@ -3241,6 +3278,128 @@ mod tests {
 
         assert_eq!(nonempty, ["tool › ✓ discover /memory · 2 entries"]);
         assert!(!nonempty.join(" ").contains("call_internal_123"));
+    }
+
+    fn rendered_lines(entries: &[TimelineEntry]) -> Vec<String> {
+        timeline_lines(entries, 80, &lampa_theme())
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<String>()
+            })
+            .filter(|line| !line.is_empty())
+            .collect()
+    }
+
+    #[test]
+    fn readable_reasoning_renders_on_its_own_channel() {
+        let mut message = Message::assistant("Committed the note.");
+        message.content.insert(
+            0,
+            ContentPart::reasoning(ReasoningContentPart::opaque("openai").with_text(
+                ReasoningText::Plain {
+                    text: "Check the memory tree first.".to_owned(),
+                },
+            )),
+        );
+
+        let rendered = rendered_lines(&[TimelineEntry::Message(Box::new(message))]);
+
+        assert_eq!(
+            rendered,
+            [
+                "SVIT",
+                "thinking",
+                "Check the memory tree first.",
+                "Committed the note."
+            ]
+        );
+    }
+
+    #[test]
+    fn summary_reasoning_joins_its_segments() {
+        let mut message = Message::assistant("Done.");
+        message.content.insert(
+            0,
+            ContentPart::reasoning(ReasoningContentPart::opaque("openai").with_text(
+                ReasoningText::Summary {
+                    parts: vec!["Read the tree.".to_owned(), "Write the note.".to_owned()],
+                },
+            )),
+        );
+
+        let rendered = rendered_lines(&[TimelineEntry::Message(Box::new(message))]);
+
+        assert_eq!(
+            rendered,
+            [
+                "SVIT",
+                "thinking",
+                "Read the tree.",
+                "Write the note.",
+                "Done."
+            ]
+        );
+    }
+
+    #[test]
+    fn opaque_reasoning_never_reaches_the_screen() {
+        let mut message = Message::assistant("");
+        message.content = vec![
+            ContentPart::reasoning(
+                ReasoningContentPart::opaque("anthropic")
+                    .with_signature("private-signature")
+                    .with_encrypted("private-payload"),
+            ),
+            ContentPart::tool_call(
+                "call_internal_456",
+                "discover",
+                serde_json::json!({"path": "/memory"}),
+            ),
+        ];
+
+        let rendered = rendered_lines(&[TimelineEntry::Message(Box::new(message))]);
+
+        // Replay state is not content: it must neither be rendered nor pull the
+        // message out of the compact tool row.
+        assert_eq!(rendered, ["tool › … discover /memory"]);
+        let joined = rendered.join(" ");
+        assert!(!joined.contains("thinking"));
+        assert!(!joined.contains("private-signature"));
+        assert!(!joined.contains("private-payload"));
+    }
+
+    fn file_part(filename: Option<&str>) -> ContentPart {
+        let mut part = serde_json::json!({
+            "type": "file",
+            "file_id": "file_00000000000000000000000000000001",
+        });
+        if let Some(filename) = filename {
+            part["filename"] = serde_json::json!(filename);
+        }
+        serde_json::from_value(part).expect("file content part")
+    }
+
+    #[test]
+    fn file_attachments_render_with_their_filename() {
+        let mut named = Message::user("");
+        named.content = vec![file_part(Some("report.pdf"))];
+        let mut anonymous = Message::user("");
+        anonymous.content = vec![file_part(None)];
+
+        let rendered = rendered_lines(&[
+            TimelineEntry::Message(Box::new(named)),
+            TimelineEntry::Message(Box::new(anonymous)),
+        ]);
+
+        assert_eq!(
+            rendered,
+            ["YOU", "[file: report.pdf]", "YOU", "[file: attachment]"]
+        );
+        // A file reference is an opaque host handle, never a guest-visible id.
+        assert!(!rendered.join(" ").contains("file_0000"));
     }
 
     #[test]
