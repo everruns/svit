@@ -3019,15 +3019,15 @@ fn install_structured_value_functions(interpreter: &KetosInterpreter, limits: &L
             return guest_error("dispatch-table expects name/function pairs");
         }
         let mut entries = Vec::with_capacity(args.len() / 2);
-        for pair in args.chunks_exact(2) {
-            let name = guest_string(&pair[0], "dispatch-table")?;
+        for [name, handler] in args.as_chunks::<2>().0 {
+            let name = guest_string(name, "dispatch-table")?;
             if entries.iter().any(|(existing, _)| existing == &name) {
                 return guest_error("dispatch-table handler names must be unique");
             }
-            if !matches!(pair[1], KetosValue::Function(_) | KetosValue::Lambda(_)) {
+            if !matches!(handler, KetosValue::Function(_) | KetosValue::Lambda(_)) {
                 return guest_error("dispatch-table values must be functions");
             }
-            entries.push((name, pair[1].clone()));
+            entries.push((name, handler.clone()));
         }
         Ok(KetosValue::new_foreign(GuestDispatchTable(entries)))
     });

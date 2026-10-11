@@ -220,10 +220,8 @@ impl ThreadHistory {
             (&self.messages, "")
         } else if let Some(suffix) = path.strip_prefix("/thread/events/") {
             (&self.events, suffix)
-        } else if let Some(suffix) = path.strip_prefix("/thread/messages/") {
-            (&self.messages, suffix)
         } else {
-            return None;
+            (&self.messages, path.strip_prefix("/thread/messages/")?)
         };
         let mut current = value;
         for segment in suffix.split('/').filter(|segment| !segment.is_empty()) {
