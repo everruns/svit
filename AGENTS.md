@@ -153,9 +153,10 @@ Use Conventional Commits: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`,
 co-author or generation notices. Each commit that lands on `main` must be a
 coherent semantic unit and pass its relevant quality gates.
 
-Pull requests are a coordination tool, not a mandatory delivery step. Use one
-only when review, CI policy, or collaboration requires it. Squash-merge pull
-requests so `main` receives one semantic commit rather than review history.
+Deliver by committing directly to `main` after the relevant gates pass; do not
+open pull requests by default. Use one only when someone explicitly asks for
+review, and squash-merge it so `main` receives one semantic commit rather than
+review history.
 Release notes, changelogs, and tag messages must describe changes directly and
 must not link to pull requests; release preparation may curate unpublished
 history, making PR references unstable. Never merge or ship with failing CI.

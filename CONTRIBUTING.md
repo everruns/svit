@@ -24,13 +24,13 @@ cargo install okf-lint --version 0.1.1 --locked
 ## Development workflow
 
 1. Read `AGENTS.md` and the relevant concept under `knowledge/`.
-2. Create a focused branch from current `main`.
+2. Start from current `main`.
 3. For a bug, add a failing regression test first.
 4. Implement the smallest complete vertical change.
 5. Add positive, negative, rollback, and limit tests as applicable.
 6. Update executable examples and durable knowledge in the same change.
-7. Run `just pre-pr` and deliver one semantic commit. Open a pull request only
-   when review, repository policy, or collaboration requires one.
+7. Run `just pre-pr` and push one semantic commit directly to `main`. Open a
+   pull request only when someone explicitly asks for review.
 
 ## Commands
 
