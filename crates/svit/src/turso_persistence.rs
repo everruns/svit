@@ -4,18 +4,18 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use everruns_contracts::AgentLoopError;
+use everruns_contracts::typed_id::{EventId, SessionId};
 use everruns_core::events::{
     Event, EventRequest, INPUT_MESSAGE, OUTPUT_MESSAGE_COMPLETED, TOOL_COMPLETED,
+};
+use everruns_core::host::{
+    EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest, EventReader,
 };
 use everruns_core::{
     CompactionCheckpoint, CompactionCheckpointPayload, CompactionCheckpointStore,
     ProactiveCompactionAttempt, ProactiveCompactionAttemptTracker,
 };
-use everruns_host::{
-    EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest, EventReader,
-};
-use everruns_provider::AgentLoopError;
-use everruns_provider::typed_id::{EventId, SessionId};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use turso::transaction::{Transaction, TransactionBehavior};
@@ -25,6 +25,7 @@ use crate::persistence::{
     DurableProcessHandle, Mutation, PersistenceSnapshotRecord, ProcessStore, ProcessTransaction,
     ThreadHistoryCut, ThreadHistoryRetention, TransactionHead, TransactionQuery,
 };
+use crate::thread_history::check_last_sequence;
 use crate::{Activation, Error, Mount, Ports, Process, ProcessId, Result, Value};
 
 const SCHEMA_VERSION: &str = "3";
@@ -627,6 +628,32 @@ impl ThreadHistoryRetention for TursoThreadEventLog {
 #[async_trait]
 impl EventLog for TursoThreadEventLog {
     async fn append(&self, request: EventRequest) -> std::result::Result<Event, EventLogError> {
+        self.append_checked(request, None).await
+    }
+
+    async fn append_conditional(
+        &self,
+        request: EventRequest,
+        expected_last_sequence: Option<i32>,
+    ) -> std::result::Result<Event, EventLogError> {
+        self.append_checked(request, Some(expected_last_sequence))
+            .await
+    }
+
+    fn durability(&self) -> EventDurability {
+        EventDurability::CrashDurable
+    }
+}
+
+impl TursoThreadEventLog {
+    /// `expected`: `None` appends unconditionally, `Some(last)` only when the
+    /// session's log still ends at `last`, checked inside the write
+    /// transaction that assigns the sequence.
+    async fn append_checked(
+        &self,
+        request: EventRequest,
+        expected: Option<Option<i32>>,
+    ) -> std::result::Result<Event, EventLogError> {
         if request.is_ephemeral() {
             return Err(EventLogError::InvalidAppend {
                 detail: "ephemeral events are sink-only".into(),
@@ -644,6 +671,9 @@ impl EventLog for TursoThreadEventLog {
             .map_err(|_| thread_event_backend())?;
         let previous =
             thread_history_high_in_transaction(&transaction, &self.address, session_id).await?;
+        if let Some(expected) = expected {
+            check_last_sequence(session_id, previous, expected)?;
+        }
         let sequence = previous
             .checked_add(1)
             .ok_or_else(|| EventLogError::InvalidAppend {
@@ -688,10 +718,6 @@ impl EventLog for TursoThreadEventLog {
             .await
             .map_err(|_| thread_event_backend())?;
         Ok(event)
-    }
-
-    fn durability(&self) -> EventDurability {
-        EventDurability::CrashDurable
     }
 }
 
@@ -926,7 +952,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns_provider::error::Result<Option<CompactionCheckpoint>> {
+    ) -> everruns_contracts::error::Result<Option<CompactionCheckpoint>> {
         let connection = self
             .store
             .database
@@ -986,7 +1012,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
     async fn install(
         &self,
         checkpoint: CompactionCheckpoint,
-    ) -> everruns_provider::error::Result<bool> {
+    ) -> everruns_contracts::error::Result<bool> {
         if checkpoint.source_sequence < 0 {
             return Err(AgentLoopError::store(
                 "checkpoint source sequence is invalid",
@@ -1052,7 +1078,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns_provider::error::Result<Option<ProactiveCompactionAttempt>> {
+    ) -> everruns_contracts::error::Result<Option<ProactiveCompactionAttempt>> {
         Ok(self
             .store
             .proactive_attempts
@@ -1066,7 +1092,7 @@ impl CompactionCheckpointStore for TursoCompactionCheckpointStore {
         provider_type: &str,
         model: &str,
         attempt: ProactiveCompactionAttempt,
-    ) -> everruns_provider::error::Result<()> {
+    ) -> everruns_contracts::error::Result<()> {
         self.store
             .proactive_attempts
             .record(session_id, provider_type, model, attempt)
@@ -3081,9 +3107,9 @@ mod tests {
     use super::*;
     use crate::persistence::DurableProcessHandle;
     use crate::value;
-    use everruns_core::Message;
+    use everruns_core::RuntimeMessage as Message;
     use everruns_core::events::{EventContext, InputMessageData};
-    use everruns_host::EventReadLimit;
+    use everruns_core::host::EventReadLimit;
 
     #[test]
     fn store_snapshots_use_structured_json_and_restore_legacy_bytes() {
@@ -3204,6 +3230,55 @@ mod tests {
                 .await
                 .unwrap(),
             Some(checkpoint)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_conditional_durable_append_commits_only_at_the_expected_end() {
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let process = store
+            .import(Process::new("svit://local/persistence/conditional").unwrap())
+            .await
+            .unwrap();
+        let log = process.event_log();
+        let request = |text: &str| {
+            EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                InputMessageData::new(Message::user(text)),
+            )
+        };
+
+        let first = log
+            .append_conditional(request("first"), None)
+            .await
+            .unwrap();
+        assert_eq!(first.sequence, Some(1));
+        assert!(matches!(
+            log.append_conditional(request("stale"), None).await,
+            Err(EventLogError::SequenceConflict {
+                expected: None,
+                actual: Some(1),
+                ..
+            })
+        ));
+        let second = log
+            .append_conditional(request("second"), Some(1))
+            .await
+            .unwrap();
+        assert_eq!(second.sequence, Some(2));
+
+        let page = log
+            .read_page(EventReadRequest::new(session_id, EventReadLimit::default()))
+            .await
+            .unwrap();
+        assert_eq!(
+            page.events
+                .iter()
+                .filter_map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
         );
     }
 

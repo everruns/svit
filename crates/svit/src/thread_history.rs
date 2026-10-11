@@ -8,15 +8,15 @@
 //! checkpoint already replaced it in model context.
 
 use async_trait::async_trait;
+use everruns_contracts::AgentLoopError;
+use everruns_contracts::typed_id::{EventId, SessionId};
 use everruns_core::compaction_checkpoint::{
     CompactionCheckpoint, CompactionCheckpointStore, ProactiveCompactionAttempt,
 };
 use everruns_core::events::{Event, EventRequest};
-use everruns_host::{
+use everruns_core::host::{
     EventCursor, EventDurability, EventLog, EventLogError, EventPage, EventReadRequest, EventReader,
 };
-use everruns_provider::AgentLoopError;
-use everruns_provider::typed_id::{EventId, SessionId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -171,33 +171,77 @@ impl EventReader for VolatileThreadEventLog {
     }
 }
 
-#[async_trait]
-impl EventLog for VolatileThreadEventLog {
-    async fn append(&self, request: EventRequest) -> std::result::Result<Event, EventLogError> {
+impl VolatileThreadEventLog {
+    /// `expected`: `None` appends unconditionally, `Some(last)` only when the
+    /// session's log still ends at `last`. The check and the sequence
+    /// assignment share one session lock, so of concurrent conditional
+    /// appends presenting the same expectation at most one succeeds.
+    fn append_checked(
+        &self,
+        request: EventRequest,
+        expected: Option<Option<i32>>,
+    ) -> std::result::Result<Event, EventLogError> {
         if request.is_ephemeral() {
             return Err(EventLogError::InvalidAppend {
                 detail: "ephemeral events are sink-only".into(),
             });
         }
         let session_id = request.session_id;
-        let sequence = self
-            .history
-            .with_session(session_id, |session| session.high)
-            .map_err(|()| unavailable())?
-            .checked_add(1)
-            .ok_or_else(|| EventLogError::InvalidAppend {
-                detail: "event sequence exhausted".into(),
-            })?;
-        let event = request.into_event(EventId::new(), sequence);
         self.history
             .with_session(session_id, |session| {
+                if let Some(expected) = expected {
+                    check_last_sequence(session_id, session.high, expected)?;
+                }
+                let sequence =
+                    session
+                        .high
+                        .checked_add(1)
+                        .ok_or_else(|| EventLogError::InvalidAppend {
+                            detail: "event sequence exhausted".into(),
+                        })?;
+                let event = request.into_event(EventId::new(), sequence);
                 // A reclaimed prefix still bounds the session, so `high` is
                 // never recomputed from the retained events.
                 session.high = sequence;
                 session.events.push(event.clone());
+                Ok(event)
             })
-            .map_err(|()| unavailable())?;
-        Ok(event)
+            .map_err(|()| unavailable())?
+    }
+}
+
+/// Fail with [`EventLogError::SequenceConflict`] unless a session whose highest
+/// assigned sequence is `high` (0 when empty, including a reclaimed prefix)
+/// ends where the caller expects.
+pub(crate) fn check_last_sequence(
+    session_id: SessionId,
+    high: i32,
+    expected: Option<i32>,
+) -> std::result::Result<(), EventLogError> {
+    let actual = (high > 0).then_some(high);
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(EventLogError::SequenceConflict {
+            session_id,
+            expected,
+            actual,
+        })
+    }
+}
+
+#[async_trait]
+impl EventLog for VolatileThreadEventLog {
+    async fn append(&self, request: EventRequest) -> std::result::Result<Event, EventLogError> {
+        self.append_checked(request, None)
+    }
+
+    async fn append_conditional(
+        &self,
+        request: EventRequest,
+        expected_last_sequence: Option<i32>,
+    ) -> std::result::Result<Event, EventLogError> {
+        self.append_checked(request, Some(expected_last_sequence))
     }
 
     fn durability(&self) -> EventDurability {
@@ -272,7 +316,7 @@ impl CompactionCheckpointStore for VolatileCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns_provider::error::Result<Option<CompactionCheckpoint>> {
+    ) -> everruns_contracts::error::Result<Option<CompactionCheckpoint>> {
         self.history
             .with_session(session_id, |session| {
                 session
@@ -290,7 +334,7 @@ impl CompactionCheckpointStore for VolatileCompactionCheckpointStore {
     async fn install(
         &self,
         checkpoint: CompactionCheckpoint,
-    ) -> everruns_provider::error::Result<bool> {
+    ) -> everruns_contracts::error::Result<bool> {
         if checkpoint.source_sequence < 0 {
             return Err(AgentLoopError::store(
                 "checkpoint source sequence is invalid",
@@ -320,7 +364,7 @@ impl CompactionCheckpointStore for VolatileCompactionCheckpointStore {
         session_id: SessionId,
         provider_type: &str,
         model: &str,
-    ) -> everruns_provider::error::Result<Option<ProactiveCompactionAttempt>> {
+    ) -> everruns_contracts::error::Result<Option<ProactiveCompactionAttempt>> {
         self.history
             .with_session(session_id, |session| {
                 session
@@ -337,7 +381,7 @@ impl CompactionCheckpointStore for VolatileCompactionCheckpointStore {
         provider_type: &str,
         model: &str,
         attempt: ProactiveCompactionAttempt,
-    ) -> everruns_provider::error::Result<()> {
+    ) -> everruns_contracts::error::Result<()> {
         self.history
             .with_session(session_id, |session| {
                 session
@@ -351,10 +395,10 @@ impl CompactionCheckpointStore for VolatileCompactionCheckpointStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use everruns_core::Message;
+    use everruns_core::RuntimeMessage as Message;
     use everruns_core::compaction_checkpoint::CompactionCheckpointPayload;
     use everruns_core::events::{EventContext, InputMessageData};
-    use everruns_host::EventReadLimit;
+    use everruns_core::host::EventReadLimit;
 
     async fn append(log: &VolatileThreadEventLog, session_id: SessionId, text: &str) -> Event {
         log.append(EventRequest::new(
@@ -391,6 +435,71 @@ mod tests {
             .iter()
             .filter_map(|event| event.sequence)
             .collect()
+    }
+
+    fn request(session_id: SessionId, text: &str) -> EventRequest {
+        EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            InputMessageData::new(Message::user(text)),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_conditional_volatile_append_commits_only_at_the_expected_end() {
+        let log = VolatileThreadEventLog::new();
+        let session_id = SessionId::new();
+
+        let first = log
+            .append_conditional(request(session_id, "first"), None)
+            .await
+            .unwrap();
+        assert_eq!(first.sequence, Some(1));
+
+        let stale = log
+            .append_conditional(request(session_id, "stale"), None)
+            .await;
+        assert!(matches!(
+            stale,
+            Err(EventLogError::SequenceConflict {
+                expected: None,
+                actual: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(sequences(&log, session_id).await, vec![1]);
+
+        let second = log
+            .append_conditional(request(session_id, "second"), Some(1))
+            .await
+            .unwrap();
+        assert_eq!(second.sequence, Some(2));
+        assert_eq!(sequences(&log, session_id).await, vec![1, 2]);
+    }
+
+    #[tokio::test]
+    // THREAT[TM-AUD-002]
+    async fn a_conditional_volatile_append_counts_a_reclaimed_prefix() {
+        let log = VolatileThreadEventLog::new();
+        let session_id = SessionId::new();
+        append(&log, session_id, "first").await;
+        append(&log, session_id, "second").await;
+        install(&log, session_id, 2).await;
+        log.cut_thread_events(session_id, 2).await.unwrap();
+
+        assert!(matches!(
+            log.append_conditional(request(session_id, "stale"), None)
+                .await,
+            Err(EventLogError::SequenceConflict {
+                actual: Some(2),
+                ..
+            })
+        ));
+        let next = log
+            .append_conditional(request(session_id, "next"), Some(2))
+            .await
+            .unwrap();
+        assert_eq!(next.sequence, Some(3));
     }
 
     #[tokio::test]

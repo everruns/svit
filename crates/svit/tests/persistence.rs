@@ -1,10 +1,10 @@
 #![cfg(feature = "persistence-turso")]
 
-use everruns_core::Message;
+use everruns_contracts::typed_id::{EventId, SessionId};
 use everruns_core::compaction_checkpoint::{CompactionCheckpoint, CompactionCheckpointPayload};
 use everruns_core::events::{EventContext, EventRequest, InputMessageData};
-use everruns_host::{EventReadLimit, EventReadRequest};
-use everruns_provider::typed_id::{EventId, SessionId};
+use everruns_core::host::{EventReadLimit, EventReadRequest};
+use svit::Message;
 use svit::{
     DurableProcess, DurableProcessHandle, Error, Mount, Process, ProcessId, ProcessStore, Script,
     TransactionQuery, TursoProcessStore, Value, value,

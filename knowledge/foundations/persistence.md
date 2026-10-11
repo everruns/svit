@@ -637,5 +637,6 @@ archival queries across cut history, general garbage collection, implemented sch
 signatures, encryption key management, Turso Sync, distributed leases, durable
 external-effect delivery, or an S3 adapter. History grows until an explicit
 snapshot and safe cut; configured quotas fail commits before storage or replay
-work becomes unbounded. The pinned Turso engine remains pre-release and cannot
-support a production-stability claim without upgrade and crash testing.
+work becomes unbounded. The pinned Turso engine is an exact 0.x release; Svit
+has no upgrade or crash-test evidence of its own, so it cannot support a
+production-stability claim.

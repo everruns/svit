@@ -4,10 +4,10 @@
 //! when its host reclaims history it no longer needs. A cut is refused until a
 //! compaction checkpoint proves the prefix already reached replacement context.
 
-use everruns_core::Message;
+use everruns_contracts::typed_id::{EventId, SessionId};
 use everruns_core::compaction_checkpoint::{CompactionCheckpoint, CompactionCheckpointPayload};
 use everruns_core::events::{EventContext, EventRequest, InputMessageData};
-use everruns_provider::typed_id::{EventId, SessionId};
+use svit::Message;
 use svit::{DurableProcessHandle, Error, Process, TursoProcessStore, Value};
 
 const ADDRESS: &str = "svit://local/examples/thread-retention";

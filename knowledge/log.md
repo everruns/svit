@@ -1,5 +1,33 @@
 # Svit Knowledge Update Log
 
+## 2026-10-11
+
+* **Everruns refresh**: Updated the pinned Everruns workspace from `74841cbb`
+  to `08820131` (0.47.0). Everruns retired `everruns-host`,
+  `everruns-builtins`, and `everruns-provider`; their APIs now live in
+  `everruns-core` behind the `host` and `builtins` features and in
+  `everruns-contracts`. `Message` became `RuntimeMessage`; Svit keeps
+  `svit::Message` as its re-export name.
+* **Conditional event append**: Everruns made `EventLog::append_conditional`
+  a required single-writer primitive. Both Svit thread logs check the
+  session's highest assigned sequence inside the same lock (volatile) or write
+  transaction (Turso) that assigns the next one, and fail with
+  `SequenceConflict` without writing. The highest assigned sequence includes a
+  reclaimed retention prefix, consistent with TM-AUD-002's rule that appended
+  sequences never reuse a reclaimed one. `ProcessEventLog` applies the same
+  session and payload admission (TM-DOS-003) to both append paths.
+* **Provider-opaque content**: `ContentPart` gained `ProviderOpaque`, assistant
+  content retained only for provider replay. Like reasoning replay state it is
+  stored whole in the canonical event stream and never rendered by Lampa; no
+  builtin exposes thread messages, so no guest-visible surface changes.
+* **Dependency refresh**: Turso 0.8.0-pre.3 to 0.8.1 (first non-pre-release
+  pin; `L-029` now describes an exact 0.x pin rather than a pre-release),
+  Tuika 0.11.1 to 0.12.0 and `tuika-codeformatters` 0.5.0 to 0.6.0 (Tuika owns
+  its cell grid, so Lampa drops its direct ratatui dependency), syn 2 to 3, and
+  Rust 1.95.0 to 1.99.0. Registry updates published within the last seven days
+  were held back; `llmsim` 0.6.0 is the exception because the Everruns lock
+  requires it.
+
 ## 2026-09-15
 
 * **Everruns refresh**: Updated the pinned Everruns workspace from `66c20400`

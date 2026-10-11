@@ -57,7 +57,7 @@ pub use control::{
 };
 pub use error::{Error, Result};
 pub use everruns::{ContentPart, MessageRole, OpenAI, ReasoningContentPart, ReasoningText};
-pub use everruns_core::Message;
+pub use everruns_core::RuntimeMessage as Message;
 pub use hooks::{ActivationEvent, ActivationHook, ActivationRequest, ActivationStatus, HookAction};
 pub use limits::Limits;
 pub use mounts::{

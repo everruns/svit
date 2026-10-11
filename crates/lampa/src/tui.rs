@@ -3,12 +3,12 @@ use std::io;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[cfg(test)]
-use ratatui::buffer::Buffer;
 use svit::{
     Change, ContentPart, Events, Inbox, Message, MessageRole, Outbox, ReasoningContentPart, Svit,
     SvitEvent, Value,
 };
+#[cfg(test)]
+use tuika::buffer::Buffer;
 use tuika::components::{TreeList, TreeRow, TreeState};
 use tuika::prelude::*;
 use tuika::probe::RectProbe;
@@ -2006,6 +2006,10 @@ fn timeline_lines(
                                 theme,
                             ));
                         }
+                        // Provider-opaque content is replay state, not
+                        // content, and is never drawn; the enum is
+                        // non-exhaustive, so future parts stay hidden too.
+                        _ => {}
                     }
                 }
             }

@@ -8,18 +8,19 @@ use async_trait::async_trait;
 use everruns_core::capabilities::{Capability, SystemPromptContext};
 
 use everruns::CapabilityRef;
+use everruns_contracts::error::Result as EverrunsResult;
+use everruns_contracts::typed_id::{MessageId, SessionId};
+use everruns_contracts::{AgentLoopError, DriverRegistry, ToolResultImage};
 use everruns_core::events::{Event, EventData, EventRequest, ToolCompletedData};
-use everruns_core::message_retriever::InputMessage;
-use everruns_core::tools::{Tool, ToolExecutionResult};
-use everruns_core::{CompactionCheckpointStore, ContentPart, Message, MessageRole};
-use everruns_host::{
+use everruns_core::host::{
     EventDurability, EventLog, EventLogError, EventPage, EventReadLimit, EventReadRequest,
     EventReader, EventSink, EventSinkError, HostBackends, HostComposition, InProcessRuntime,
     InProcessRuntimeBuilder, TurnResult, TurnStopReason,
 };
-use everruns_provider::error::Result as EverrunsResult;
-use everruns_provider::typed_id::{MessageId, SessionId};
-use everruns_provider::{AgentLoopError, DriverRegistry, ToolResultImage};
+use everruns_core::message_retriever::InputMessage;
+use everruns_core::tools::{Tool, ToolExecutionResult};
+use everruns_core::{CompactionCheckpointStore, ContentPart};
+use everruns_core::{RuntimeMessage as Message, RuntimeMessageRole as MessageRole};
 use serde_json::{Value as JsonValue, json};
 use thiserror::Error;
 use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
@@ -1402,7 +1403,7 @@ impl ReasoningLoopBuilder {
         // separately installs the process-backed EventLog used for replay.
         let host_composition = HostComposition::builder()
             .capability(capability)
-            .capability(everruns_builtins::CompactionCapability)
+            .capability(everruns_core::builtins::CompactionCapability)
             .driver_registry(drivers)
             .build();
         let max_iterations = self.max_iterations;
@@ -1753,9 +1754,8 @@ impl EventReader for ProcessEventLog {
     }
 }
 
-#[async_trait]
-impl EventLog for ProcessEventLog {
-    async fn append(&self, request: EventRequest) -> Result<Event, EventLogError> {
+impl ProcessEventLog {
+    fn admit(&self, request: &EventRequest) -> Result<(), EventLogError> {
         if request.is_ephemeral() {
             return Err(EventLogError::InvalidAppend {
                 detail: "ephemeral events are sink-only".into(),
@@ -1779,8 +1779,27 @@ impl EventLog for ProcessEventLog {
         // THREAT[TM-DOS-003]: Model and tool payloads enter the durable event
         // stream only through bounded Svit value validation, exactly as they
         // did when the same messages were committed inside process memory.
-        validate_event_payload(&request.data, &limits)?;
+        validate_event_payload(&request.data, &limits)
+    }
+}
+
+#[async_trait]
+impl EventLog for ProcessEventLog {
+    async fn append(&self, request: EventRequest) -> Result<Event, EventLogError> {
+        self.admit(&request)?;
         self.process.event_log.append(request).await
+    }
+
+    async fn append_conditional(
+        &self,
+        request: EventRequest,
+        expected_last_sequence: Option<i32>,
+    ) -> Result<Event, EventLogError> {
+        self.admit(&request)?;
+        self.process
+            .event_log
+            .append_conditional(request, expected_last_sequence)
+            .await
     }
 
     fn durability(&self) -> EventDurability {
@@ -2145,8 +2164,8 @@ fn event_log_corruption(error: impl fmt::Display) -> EventLogError {
 
 #[cfg(test)]
 mod tests {
+    use everruns_contracts::reasoning::{ReasoningContentPart, ReasoningText};
     use everruns_core::events::{EventContext, InputMessageData, OutputMessageCompletedData};
-    use everruns_provider::reasoning::{ReasoningContentPart, ReasoningText};
 
     use super::*;
 
@@ -2180,7 +2199,7 @@ mod tests {
         let page = event_log
             .read_page(EventReadRequest::new(
                 session_id,
-                everruns_host::EventReadLimit::default(),
+                everruns_core::host::EventReadLimit::default(),
             ))
             .await
             .unwrap();
@@ -2236,7 +2255,7 @@ mod tests {
         let page = event_log
             .read_page(EventReadRequest::new(
                 session_id,
-                everruns_host::EventReadLimit::default(),
+                everruns_core::host::EventReadLimit::default(),
             ))
             .await
             .unwrap();
@@ -2320,7 +2339,7 @@ mod tests {
         let page = event_log
             .read_page(EventReadRequest::new(
                 session_id,
-                everruns_host::EventReadLimit::default(),
+                everruns_core::host::EventReadLimit::default(),
             ))
             .await
             .unwrap();
@@ -2376,7 +2395,8 @@ mod tests {
             load_thread_state(&process).unwrap().unwrap()
         };
         let event_log = ProcessEventLog::seeded(process, Some(&state)).unwrap();
-        let request = EventReadRequest::new(session_id, everruns_host::EventReadLimit::default());
+        let request =
+            EventReadRequest::new(session_id, everruns_core::host::EventReadLimit::default());
         assert_eq!(
             event_log
                 .read_page(request.clone())

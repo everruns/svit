@@ -39,6 +39,18 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Advance the Everruns `main` lock from `74841cbb` to `08820131` (0.47.0).
+  Everruns folded `everruns-host` and `everruns-builtins` into `everruns-core`
+  features and replaced `everruns-provider` with `everruns-contracts`; Svit now
+  depends on `everruns-core` (`host`, `builtins`) and `everruns-contracts`.
+  `svit::Message` re-exports Everruns' `RuntimeMessage`.
+- Implement the conditional event append Everruns now requires of every event
+  log. Volatile and Turso thread logs commit only when the session's log still
+  ends at the caller's expected sequence, checked atomically with sequence
+  assignment; a reclaimed prefix still counts toward that sequence.
+- Update Turso from 0.8.0-pre.3 to the 0.8.1 release, Lampa to Tuika 0.12.0
+  and `tuika-codeformatters` 0.6.0 (Lampa no longer depends on ratatui),
+  `svit-macros` to syn 3, and the pinned Rust toolchain to 1.99.0.
 - Advance the Everruns `main` lock from `18296be8` to `66c20400`, including
   `everruns` 0.18.2, `everruns-host` 0.20.1, and test support 0.18.2.
 - Update Lampa to Tuika 0.11.0 and `tuika-codeformatters` 0.5.0.
