@@ -9,7 +9,9 @@ ignoredBuiltDependencies: # pnpm 10
   - esbuild
   - sharp
   - workerd
-# astro-icon 1.1.5 still requests v4, whose extract-zip has no patched release.
-# Drop this override once upstream declares @iconify/tools v5 compatibility.
+# wrangler's miniflare still requests sharp 0.35.4, inside GHSA-wq5f-xc86-pv6w
+# (librsvg); 0.35.5 is the patched release. Drop once miniflare requires it.
 overrides:
-  "@iconify/tools@^4.0.5": 5.0.12
+  sharp: 0.35.5
+# Only resolve releases at least seven days old.
+minimumReleaseAge: 10080
