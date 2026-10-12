@@ -887,6 +887,17 @@ async fn thread_event_ref(
         .transpose()
 }
 
+/// Reads one canonical event by exact sequence.
+///
+/// Turso plans a bare `sequence = ?` lookup through the `(address, event_id)`
+/// unique index and scans every event of the address, so each read costs
+/// O(history) and paging a session costs O(history²). Ordering by sequence
+/// steers the planner to the `(address, session_id, sequence)` key.
+const THREAD_EVENT_AT: &str = "SELECT b.hash, b.bytes, e.sequence, e.event_id FROM thread_events e \
+     JOIN blobs b ON b.hash = e.event_blob_hash \
+     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence = ?3 \
+     ORDER BY e.sequence LIMIT 1";
+
 async fn thread_event_at(
     connection: &Connection,
     address: &ProcessId,
@@ -898,9 +909,7 @@ async fn thread_event_at(
     for _ in 0..MAX_FORK_DEPTH {
         let mut rows = connection
             .query(
-                "SELECT b.hash, b.bytes, e.sequence, e.event_id FROM thread_events e \
-                 JOIN blobs b ON b.hash = e.event_blob_hash \
-                 WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence = ?3",
+                THREAD_EVENT_AT,
                 params![
                     current.as_str(),
                     session_id.to_string(),
@@ -1352,7 +1361,8 @@ impl TursoProcessStore {
                 .query(
                     "SELECT e.event_id, b.hash, b.bytes FROM thread_events e \
                      JOIN blobs b ON b.hash = e.event_blob_hash \
-                     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence = ?3",
+                     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence = ?3 \
+                     ORDER BY e.sequence LIMIT 1",
                     params![
                         address.as_str(),
                         session_id.to_string(),
@@ -3141,6 +3151,31 @@ mod tests {
         assert_eq!(
             legacy.restore_process().unwrap().root_hash(),
             process.root_hash()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_thread_event_lookup_seeks_by_sequence() {
+        let store = TursoProcessStore::memory().await.unwrap();
+        let connection = store.database.connect().unwrap();
+        let mut rows = connection
+            .query(
+                &format!("EXPLAIN QUERY PLAN {THREAD_EVENT_AT}"),
+                params!["svit://local/plan", "session", 1],
+            )
+            .await
+            .unwrap();
+        let mut plan = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            plan.push(text(&row, 3).unwrap());
+        }
+        let events = plan
+            .iter()
+            .find(|step| step.contains(" e "))
+            .expect("plan reads thread_events");
+        assert!(
+            events.contains("sequence=?"),
+            "thread event lookup scans the address: {plan:?}"
         );
     }
 

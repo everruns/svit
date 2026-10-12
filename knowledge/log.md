@@ -1,5 +1,16 @@
 # Svit Knowledge Update Log
 
+## 2026-10-12
+
+* **Thread event lookup by sequence**: Turso planned the exact-sequence
+  thread event read through the `(address, event_id)` unique index, so each
+  read scanned every event of the address and Everruns' per-turn history load
+  cost O(history²). On 70,000 events the full paged read took 868 seconds and
+  a 200-event recent window 5.2 seconds. The lookup now orders by sequence,
+  which selects the `(address, session_id, sequence)` key: 4.4 seconds and
+  11 milliseconds. A query-plan unit test guards the index choice. Paging still
+  issues one query per event; a range read remains under implementation.
+
 ## 2026-10-11
 
 * **Everruns refresh**: Updated the pinned Everruns workspace from `74841cbb`
