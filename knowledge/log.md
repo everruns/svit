@@ -2,6 +2,11 @@
 
 ## 2026-10-12
 
+* **Shared event log evaluation**: Added the `event_log` benchmark and
+  recorded its results in `research/shared-event-log.md`. One typed,
+  kind-indexed physical log matches the split layout on resume and reads;
+  embedding events in the process root grows turn cost linearly; one commit
+  per turn is 4.6 times faster than one per record.
 * **Thread event lookup by sequence**: Turso planned the exact-sequence
   thread event read through the `(address, event_id)` unique index, so each
   read scanned every event of the address and Everruns' per-turn history load

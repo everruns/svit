@@ -49,3 +49,8 @@ required-features = ["persistence-turso"]
 [[example]]
 name = "mounted_resources"
 required-features = ["turso-mount"]
+
+[[bench]]
+name = "event_log"
+harness = false
+required-features = ["persistence-turso"]
