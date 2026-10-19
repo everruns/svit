@@ -2,6 +2,15 @@
 
 ## 2026-10-19
 
+* **Shared journal**: Canonical Everruns events and process transactions now
+  share one address-local journal in the Turso adapter: one position, one
+  hash chain, and one CAS head that both writers advance under a shared lock.
+  Resume validates event entries in the chain and reduces only transactions,
+  so process snapshots still exclude conversation history. Recovery
+  checkpoints trigger by distance because events leave gaps between
+  transaction positions. Schema 4 migrates earlier stores by copying their
+  transaction chain into the journal; their events stay pre-journal history.
+  A reasoning step and its process change are not yet one database commit.
 * **Range thread history reads**: Paged, recent-event, and recent-message
   reads now issue one sequence-range query per stored fork segment instead of
   one lookup per event. Contiguity is still checked, so a missing row inside

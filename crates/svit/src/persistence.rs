@@ -87,7 +87,10 @@ pub(crate) fn validate_change_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Content-addressed head of one process transaction stream.
+/// Content-addressed head of one process journal.
+///
+/// The last entry may be a process transaction or a canonical reasoning event;
+/// both kinds share one position sequence and hash chain.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransactionHead {
@@ -107,21 +110,23 @@ impl TransactionHead {
         Ok(Self { position, hash })
     }
 
-    /// Returns the last transaction position, or `None` at the base boundary.
+    /// Returns the last journal position, or `None` at the base boundary.
     pub fn position(&self) -> Option<u64> {
         self.position
     }
 
-    /// Returns the base or last-transaction integrity hash.
+    /// Returns the base or last-entry integrity hash.
     pub fn hash(&self) -> &str {
         &self.hash
     }
 }
 
-/// One canonical transition in the sole durable stream for a process.
+/// One canonical process transition in the durable journal of a process.
 ///
 /// Process-state changes occur inside this envelope as typed memory-tree
-/// mutations. Canonical reasoning events use the separate paged `EventLog`.
+/// mutations. Canonical reasoning events are journal entries of their own, so
+/// a transaction's `position` and `previous_hash` follow whichever entry came
+/// before it.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProcessTransaction {

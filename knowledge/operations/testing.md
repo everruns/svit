@@ -132,8 +132,14 @@ The following scenarios execute with assertions and deterministic output under
   exact-head acknowledgement through one Turso owner; reopening by address
   reconstructs the same memory and conversation without rerunning the model or
   appending a transaction when the host grants and prompt are unchanged.
-- Turso publishes a recovery checkpoint atomically every 32 transactions,
-  retains only the newest checkpoint per process, resumes through it plus the
+- Turso orders canonical events and process transactions in one journal:
+  interleaved appends of both kinds resume to the same root, a stale owner
+  cannot append either kind, a removed or altered event entry fails resume,
+  a fork taken at an event head restores, and a schema 3 store migrates its
+  transaction chain into the journal.
+- Turso publishes a recovery checkpoint atomically at least every 32 journal
+  positions, also between sparse transactions, retains only the newest
+  checkpoint per process, resumes through it plus the
   newer tail, and fails closed when either an uncovered event or the checkpoint
   bytes are corrupted. Its blob is a direct process snapshot rather than a
   nested public snapshot envelope.

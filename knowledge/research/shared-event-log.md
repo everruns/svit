@@ -98,7 +98,10 @@ With default limits the embedded layout fails at about 30 turns, when
 
 ## Recommendation
 
-Open. Unify ordering at the storage layer, not in the process root:
+Adopted 2026-10-19: range reads and the shared journal are implemented in the
+Turso adapter (see [persistence](../foundations/persistence.md)); atomic step
+commits remain under implementation. Unify ordering at the storage layer, not
+in the process root:
 
 1. Replace per-event thread lookups with one range query per page that
    tolerates sequence gaps.

@@ -3,6 +3,8 @@ use std::path::Path;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use tokio::sync::Mutex as AsyncMutex;
+
 use async_trait::async_trait;
 use everruns_contracts::AgentLoopError;
 use everruns_contracts::typed_id::{EventId, SessionId};
@@ -28,7 +30,10 @@ use crate::persistence::{
 use crate::thread_history::check_last_sequence;
 use crate::{Activation, Error, Mount, Ports, Process, ProcessId, Result, Value};
 
-const SCHEMA_VERSION: &str = "3";
+const SCHEMA_VERSION: &str = "4";
+const JOURNAL_EVENT_FORMAT: &str = "svit-journal-event@1";
+const JOURNAL_TRANSACTION: &str = "transaction";
+const JOURNAL_EVENT: &str = "event";
 const BASE_FORMAT: &str = "svit-base@1";
 const SNAPSHOT_FORMAT: &str = "svit-store-snapshot@2";
 const LEGACY_SNAPSHOT_FORMAT: &str = "svit-store-snapshot@1";
@@ -38,6 +43,8 @@ const MAX_TRANSACTION_BYTES: usize = 16 * 1024 * 1024;
 const MAX_QUERY_TRANSACTIONS: u32 = 4096;
 const MAX_QUERY_TEXT_BYTES: usize = 4096;
 const MAX_REPLAY_TRANSACTIONS: usize = 100_000;
+/// Bounds journal records, including canonical events, examined by one resume.
+const MAX_REPLAY_RECORDS: usize = 1_000_000;
 const MAX_FORK_DEPTH: usize = 64;
 const MAX_COMPACTION_CHECKPOINT_BYTES: usize = 32 * 1024 * 1024;
 /// Bounds ordinary resume work without discarding the retained event history.
@@ -95,6 +102,21 @@ CREATE INDEX IF NOT EXISTS events_by_version
     ON events(address, process_version_after, position);
 CREATE INDEX IF NOT EXISTS events_by_source
     ON events(address, source, position);
+
+CREATE TABLE IF NOT EXISTS journal (
+    address TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    previous_hash TEXT NOT NULL,
+    entry_hash TEXT NOT NULL,
+    payload_hash TEXT NOT NULL,
+    session_id TEXT,
+    sequence INTEGER,
+    process_version INTEGER NOT NULL,
+    root_hash TEXT NOT NULL,
+    PRIMARY KEY(address, position),
+    FOREIGN KEY(address) REFERENCES svits(address)
+);
 
 CREATE TABLE IF NOT EXISTS thread_events (
     address TEXT NOT NULL,
@@ -504,10 +526,18 @@ pub struct TursoProcessStore {
     proactive_attempts: Arc<ProactiveCompactionAttemptTracker>,
 }
 
+/// The journal head one durable owner and its canonical event log advance.
+///
+/// Process transactions and canonical events share one address-local
+/// position, hash chain, and head CAS, so both writers serialize on this lock
+/// before they open the database transaction that moves the head.
+type SharedHead = Arc<AsyncMutex<TransactionHead>>;
+
 #[derive(Clone)]
 struct TursoThreadEventLog {
     store: TursoProcessStore,
     address: ProcessId,
+    head: SharedHead,
 }
 
 #[derive(Clone)]
@@ -660,6 +690,7 @@ impl TursoThreadEventLog {
             });
         }
         let session_id = request.session_id;
+        let mut head = self.head.lock().await;
         let mut connection = self
             .store
             .write_connection()
@@ -669,6 +700,9 @@ impl TursoThreadEventLog {
             .transaction()
             .await
             .map_err(|_| thread_event_backend())?;
+        let (process_version, root_hash) = journal_head_state(&transaction, &self.address, &head)
+            .await
+            .map_err(journal_head_error)?;
         let previous =
             thread_history_high_in_transaction(&transaction, &self.address, session_id).await?;
         if let Some(expected) = expected {
@@ -703,7 +737,7 @@ impl TursoThreadEventLog {
                     i64::from(sequence),
                     event.id.to_string(),
                     event.event_type.as_str(),
-                    hash,
+                    hash.as_str(),
                 ],
             )
             .await
@@ -713,10 +747,32 @@ impl TursoThreadEventLog {
                 },
                 _ => thread_event_backend(),
             })?;
+        // THREAT[TM-PERS-002]: The event row, its journal entry, and the head
+        // CAS commit together, so an event is ordered against every process
+        // transaction of this address or not written at all.
+        let entry = JournalEvent::next(&self.address, &head, session_id, sequence, &hash)
+            .map_err(thread_event_corruption)?;
+        insert_journal_entry(
+            &transaction,
+            &self.address,
+            &entry.head,
+            JOURNAL_EVENT,
+            &head.hash,
+            &hash,
+            Some((session_id, sequence)),
+            process_version,
+            &root_hash,
+        )
+        .await
+        .map_err(thread_event_corruption)?;
+        move_head(&transaction, &self.address, &head, &entry.head)
+            .await
+            .map_err(journal_head_error)?;
         transaction
             .commit()
             .await
             .map_err(|_| thread_event_backend())?;
+        *head = entry.head;
         Ok(event)
     }
 }
@@ -1292,7 +1348,7 @@ impl TursoProcessStore {
         Ok(DurableProcess {
             store: self.clone(),
             process,
-            head,
+            head: Arc::new(AsyncMutex::new(head)),
         })
     }
 
@@ -1612,7 +1668,7 @@ impl TursoProcessStore {
         Ok(DurableProcess {
             store: self.clone(),
             process,
-            head: row.head,
+            head: Arc::new(AsyncMutex::new(row.head)),
         })
     }
 
@@ -1645,14 +1701,33 @@ impl TursoProcessStore {
             SCHEMA_VERSION => {}
             // Every release adds tables with `CREATE TABLE IF NOT EXISTS`, so
             // an older database is upgraded by the schema batch above.
-            "1" | "2" => {
-                connection
+            "1" | "2" | "3" => {
+                // Schema 4 orders canonical events and process transactions in
+                // one journal. Earlier stores hold only a transaction chain, so
+                // their transactions become the journal prefix and their
+                // canonical events stay readable as pre-journal history.
+                let mut connection = self.write_connection().await?;
+                let transaction = connection.transaction().await.map_err(store_error)?;
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO journal \
+                           (address, position, kind, previous_hash, entry_hash, payload_hash, \
+                            session_id, sequence, process_version, root_hash) \
+                         SELECT address, position, ?1, previous_hash, event_hash, \
+                                event_blob_hash, NULL, NULL, process_version_after, resulting_root_hash \
+                         FROM events",
+                        [JOURNAL_TRANSACTION],
+                    )
+                    .await
+                    .map_err(store_error)?;
+                transaction
                     .execute(
                         "UPDATE svit_meta SET value = ?1 WHERE key = 'schema_version'",
                         [SCHEMA_VERSION],
                     )
                     .await
                     .map_err(store_error)?;
+                transaction.commit().await.map_err(store_error)?;
             }
             _ => return invalid("unsupported persistence schema version"),
         }
@@ -1685,18 +1760,35 @@ impl TursoProcessStore {
             position: Some(event.position),
             hash: event.transaction_hash.clone(),
         };
-        let checkpoint = (event.position + 1)
-            .is_multiple_of(RECOVERY_CHECKPOINT_INTERVAL)
-            .then(|| RecoveryCheckpoint::new(candidate, &next_head))
-            .transpose()?;
-        if checkpoint
-            .as_ref()
-            .is_some_and(|checkpoint| checkpoint.root_hash != event.resulting_root_hash)
-        {
+        if candidate.root_hash() != event.resulting_root_hash {
             return invalid("checkpoint root does not match transaction result");
         }
         let mut connection = self.write_connection().await?;
         let transaction = connection.transaction().await.map_err(store_error)?;
+        // Canonical events share the journal, so transaction positions have
+        // gaps. Checkpoint by distance from the last recovery boundary rather
+        // than by position modulus, which a gapped stream could skip forever.
+        let mut checkpoint_rows = transaction
+            .query(
+                "SELECT covered_position FROM recovery_checkpoints WHERE address = ?1",
+                [event.address.as_str()],
+            )
+            .await
+            .map_err(store_error)?;
+        let covered = checkpoint_rows
+            .next()
+            .await
+            .map_err(store_error)?
+            .map(|row| u64_column(&row, 0))
+            .transpose()?;
+        drop(checkpoint_rows);
+        let due = match covered {
+            Some(covered) => event.position.saturating_sub(covered) >= RECOVERY_CHECKPOINT_INTERVAL,
+            None => event.position + 1 >= RECOVERY_CHECKPOINT_INTERVAL,
+        };
+        let checkpoint = due
+            .then(|| RecoveryCheckpoint::new(candidate, &next_head))
+            .transpose()?;
 
         // THREAT[TM-PERS-002]: The event, path projection, and head CAS share
         // one database transaction, so failure cannot publish a partial commit.
@@ -1721,6 +1813,18 @@ impl TursoProcessStore {
             )
             .await
             .map_err(conflict_or_store)?;
+        insert_journal_entry(
+            &transaction,
+            &event.address,
+            &next_head,
+            JOURNAL_TRANSACTION,
+            &event.previous_hash,
+            &event_blob_hash,
+            None,
+            event.process_version_after,
+            &event.resulting_root_hash,
+        )
+        .await?;
         for path in &event.touched_paths {
             transaction
                 .execute(
@@ -2018,6 +2122,16 @@ impl TursoProcessStore {
             )
             .await
             .map_err(store_error)?;
+        // The snapshot base anchors the chain at the cut head, so covered
+        // journal entries of both kinds go with it. Canonical event rows stay
+        // under their own compaction-gated retention.
+        transaction
+            .execute(
+                "DELETE FROM journal WHERE address = ?1",
+                [process.id().as_str()],
+            )
+            .await
+            .map_err(store_error)?;
         transaction
             .execute(
                 "DELETE FROM fork_refs WHERE child_address = ?1",
@@ -2146,7 +2260,7 @@ impl TursoProcessStore {
         Ok(DurableProcess {
             store: self.clone(),
             process: child,
-            head: child_head,
+            head: Arc::new(AsyncMutex::new(child_head)),
         })
     }
 
@@ -2239,6 +2353,7 @@ impl TursoProcessStore {
                 };
             }
             let connection = self.database.connect().map_err(store_error)?;
+            let entries = load_journal(&connection, &address, start, end).await?;
             let mut rows = connection
                 .query(
                     "SELECT b.hash, b.bytes FROM events e JOIN blobs b ON b.hash = e.event_blob_hash \
@@ -2249,37 +2364,78 @@ impl TursoProcessStore {
                 .await
                 .map_err(store_error)?;
             let mut count = 0usize;
-            while let Some(row) = rows.next().await.map_err(store_error)? {
-                count += 1;
-                if count > MAX_REPLAY_TRANSACTIONS {
-                    return Err(Error::ResourceLimitExceeded(
-                        "persistence replay transactions",
-                    ));
-                }
-                let event: ProcessTransaction = decode_content_addressed(&row, 0, 1, "event")?;
-                // THREAT[TM-PERS-001]: Treat every stored event as untrusted;
-                // verify its content hash, hash chain, and typed reducer. This
-                // reconstruction is unpublished, so it mutates in place and
-                // verifies the complete root at bounded batch boundaries and
-                // the requested head instead of cloning and hashing the whole
-                // growing process for every record.
-                event.validate_successor(&expected_head)?;
-                if event.address != address || event.process_version_before != process.version() {
-                    return invalid("transaction address or process version is invalid");
-                }
-                event.replay_unpublished(&mut process)?;
-                if count.is_multiple_of(RECOVERY_CHECKPOINT_INTERVAL as usize)
-                    || event.position == end
+            for entry in entries {
+                // THREAT[TM-PERS-001]: Every journal entry, event or
+                // transaction, must extend the exact observed chain, so a
+                // deleted, reordered, or spliced record of either kind fails
+                // resume rather than silently shifting the process view.
+                if Some(entry.position) != next_position(&expected_head).ok()
+                    || entry.previous_hash != expected_head.hash
                 {
-                    process.validate_recovery_boundary()?;
-                    if process.root_hash() != event.resulting_root_hash {
-                        return invalid("transaction reducer root hash mismatch");
+                    return invalid("journal entry does not extend the observed chain");
+                }
+                match entry.kind.as_str() {
+                    JOURNAL_EVENT => {
+                        let (Some(session_id), Some(sequence)) = (entry.session_id, entry.sequence)
+                        else {
+                            return invalid("journal event entry is incomplete");
+                        };
+                        let hash = journal_event_hash(
+                            &address,
+                            entry.position,
+                            &entry.previous_hash,
+                            session_id,
+                            sequence,
+                            &entry.payload_hash,
+                        )?;
+                        if hash != entry.entry_hash || entry.process_version != process.version() {
+                            return invalid("journal event entry hash is invalid");
+                        }
                     }
+                    JOURNAL_TRANSACTION => {
+                        count += 1;
+                        if count > MAX_REPLAY_TRANSACTIONS {
+                            return Err(Error::ResourceLimitExceeded(
+                                "persistence replay transactions",
+                            ));
+                        }
+                        let row = rows.next().await.map_err(store_error)?.ok_or_else(|| {
+                            Error::InvalidPersistence("journal transaction is missing".into())
+                        })?;
+                        let event: ProcessTransaction =
+                            decode_content_addressed(&row, 0, 1, "event")?;
+                        // This reconstruction is unpublished, so it mutates in
+                        // place and verifies the complete root at bounded
+                        // batch boundaries and the requested head instead of
+                        // cloning and hashing the growing process per record.
+                        event.validate_successor(&expected_head)?;
+                        if event.address != address
+                            || event.process_version_before != process.version()
+                            || event.transaction_hash != entry.entry_hash
+                            || entry.process_version != event.process_version_after
+                            || entry.root_hash != event.resulting_root_hash
+                        {
+                            return invalid("transaction does not match its journal entry");
+                        }
+                        event.replay_unpublished(&mut process)?;
+                        if count.is_multiple_of(RECOVERY_CHECKPOINT_INTERVAL as usize)
+                            || event.position == end
+                        {
+                            process.validate_recovery_boundary()?;
+                            if process.root_hash() != event.resulting_root_hash {
+                                return invalid("transaction reducer root hash mismatch");
+                            }
+                        }
+                    }
+                    _ => return invalid("journal entry kind is unknown"),
                 }
                 expected_head = TransactionHead {
-                    position: Some(event.position),
-                    hash: event.transaction_hash,
+                    position: Some(entry.position),
+                    hash: entry.entry_hash,
                 };
+            }
+            if rows.next().await.map_err(store_error)?.is_some() {
+                return invalid("transaction has no journal entry");
             }
             if expected_head.position != Some(end) || expected_head.hash != target.hash {
                 return invalid("event tail is incomplete or has the wrong head");
@@ -2435,7 +2591,7 @@ impl TursoProcessStore {
 
         let mut events = connection
             .query(
-                "SELECT event_hash, process_version_after, resulting_root_hash FROM events \
+                "SELECT entry_hash, process_version, root_hash FROM journal \
                  WHERE address = ?1 AND position = ?2",
                 params![address.as_str(), to_i64(covered_position)?],
             )
@@ -2463,7 +2619,7 @@ impl TursoProcessStore {
 pub struct DurableProcess {
     store: TursoProcessStore,
     process: Process,
-    head: TransactionHead,
+    head: SharedHead,
 }
 
 impl DurableProcess {
@@ -2580,8 +2736,9 @@ impl DurableProcess {
         let change = self
             .commit_change(candidate, change, "reasoning.migrate")
             .await?;
+        let head = self.head.lock().await;
         self.store
-            .persist_recovery_checkpoint(&self.process, &self.head)
+            .persist_recovery_checkpoint(&self.process, &head)
             .await?;
         Ok(change)
     }
@@ -2618,22 +2775,25 @@ impl DurableProcess {
         &mut self,
         prepared: crate::process::PreparedActivation,
     ) -> Result<Activation> {
-        let event = ProcessTransaction::new(
+        let mut head = self.head.lock().await;
+        let event = match ProcessTransaction::new(
             self.process.id().clone(),
-            &self.head,
+            &head,
             self.process.version(),
             prepared.candidate().version(),
             prepared.mutations().to_vec(),
             "activation",
             prepared.candidate().root_hash(),
-        )?;
-        match self
-            .store
-            .append(&self.head, &event, prepared.candidate())
-            .await
-        {
-            Ok(head) => {
-                self.head = head;
+        ) {
+            Ok(event) => event,
+            Err(error) => {
+                self.process.fail_prepared(&prepared, &error);
+                return Err(error);
+            }
+        };
+        match self.store.append(&head, &event, prepared.candidate()).await {
+            Ok(next) => {
+                *head = next;
                 Ok(self.process.commit_prepared(prepared))
             }
             Err(error) => {
@@ -2652,21 +2812,22 @@ impl DurableProcess {
 
     /// Persists an on-demand replay or migration snapshot without cutting history.
     pub async fn snapshot(&self) -> Result<PersistenceSnapshot> {
-        self.store.persist_snapshot(&self.process, &self.head).await
+        let head = self.head.lock().await;
+        self.store.persist_snapshot(&self.process, &head).await
     }
 
     /// Replaces retained event history with one exact snapshot base.
     pub async fn cut(&mut self) -> Result<()> {
-        self.head = self.store.cut(&self.process, &self.head).await?;
+        let mut head = self.head.lock().await;
+        *head = self.store.cut(&self.process, &head).await?;
         Ok(())
     }
 
     /// Creates a child whose immutable base references this exact persisted head.
     pub async fn fork(&self, child: impl Into<String>) -> Result<DurableProcess> {
         let child = self.process.fork(child)?;
-        self.store
-            .create_fork(&self.process, &self.head, child)
-            .await
+        let head = self.head.lock().await;
+        self.store.create_fork(&self.process, &head, child).await
     }
 
     async fn commit_candidate(
@@ -2675,18 +2836,18 @@ impl DurableProcess {
         mutations: Vec<Mutation>,
         source: &str,
     ) -> Result<()> {
+        let mut head = self.head.lock().await;
         let event = ProcessTransaction::new(
             self.process.id().clone(),
-            &self.head,
+            &head,
             self.process.version(),
             candidate.version(),
             mutations,
             source,
             candidate.root_hash(),
         )?;
-        let head = self.store.append(&self.head, &event, &candidate).await?;
+        *head = self.store.append(&head, &event, &candidate).await?;
         self.process = candidate;
-        self.head = head;
         Ok(())
     }
 }
@@ -2736,6 +2897,7 @@ impl DurableProcessHandle for DurableProcess {
         Arc::new(TursoThreadEventLog {
             store: self.store.clone(),
             address: self.process.id().clone(),
+            head: self.head.clone(),
         })
     }
 
@@ -2750,6 +2912,7 @@ impl DurableProcessHandle for DurableProcess {
         Arc::new(TursoThreadEventLog {
             store: self.store.clone(),
             address: self.process.id().clone(),
+            head: self.head.clone(),
         })
     }
 
@@ -3040,6 +3203,246 @@ async fn insert_base(transaction: &Transaction<'_>, base: &StoredBase) -> Result
         .await
         .map_err(store_error)?;
     Ok(())
+}
+
+struct JournalRow {
+    position: u64,
+    kind: String,
+    previous_hash: String,
+    entry_hash: String,
+    payload_hash: String,
+    session_id: Option<SessionId>,
+    sequence: Option<i32>,
+    process_version: u64,
+    root_hash: String,
+}
+
+/// Loads journal metadata in `[start, end]`. Rows are small fixed records;
+/// transaction payloads are streamed separately in the same position order.
+async fn load_journal(
+    connection: &Connection,
+    address: &ProcessId,
+    start: u64,
+    end: u64,
+) -> Result<Vec<JournalRow>> {
+    let mut rows = connection
+        .query(
+            "SELECT position, kind, previous_hash, entry_hash, payload_hash, session_id, sequence, \
+                    process_version, root_hash \
+             FROM journal WHERE address = ?1 AND position >= ?2 AND position <= ?3 \
+             ORDER BY position",
+            params![address.as_str(), to_i64(start)?, to_i64(end)?],
+        )
+        .await
+        .map_err(store_error)?;
+    let mut entries = Vec::new();
+    while let Some(row) = rows.next().await.map_err(store_error)? {
+        if entries.len() >= MAX_REPLAY_RECORDS {
+            return Err(Error::ResourceLimitExceeded("persistence replay records"));
+        }
+        let session_id =
+            match row.get_value(5).map_err(store_error)? {
+                SqlValue::Null => None,
+                SqlValue::Text(value) => Some(value.parse().map_err(|_| {
+                    Error::InvalidPersistence("journal session ID is invalid".into())
+                })?),
+                _ => return invalid("journal session ID is invalid"),
+            };
+        let sequence = optional_u64(&row, 6)?
+            .map(|sequence| {
+                i32::try_from(sequence)
+                    .map_err(|_| Error::InvalidPersistence("journal sequence is invalid".into()))
+            })
+            .transpose()?;
+        entries.push(JournalRow {
+            position: u64_column(&row, 0)?,
+            kind: text(&row, 1)?,
+            previous_hash: text(&row, 2)?,
+            entry_hash: text(&row, 3)?,
+            payload_hash: text(&row, 4)?,
+            session_id,
+            sequence,
+            process_version: u64_column(&row, 7)?,
+            root_hash: text(&row, 8)?,
+        });
+    }
+    Ok(entries)
+}
+
+/// Hash-chained journal entry for one canonical event.
+struct JournalEvent {
+    head: TransactionHead,
+}
+
+#[derive(Serialize)]
+struct JournalEventHashMaterial<'a> {
+    entry_format: &'a str,
+    address: &'a ProcessId,
+    position: u64,
+    previous_hash: &'a str,
+    session_id: String,
+    sequence: i32,
+    payload_hash: &'a str,
+}
+
+impl JournalEvent {
+    fn next(
+        address: &ProcessId,
+        previous: &TransactionHead,
+        session_id: SessionId,
+        sequence: i32,
+        payload_hash: &str,
+    ) -> Result<Self> {
+        let position = next_position(previous)?;
+        let hash = journal_event_hash(
+            address,
+            position,
+            &previous.hash,
+            session_id,
+            sequence,
+            payload_hash,
+        )?;
+        Ok(Self {
+            head: TransactionHead {
+                position: Some(position),
+                hash,
+            },
+        })
+    }
+}
+
+fn journal_event_hash(
+    address: &ProcessId,
+    position: u64,
+    previous_hash: &str,
+    session_id: SessionId,
+    sequence: i32,
+    payload_hash: &str,
+) -> Result<String> {
+    canonical_hash(&JournalEventHashMaterial {
+        entry_format: JOURNAL_EVENT_FORMAT,
+        address,
+        position,
+        previous_hash,
+        session_id: session_id.to_string(),
+        sequence,
+        payload_hash,
+    })
+}
+
+fn next_position(head: &TransactionHead) -> Result<u64> {
+    match head.position {
+        Some(position) => position
+            .checked_add(1)
+            .ok_or(Error::ResourceLimitExceeded("persistence journal position")),
+        None => Ok(0),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn insert_journal_entry(
+    transaction: &Transaction<'_>,
+    address: &ProcessId,
+    entry: &TransactionHead,
+    kind: &str,
+    previous_hash: &str,
+    payload_hash: &str,
+    event: Option<(SessionId, i32)>,
+    process_version: u64,
+    root_hash: &str,
+) -> Result<()> {
+    let position = entry
+        .position
+        .ok_or_else(|| Error::InvalidPersistence("journal entry has no position".into()))?;
+    transaction
+        .execute(
+            "INSERT INTO journal \
+             (address, position, kind, previous_hash, entry_hash, payload_hash, session_id, \
+              sequence, process_version, root_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                address.as_str(),
+                to_i64(position)?,
+                kind,
+                previous_hash,
+                entry.hash.as_str(),
+                payload_hash,
+                event.map_or(SqlValue::Null, |(session_id, _)| SqlValue::Text(
+                    session_id.to_string()
+                )),
+                event.map_or(SqlValue::Null, |(_, sequence)| SqlValue::Integer(
+                    i64::from(sequence)
+                )),
+                to_i64(process_version)?,
+                root_hash,
+            ],
+        )
+        .await
+        .map_err(conflict_or_store)?;
+    Ok(())
+}
+
+/// Verifies the observed journal head and returns the process state it holds.
+async fn journal_head_state(
+    transaction: &Transaction<'_>,
+    address: &ProcessId,
+    expected: &TransactionHead,
+) -> Result<(u64, String)> {
+    let mut rows = transaction
+        .query(
+            "SELECT head_position, head_hash, process_version, root_hash FROM svits WHERE address = ?1",
+            [address.as_str()],
+        )
+        .await
+        .map_err(store_error)?;
+    let row = rows
+        .next()
+        .await
+        .map_err(store_error)?
+        .ok_or_else(|| Error::PersistenceNotFound(address.to_string()))?;
+    if optional_u64(&row, 0)? != expected.position || text(&row, 1)? != expected.hash {
+        return Err(Error::PersistenceConflict);
+    }
+    Ok((u64_column(&row, 2)?, text(&row, 3)?))
+}
+
+/// Moves only the head of an address whose head is still `expected`.
+async fn move_head(
+    transaction: &Transaction<'_>,
+    address: &ProcessId,
+    expected: &TransactionHead,
+    next: &TransactionHead,
+) -> Result<()> {
+    let expected_position = sql_position(expected.position)?;
+    let changed = transaction
+        .execute(
+            "UPDATE svits SET head_position = ?1, head_hash = ?2 \
+             WHERE address = ?3 AND head_hash = ?4 \
+               AND ((head_position IS NULL AND ?5 IS NULL) OR head_position = ?6)",
+            params![
+                sql_position(next.position)?,
+                next.hash.as_str(),
+                address.as_str(),
+                expected.hash.as_str(),
+                expected_position.clone(),
+                expected_position,
+            ],
+        )
+        .await
+        .map_err(store_error)?;
+    if changed != 1 {
+        return Err(Error::PersistenceConflict);
+    }
+    Ok(())
+}
+
+fn journal_head_error(error: Error) -> EventLogError {
+    match error {
+        Error::PersistenceConflict => EventLogError::InvalidAppend {
+            detail: "the process journal head moved".into(),
+        },
+        _ => thread_event_backend(),
+    }
 }
 
 async fn require_head(
@@ -3543,6 +3946,269 @@ mod tests {
         let bytes = blob(&row, 2).unwrap();
         assert!(bytes.starts_with(br#"{"format":"#));
         assert!(!bytes.starts_with(br#"{"snapshot_format":"#));
+    }
+
+    fn user_event(session_id: SessionId, text: &str) -> EventRequest {
+        EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            InputMessageData::new(Message::user(text)),
+        )
+    }
+
+    async fn journal_kinds(store: &TursoProcessStore, address: &str) -> Vec<(u64, String)> {
+        let connection = store.database.connect().unwrap();
+        let mut rows = connection
+            .query(
+                "SELECT position, kind FROM journal WHERE address = ?1 ORDER BY position",
+                [address],
+            )
+            .await
+            .unwrap();
+        let mut kinds = Vec::new();
+        while let Some(row) = rows.next().await.unwrap() {
+            kinds.push((u64_column(&row, 0).unwrap(), text(&row, 1).unwrap()));
+        }
+        kinds
+    }
+
+    #[tokio::test]
+    // THREAT[TM-PERS-002]
+    async fn events_and_transactions_share_one_journal_order() {
+        let address = "svit://local/journal/order";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut durable = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        let log = durable.event_log();
+        log.append(user_event(session_id, "first")).await.unwrap();
+        durable.write("/memory/value", value!(1)).await.unwrap();
+        log.append(user_event(session_id, "second")).await.unwrap();
+        log.append(user_event(session_id, "third")).await.unwrap();
+        durable.write("/memory/value", value!(2)).await.unwrap();
+
+        assert_eq!(
+            journal_kinds(&store, address).await,
+            vec![
+                (0, JOURNAL_EVENT.to_string()),
+                (1, JOURNAL_TRANSACTION.to_string()),
+                (2, JOURNAL_EVENT.to_string()),
+                (3, JOURNAL_EVENT.to_string()),
+                (4, JOURNAL_TRANSACTION.to_string()),
+            ]
+        );
+        let positions = durable
+            .transactions(TransactionQuery::new())
+            .await
+            .unwrap()
+            .iter()
+            .map(ProcessTransaction::position)
+            .collect::<Vec<_>>();
+        assert_eq!(positions, vec![1, 4]);
+
+        let root_hash = durable.root_hash();
+        drop(log);
+        drop(durable);
+        let mut resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.root_hash(), root_hash);
+        // The resumed owner continues the same chain with either kind.
+        resumed
+            .event_log()
+            .append(user_event(session_id, "fourth"))
+            .await
+            .unwrap();
+        resumed.write("/memory/value", value!(3)).await.unwrap();
+        let resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.read("/memory/value").unwrap(), Some(value!(3)));
+        assert_eq!(journal_kinds(&store, address).await.len(), 7);
+    }
+
+    #[tokio::test]
+    // THREAT[TM-PERS-002]
+    async fn a_stale_owner_cannot_append_either_kind_after_another_moves_the_head() {
+        let address = "svit://local/journal/stale";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut stale = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        let current = store.resume(address).await.unwrap();
+        current
+            .event_log()
+            .append(user_event(session_id, "current"))
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            stale.write("/memory/value", value!(1)).await,
+            Err(Error::PersistenceConflict)
+        ));
+        assert!(matches!(
+            stale
+                .event_log()
+                .append(user_event(session_id, "stale"))
+                .await,
+            Err(EventLogError::InvalidAppend { .. })
+        ));
+        assert_eq!(journal_kinds(&store, address).await.len(), 1);
+    }
+
+    #[tokio::test]
+    // THREAT[TM-PERS-001]
+    async fn a_removed_or_altered_journal_event_fails_closed_on_resume() {
+        for tamper in [
+            "DELETE FROM journal WHERE address = ?1 AND position = 1",
+            "UPDATE journal SET sequence = 9 WHERE address = ?1 AND position = 1",
+            "UPDATE journal SET previous_hash = 'x' WHERE address = ?1 AND position = 2",
+        ] {
+            let address = "svit://local/journal/tamper";
+            let store = TursoProcessStore::memory().await.unwrap();
+            let session_id = SessionId::new();
+            let mut durable = store
+                .create(Process::builder(address).unwrap().build().unwrap())
+                .await
+                .unwrap();
+            durable.write("/memory/value", value!(1)).await.unwrap();
+            durable
+                .event_log()
+                .append(user_event(session_id, "between"))
+                .await
+                .unwrap();
+            durable.write("/memory/value", value!(2)).await.unwrap();
+            drop(durable);
+
+            let connection = store.database.connect().unwrap();
+            connection.execute(tamper, [address]).await.unwrap();
+            assert!(
+                matches!(
+                    store.resume(address).await,
+                    Err(Error::InvalidPersistence(_))
+                ),
+                "{tamper}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_checkpoints_still_bound_replay_between_sparse_transactions() {
+        let address = "svit://local/journal/sparse-checkpoint";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut durable = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        let log = durable.event_log();
+        for round in 0..4 {
+            for index in 0..20 {
+                log.append(user_event(session_id, &format!("{round}:{index}")))
+                    .await
+                    .unwrap();
+            }
+            durable.write("/memory/value", value!(round)).await.unwrap();
+        }
+        let connection = store.database.connect().unwrap();
+        let mut rows = connection
+            .query(
+                "SELECT covered_position FROM recovery_checkpoints WHERE address = ?1",
+                [address],
+            )
+            .await
+            .unwrap();
+        let covered = u64_column(&rows.next().await.unwrap().unwrap(), 0).unwrap();
+        // Transactions sit at positions 20, 41, 62, and 83. The 32-record
+        // distance is reached at 41 and next at 83, although no transaction
+        // position is a multiple of the interval.
+        assert_eq!(covered, 83);
+        drop(rows);
+        drop(log);
+        let root_hash = durable.root_hash();
+        drop(durable);
+        assert_eq!(store.resume(address).await.unwrap().root_hash(), root_hash);
+    }
+
+    #[tokio::test]
+    async fn a_fork_at_an_event_head_restores_the_parent_boundary() {
+        let parent_address = "svit://local/journal/fork-parent";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut parent = store
+            .create(Process::builder(parent_address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        parent.write("/memory/value", value!(1)).await.unwrap();
+        parent
+            .event_log()
+            .append(user_event(session_id, "last record is an event"))
+            .await
+            .unwrap();
+        let mut child = parent
+            .fork("svit://local/journal/fork-child")
+            .await
+            .unwrap();
+        child.write("/memory/value", value!(2)).await.unwrap();
+        drop(child);
+
+        let child = store
+            .resume("svit://local/journal/fork-child")
+            .await
+            .unwrap();
+        assert_eq!(child.read("/memory/value").unwrap(), Some(value!(2)));
+        assert_eq!(parent.read("/memory/value").unwrap(), Some(value!(1)));
+    }
+
+    #[tokio::test]
+    async fn a_schema_three_store_gains_its_transaction_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("legacy.db");
+        let address = "svit://local/journal/legacy";
+        let root_hash = {
+            let store = TursoProcessStore::open(&path).await.unwrap();
+            let mut durable = store
+                .create(Process::builder(address).unwrap().build().unwrap())
+                .await
+                .unwrap();
+            for value in 0..3 {
+                durable.write("/memory/value", value!(value)).await.unwrap();
+            }
+            let connection = store.database.connect().unwrap();
+            connection
+                .execute_batch(
+                    "DELETE FROM journal; \
+                     UPDATE svit_meta SET value = '3' WHERE key = 'schema_version';",
+                )
+                .await
+                .unwrap();
+            durable.root_hash()
+        };
+
+        let store = TursoProcessStore::open(&path).await.unwrap();
+        assert_eq!(
+            journal_kinds(&store, address).await,
+            (0..3)
+                .map(|position| (position, JOURNAL_TRANSACTION.to_string()))
+                .collect::<Vec<_>>()
+        );
+        let mut resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.root_hash(), root_hash);
+        resumed
+            .event_log()
+            .append(user_event(SessionId::new(), "after migration"))
+            .await
+            .unwrap();
+        resumed.write("/memory/value", value!(9)).await.unwrap();
+        assert_eq!(
+            store
+                .resume(address)
+                .await
+                .unwrap()
+                .read("/memory/value")
+                .unwrap(),
+            Some(value!(9))
+        );
     }
 
     async fn blob_count(store: &TursoProcessStore) -> u64 {

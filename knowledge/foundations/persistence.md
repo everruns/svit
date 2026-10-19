@@ -18,7 +18,8 @@ Design adopted. The local Turso `DurableProcess` slice is implemented for
 create, host write/remove, activation, inbox enqueue/acknowledgement, resume,
 fork, query, on-demand snapshot, and cut. Runnable `Svit` instances can now own
 that handle: process tools, inbox handling, and port catalog refresh commit
-through it. Canonical reasoning events use the paired paged `EventLog`.
+through it. Canonical reasoning events and process transactions share one
+address-local journal: one position, one hash chain, one head.
 Persisting control-protocol
 receipts remains under implementation, so full control-plane completeness is
 not yet claimed.
@@ -68,14 +69,23 @@ same reachable state before the model covers complete control-plane retries.
 
 ## Decision
 
-Persist one process as an immutable base plus an append-only tail of uniform
-process transactions. Runnable Svit keeps its canonical reasoning history in a
-separate process-partitioned EventLog:
+Persist one process as an immutable base plus an append-only journal. Each
+journal entry is either a uniform process transaction or a canonical Everruns
+event; both kinds take the next address-local position and chain to the
+previous entry's hash:
 
 ```text
-ProcessState(address) = Base(address, covered_through) + Transactions(covered_through + 1 ... head)
-Svit(address) = ProcessState(address) + EventLog(address) + CompactionCheckpoints(address)
+Journal(address)      = Base(address, covered_through) + Entries(covered_through + 1 ... head)
+ProcessState(address) = Base + the transaction entries of Journal, in order
+Svit(address)         = Journal(address) + CompactionCheckpoints(address)
 ```
+
+One journal gives the Svit one total order, one CAS head, and one fork
+boundary. Event payloads are not process-root mutations: the reducer skips
+event entries after checking their chain link, so the process snapshot does
+not grow with the conversation. See [the shared event log
+evaluation](../research/shared-event-log.md) for the measurements behind this
+choice.
 
 The first durable adapter uses one local Turso database, partitioned by Svit
 address. It stores indexed transaction envelopes, immutable bases, snapshots,
@@ -105,7 +115,7 @@ compare-and-swap operations for one address.
 
 A head is `(position: Option<u64>, hash)`. With an empty tail its position is
 null and its hash is the active immutable base hash. Otherwise it names the
-last transaction position and hash. This makes an initial Svit and a newly
+last journal entry, transaction or event, and its hash. This makes an initial Svit and a newly
 forked Svit valid CAS sources before either has emitted a transaction.
 
 The expanded requirements make a transactional database the better local
@@ -261,16 +271,28 @@ Executable equivalence tests must prove for every mutator that reducing its
 emitted event produces the exact candidate root. This is the completeness
 criterion: a state change that cannot produce such an event cannot commit.
 
-## Reasoning history is paged host infrastructure
+## Reasoning history shares the journal
 
 Status: **Implemented for persisted Svit instances.** `Svit::persisted` wraps
 an adapter-owned `DurableProcessHandle`. Its private serialized owner commits
 before refreshing Svit's cloned read projection, so tools and presentation
 hosts cannot observe a candidate that the store rejected.
 
-Svit owns a process-partitioned durable `EventLog`; process transactions and
-reasoning history have distinct integrity boundaries. `/thread` stores only
-session metadata. A successful append writes one immutable canonical event,
+The handle's `EventLog` appends into the same journal as its process
+transactions. Both writers lock one shared in-memory head, then verify and
+advance the address head inside the database transaction that writes their
+entry, so an event is ordered against every transaction or not written. A
+`svit-journal-event@1` entry hashes the address, position, previous entry hash,
+session, Everruns sequence, and content hash of the event blob; the blob
+carries the event itself. A transaction entry's hash is its
+`svit-transaction@1` hash, whose `position` and `previous_hash` are journal
+values, so transaction positions have gaps where events sit.
+
+Everruns sequences stay per session and contiguous. The journal position is a
+separate total order; Everruns explicitly permits a log whose physical order
+interleaves records its reader filters out. Thread-history retention remains
+its own compaction-gated cut over event rows; a process cut removes covered
+journal entries of both kinds. `/thread` stores only session metadata. A successful append writes one immutable canonical event,
 then observers derive any message presentation from it. Event history and its
 presentation never become mutations of the process root. Initialization sets
 the metadata once. Reattaching unchanged host grants is a no-op rather than a
@@ -281,9 +303,15 @@ table is indexed by process, session, and sequence. Everruns compaction
 checkpoints are stored separately with a monotonic source-sequence install;
 they bound model context without deleting canonical events.
 
-Reasoning-event commits and Lisp activations remain separate process transactions
-around external model and port calls. Uniform persistence does not make a
-whole model turn or an external effect transactional.
+Reasoning-event commits and Lisp activations remain separate journal entries
+around external model and port calls. The shared journal orders them but does
+not yet commit a reasoning step and the process change it causes in one
+database transaction (**Under implementation**), and it never makes an
+external effect transactional.
+
+Stores created before schema 4 have only a transaction chain. Migration copies
+their transactions into the journal at their existing positions; their
+canonical events stay readable as pre-journal history outside the chain.
 
 ## Control receipts
 
@@ -336,11 +364,14 @@ Resume is deterministic and streaming:
    before the requested head, validate its content hash, metadata, complete
    process snapshot, root hash, and matching canonical event boundary, then use
    it as the unpublished reconstruction.
-4. Stream only retained events after that recovery boundary in position order
-   without loading the log into memory. Every envelope validates its address,
-   position, content hash, hash chain, bounds, version transition, touched paths,
-   and typed mutations. Complete root invariants and the claimed resulting root
-   are checked every 32 records and at the requested head.
+4. Read the journal entries after that recovery boundary in position order and
+   stream transaction envelopes alongside them. Every entry must sit at the next
+   position and name the previous entry's hash. An event entry recomputes its
+   journal hash and leaves the process unchanged. A transaction validates its
+   address, content hash, journal identity, hash chain, bounds, version
+   transition, touched paths, and typed mutations. Complete root invariants and
+   the claimed resulting root are checked every 32 transactions and at the
+   requested head.
 5. Attach current reasoning and port authority only after recovery; rebuilding
    a persisted Svit durably refreshes descriptive `/ports` state from those
    current grants before Everruns can run a turn.
@@ -408,8 +439,10 @@ not on every commit. The current snapshot contains one complete validated
 under implementation.
 
 The Turso adapter's internal recovery checkpoint is separate from this public
-snapshot lifecycle. The event append at each 32-record boundary atomically
-replaces one checkpoint row together with the new canonical event and head.
+snapshot lifecycle. A transaction append at least 32 journal positions past
+the current checkpoint atomically replaces that checkpoint row together with
+the transaction and head. Distance, not position modulus, decides it, because
+events leave gaps between transaction positions.
 The first successful resume of an older uncheckpointed tail also writes its
 validated target as the current checkpoint. Replacement removes the prior
 checkpoint blob when no base, event, or public snapshot references it. These
@@ -539,7 +572,8 @@ The initial normalized schema is:
 | --- | --- | --- |
 | `svits` | Head projection guarded by CAS | Active base, covered/head positions and hashes, process version, root hash, lifecycle status |
 | `bases` | Authoritative | Immutable created, fork, or snapshot base envelope keyed by base hash |
-| `events` | Authoritative | One canonical `svit-transaction@1` row per `(address, position)` |
+| `journal` | Authoritative order | One entry per `(address, position)`: kind, previous and entry hash, payload hash, event session and sequence, resulting process version and root |
+| `events` | Authoritative | One canonical `svit-transaction@1` row per transaction journal position |
 | `blobs` | Authoritative payload storage | Content-addressed canonical bytes keyed by SHA-256 |
 | `snapshots` | Authoritative when selected as a base | On-demand process images at exact event boundaries |
 | `recovery_checkpoints` | Replaceable recovery projection | One validated process image used to bound ordinary resume work without deleting events |
@@ -569,11 +603,13 @@ run before a later store transaction could become durable.
 For one process transaction, the owner first builds and validates the candidate
 through the common reducer. It then begins a database transaction, verifies the
 address row's expected head, inserts the content BLOB, inserts the canonical
-event and path rows, and updates the head with
-an address-and-old-head predicate. Only a successful database commit permits
+transaction, journal, and path rows, and updates the head with
+an address-and-old-head predicate. A canonical event append follows the same
+shape with its event row and journal entry. Only a successful database commit permits
 the owner to publish memory, run committed hooks, wake the inbox, or return
-success. Every 32nd event transaction also replaces the process's internal
-recovery checkpoint before the same commit publishes either record.
+success. A transaction 32 positions past the last checkpoint also replaces the
+process's internal recovery checkpoint before the same commit publishes either
+record.
 
 A transaction failure leaves all database tables unchanged. Ambiguous commit
 recovery and durable-owner poisoning remain under implementation. Turso's

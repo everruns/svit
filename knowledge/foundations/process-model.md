@@ -345,15 +345,16 @@ invariants, and reconstructs a committed process. Snapshot integrity is not
 authorization or authenticity.
 
 The adopted durable-storage design reconstructs this same committed state from
-an immutable base plus one address-keyed tail of uniform `ProcessTransaction`
-records. Transaction position is separate from process version because future
-receipt-only metadata need not change process state. Both are separate from the
-Everruns sequence stored in the paired paged `EventLog`: transaction position
-orders durable envelopes, process version orders committed roots, and Everruns
-sequence orders canonical reasoning events. On-demand
+an immutable base plus one address-keyed journal whose entries are uniform
+`ProcessTransaction` records and canonical Everruns events. Journal position
+is separate from process version because events and future receipt-only
+metadata do not change process state. Journal position totally orders every
+durable entry, process version orders committed roots, and the per-session
+Everruns sequence orders canonical reasoning events for the loop. On-demand
 snapshots support detached forks, migration, and safe history cuts; they are
 not written on every commit. The local Turso adapter separately atomically
-replaces one internal recovery checkpoint every 32 transactions and after the
+replaces one internal recovery checkpoint at least every 32 journal positions
+and after the
 first resume of an older tail. It validates that checkpoint and reduces only
 the newer tail during ordinary resume without deleting retained transactions.
 The local `DurableProcess` adapter implements the process and runnable

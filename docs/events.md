@@ -76,10 +76,11 @@ canonical event history. A process-only fork begins a fresh session. A durable
 store fork can share the exact immutable event prefix and then append an
 independent child history.
 
-Process transactions and canonical reasoning events also have different
-ordering domains: process version orders committed roots, transaction position
-orders durable process envelopes, and event sequence orders canonical
-reasoning records.
+Process transactions and canonical reasoning events share one durable journal
+per process: every committed entry of either kind takes the next journal
+position, so persisted history has one total order and one fork boundary.
+Process version still orders committed roots, and each session's event
+sequence still orders canonical reasoning records for the loop.
 
 ## Observer behavior
 
