@@ -1,5 +1,13 @@
 # Svit Knowledge Update Log
 
+## 2026-10-19
+
+* **Range thread history reads**: Paged, recent-event, and recent-message
+  reads now issue one sequence-range query per stored fork segment instead of
+  one lookup per event. Contiguity is still checked, so a missing row inside
+  the retained range remains corruption. On 70,000 events the full read fell
+  from 4.4 s to 1.6 s and the 200-event window from 11 ms to 3.8 ms.
+
 ## 2026-10-12
 
 * **Shared event log evaluation**: Added the `event_log` benchmark and

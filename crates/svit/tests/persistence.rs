@@ -562,3 +562,59 @@ async fn a_fork_pins_the_thread_history_prefix_it_inherits() {
         2
     );
 }
+
+#[tokio::test]
+// THREAT[TM-FORK-001]
+async fn thread_history_pages_across_every_inherited_fork_segment() {
+    let store = TursoProcessStore::memory().await.unwrap();
+    let session_id = SessionId::new();
+    let parent = thread_process(&store, "svit://local/segments/parent", session_id).await;
+    append_events(&parent, session_id, 3).await;
+    let child = parent.fork("svit://local/segments/child").await.unwrap();
+    append_events(&child, session_id, 2).await;
+    let grandchild = child
+        .fork("svit://local/segments/grandchild")
+        .await
+        .unwrap();
+    append_events(&grandchild, session_id, 2).await;
+    append_events(&parent, session_id, 1).await;
+
+    let reader = grandchild.event_log();
+    let mut request = EventReadRequest::new(session_id, EventReadLimit::new(2).unwrap());
+    let mut sequences = Vec::new();
+    loop {
+        let page = reader.read_page(request).await.unwrap();
+        sequences.extend(page.events.iter().filter_map(|event| event.sequence));
+        let Some(cursor) = page.next_cursor else {
+            break;
+        };
+        request = EventReadRequest::from_cursor(cursor, EventReadLimit::new(2).unwrap());
+    }
+    assert_eq!(sequences, (1..=7).collect::<Vec<_>>());
+
+    let recent = grandchild
+        .recent_thread_events(session_id, 4)
+        .await
+        .unwrap()
+        .iter()
+        .filter_map(|event| event.sequence)
+        .collect::<Vec<_>>();
+    assert_eq!(recent, vec![4, 5, 6, 7]);
+    // The parent's later append stays outside both descendants' views.
+    assert_eq!(
+        child
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        parent
+            .recent_thread_events(session_id, 10)
+            .await
+            .unwrap()
+            .len(),
+        4
+    );
+}

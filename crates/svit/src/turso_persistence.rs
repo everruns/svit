@@ -572,16 +572,16 @@ impl EventReader for TursoThreadEventLog {
                 .ok_or_else(|| EventLogError::InvalidRead {
                     detail: "event page limit overflowed".into(),
                 })?;
-        let mut events = Vec::with_capacity(fetch_limit);
-        for sequence in (after + 1)..=snapshot {
-            let event = thread_event_at(&connection, &self.address, session_id, sequence, 0)
-                .await?
-                .ok_or_else(|| thread_event_corruption("thread history has a sequence gap"))?;
-            events.push(event);
-            if events.len() == fetch_limit {
-                break;
-            }
-        }
+        let mut events = thread_event_range(
+            &connection,
+            &self.address,
+            session_id,
+            after,
+            snapshot,
+            fetch_limit,
+            RangeOrder::Ascending,
+        )
+        .await?;
         let has_more = events.len() == fetch_limit;
         if has_more {
             events.pop();
@@ -887,71 +887,171 @@ async fn thread_event_ref(
         .transpose()
 }
 
-/// Reads one canonical event by exact sequence.
-///
-/// Turso plans a bare `sequence = ?` lookup through the `(address, event_id)`
-/// unique index and scans every event of the address, so each read costs
-/// O(history) and paging a session costs O(history²). Ordering by sequence
-/// steers the planner to the `(address, session_id, sequence)` key.
-const THREAD_EVENT_AT: &str = "SELECT b.hash, b.bytes, e.sequence, e.event_id FROM thread_events e \
-     JOIN blobs b ON b.hash = e.event_blob_hash \
-     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence = ?3 \
-     ORDER BY e.sequence LIMIT 1";
+/// Events read per query while scanning backwards for messages.
+const MESSAGE_SCAN_PAGE: usize = 256;
 
-async fn thread_event_at(
+#[derive(Clone, Copy, PartialEq)]
+enum RangeOrder {
+    Ascending,
+    Descending,
+}
+
+/// Session events in `(after, through]` stored under one address.
+///
+/// A sequence range seeks the `(address, session_id, sequence)` key. Turso
+/// plans an exact `sequence = ?` lookup through the `(address, event_id)`
+/// unique index instead and scans every event of the address, which made the
+/// former per-event reads O(history) each.
+const THREAD_EVENT_RANGE_ASCENDING: &str = "SELECT b.hash, b.bytes, e.sequence, e.event_id \
+     FROM thread_events e JOIN blobs b ON b.hash = e.event_blob_hash \
+     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence > ?3 AND e.sequence <= ?4 \
+     ORDER BY e.sequence LIMIT ?5";
+const THREAD_EVENT_RANGE_DESCENDING: &str = "SELECT b.hash, b.bytes, e.sequence, e.event_id \
+     FROM thread_events e JOIN blobs b ON b.hash = e.event_blob_hash \
+     WHERE e.address = ?1 AND e.session_id = ?2 AND e.sequence > ?3 AND e.sequence <= ?4 \
+     ORDER BY e.sequence DESC LIMIT ?5";
+
+/// One stored slice of a session's history: events in `(after, through]`
+/// live under `address`. A fork child stores only what it appended after its
+/// inherited boundary and reads the rest from its ancestors.
+struct HistorySegment {
+    address: ProcessId,
+    after: i32,
+    through: i32,
+}
+
+/// Resolves the fork chain into stored segments, oldest first.
+async fn thread_history_segments(
     connection: &Connection,
     address: &ProcessId,
     session_id: SessionId,
-    sequence: i32,
-    _depth: usize,
-) -> std::result::Result<Option<Event>, EventLogError> {
+    through: i32,
+) -> std::result::Result<Vec<HistorySegment>, EventLogError> {
+    let mut segments = Vec::new();
     let mut current = address.clone();
+    let mut upper = through;
     for _ in 0..MAX_FORK_DEPTH {
-        let mut rows = connection
-            .query(
-                THREAD_EVENT_AT,
-                params![
-                    current.as_str(),
-                    session_id.to_string(),
-                    i64::from(sequence)
-                ],
-            )
-            .await
-            .map_err(|_| thread_event_backend())?;
-        if let Some(row) = rows.next().await.map_err(|_| thread_event_backend())? {
-            let event: Event =
-                decode_content_addressed(&row, 0, 1, "event").map_err(thread_event_corruption)?;
-            let stored_sequence = i32::try_from(
-                u64_column(&row, 2).map_err(thread_event_corruption)?,
-            )
-            .map_err(|_| thread_event_corruption("event sequence exceeds the supported range"))?;
-            let event_id: EventId = text(&row, 3)
-                .map_err(thread_event_corruption)?
-                .parse()
-                .map_err(thread_event_corruption)?;
-            if event.session_id != session_id
-                || event.sequence != Some(stored_sequence)
-                || event.id != event_id
-            {
-                return Err(thread_event_corruption(
-                    "event envelope does not match its storage projection",
-                ));
+        match thread_event_ref(connection, &current, session_id).await? {
+            Some((parent, inherited)) => {
+                segments.push(HistorySegment {
+                    address: current,
+                    after: inherited,
+                    through: upper,
+                });
+                upper = upper.min(inherited);
+                current = parent;
             }
-            return Ok(Some(event));
+            None => {
+                segments.push(HistorySegment {
+                    address: current,
+                    after: 0,
+                    through: upper,
+                });
+                segments.reverse();
+                return Ok(segments);
+            }
         }
-        drop(rows);
-        let Some((parent, through)) = thread_event_ref(connection, &current, session_id).await?
-        else {
-            return Ok(None);
-        };
-        if sequence > through {
-            return Ok(None);
-        }
-        current = parent;
     }
     Err(thread_event_corruption(
         "thread history fork depth exceeded",
     ))
+}
+
+/// Reads up to `limit` contiguous events in `(after, through]`, starting at
+/// the low end for ascending order and the high end for descending order.
+async fn thread_event_range(
+    connection: &Connection,
+    address: &ProcessId,
+    session_id: SessionId,
+    after: i32,
+    through: i32,
+    limit: usize,
+    order: RangeOrder,
+) -> std::result::Result<Vec<Event>, EventLogError> {
+    let mut events = Vec::with_capacity(limit.min(MESSAGE_SCAN_PAGE * 4));
+    if through <= after || limit == 0 {
+        return Ok(events);
+    }
+    let mut segments = thread_history_segments(connection, address, session_id, through).await?;
+    if order == RangeOrder::Descending {
+        segments.reverse();
+    }
+    let sql = match order {
+        RangeOrder::Ascending => THREAD_EVENT_RANGE_ASCENDING,
+        RangeOrder::Descending => THREAD_EVENT_RANGE_DESCENDING,
+    };
+    let mut expected = match order {
+        RangeOrder::Ascending => after + 1,
+        RangeOrder::Descending => through,
+    };
+    for segment in segments {
+        let low = segment.after.max(after);
+        let high = segment.through.min(through);
+        if high <= low {
+            continue;
+        }
+        let remaining = limit - events.len();
+        let mut rows = connection
+            .query(
+                sql,
+                params![
+                    segment.address.as_str(),
+                    session_id.to_string(),
+                    i64::from(low),
+                    i64::from(high),
+                    i64::try_from(remaining).unwrap_or(i64::MAX)
+                ],
+            )
+            .await
+            .map_err(|_| thread_event_backend())?;
+        while let Some(row) = rows.next().await.map_err(|_| thread_event_backend())? {
+            let event = decode_thread_event(&row, session_id)?;
+            // Sequences are assigned contiguously, so a missing row inside
+            // the retained range is corruption rather than a filtered gap.
+            if event.sequence != Some(expected) {
+                return Err(thread_event_corruption("thread history has a sequence gap"));
+            }
+            expected = match order {
+                RangeOrder::Ascending => expected + 1,
+                RangeOrder::Descending => expected - 1,
+            };
+            events.push(event);
+        }
+        if events.len() == limit {
+            return Ok(events);
+        }
+    }
+    let complete = match order {
+        RangeOrder::Ascending => expected > through,
+        RangeOrder::Descending => expected <= after,
+    };
+    if !complete {
+        return Err(thread_event_corruption("thread history has a sequence gap"));
+    }
+    Ok(events)
+}
+
+fn decode_thread_event(
+    row: &Row,
+    session_id: SessionId,
+) -> std::result::Result<Event, EventLogError> {
+    let event: Event =
+        decode_content_addressed(row, 0, 1, "event").map_err(thread_event_corruption)?;
+    let stored_sequence = i32::try_from(u64_column(row, 2).map_err(thread_event_corruption)?)
+        .map_err(|_| thread_event_corruption("event sequence exceeds the supported range"))?;
+    let event_id: EventId = text(row, 3)
+        .map_err(thread_event_corruption)?
+        .parse()
+        .map_err(thread_event_corruption)?;
+    if event.session_id != session_id
+        || event.sequence != Some(stored_sequence)
+        || event.id != event_id
+    {
+        return Err(thread_event_corruption(
+            "event envelope does not match its storage projection",
+        ));
+    }
+    Ok(event)
 }
 
 #[async_trait]
@@ -1418,19 +1518,17 @@ impl TursoProcessStore {
         let floor = thread_history_floor(&connection, address, session_id)
             .await
             .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
-        let mut events = Vec::with_capacity(limit);
-        for sequence in ((floor + 1)..=high).rev() {
-            let event = thread_event_at(&connection, address, session_id, sequence, 0)
-                .await
-                .map_err(|error| Error::InvalidPersistence(error.to_string()))?
-                .ok_or_else(|| {
-                    Error::InvalidPersistence("thread history has a sequence gap".into())
-                })?;
-            events.push(event);
-            if events.len() == limit {
-                break;
-            }
-        }
+        let mut events = thread_event_range(
+            &connection,
+            address,
+            session_id,
+            floor,
+            high,
+            limit,
+            RangeOrder::Descending,
+        )
+        .await
+        .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
         events.reverse();
         Ok(events)
     }
@@ -1452,22 +1550,35 @@ impl TursoProcessStore {
             .await
             .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
         let mut events = Vec::with_capacity(limit);
-        for sequence in ((floor + 1)..=high).rev() {
-            let event = thread_event_at(&connection, address, session_id, sequence, 0)
-                .await
-                .map_err(|error| Error::InvalidPersistence(error.to_string()))?
-                .ok_or_else(|| {
-                    Error::InvalidPersistence("thread history has a sequence gap".into())
-                })?;
-            if matches!(
-                event.event_type.as_str(),
-                INPUT_MESSAGE | OUTPUT_MESSAGE_COMPLETED | TOOL_COMPLETED
-            ) {
-                events.push(event);
-                if events.len() == limit {
-                    break;
-                }
-            }
+        let mut through = high;
+        // Scan backwards one bounded page at a time; lifecycle events between
+        // messages are read and discarded rather than fetched one by one.
+        while through > floor && events.len() < limit {
+            let page = thread_event_range(
+                &connection,
+                address,
+                session_id,
+                floor,
+                through,
+                MESSAGE_SCAN_PAGE,
+                RangeOrder::Descending,
+            )
+            .await
+            .map_err(|error| Error::InvalidPersistence(error.to_string()))?;
+            through = page
+                .last()
+                .and_then(|event| event.sequence)
+                .map_or(floor, |sequence| sequence - 1);
+            events.extend(
+                page.into_iter()
+                    .filter(|event| {
+                        matches!(
+                            event.event_type.as_str(),
+                            INPUT_MESSAGE | OUTPUT_MESSAGE_COMPLETED | TOOL_COMPLETED
+                        )
+                    })
+                    .take(limit - events.len()),
+            );
         }
         events.reverse();
         Ok(events)
@@ -3155,28 +3266,30 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_thread_event_lookup_seeks_by_sequence() {
+    async fn a_thread_event_range_seeks_by_sequence() {
         let store = TursoProcessStore::memory().await.unwrap();
         let connection = store.database.connect().unwrap();
-        let mut rows = connection
-            .query(
-                &format!("EXPLAIN QUERY PLAN {THREAD_EVENT_AT}"),
-                params!["svit://local/plan", "session", 1],
-            )
-            .await
-            .unwrap();
-        let mut plan = Vec::new();
-        while let Some(row) = rows.next().await.unwrap() {
-            plan.push(text(&row, 3).unwrap());
+        for sql in [THREAD_EVENT_RANGE_ASCENDING, THREAD_EVENT_RANGE_DESCENDING] {
+            let mut rows = connection
+                .query(
+                    &format!("EXPLAIN QUERY PLAN {sql}"),
+                    params!["svit://local/plan", "session", 0, 10, 5],
+                )
+                .await
+                .unwrap();
+            let mut plan = Vec::new();
+            while let Some(row) = rows.next().await.unwrap() {
+                plan.push(text(&row, 3).unwrap());
+            }
+            let events = plan
+                .iter()
+                .find(|step| step.contains(" e "))
+                .expect("plan reads thread_events");
+            assert!(
+                events.contains("sequence>?"),
+                "thread event range scans the address: {plan:?}"
+            );
         }
-        let events = plan
-            .iter()
-            .find(|step| step.contains(" e "))
-            .expect("plan reads thread_events");
-        assert!(
-            events.contains("sequence=?"),
-            "thread event lookup scans the address: {plan:?}"
-        );
     }
 
     #[tokio::test]
