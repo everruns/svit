@@ -3,14 +3,15 @@
 //! Compares three ways to order agent (Everruns) events and Svit process
 //! transactions:
 //!
-//! - `split`: the current design, a process transaction stream plus a separate
-//!   paged EventLog, each with its own sequence;
+//! - `split`: a process transaction stream plus a separate paged EventLog, each
+//!   with its own sequence, the design before the shared journal;
 //! - `unified`: one physical log with one global sequence, where each record is
 //!   either a process transaction or an agent event, plus a kind index;
 //! - `embedded`: agent events committed as process-root mutations, so one
 //!   process transaction stream carries everything.
 //!
-//! The split numbers come from the real Turso adapter. The unified and split
+//! The real-adapter numbers come from the Turso adapter, which now orders both
+//! kinds in one journal. The unified and split
 //! prototypes replay the exact bytes that run produced against a minimal raw
 //! Turso schema so the layouts are compared on identical records. The embedded
 //! numbers come from the real adapter with raised limits.
@@ -210,7 +211,7 @@ async fn real_split(dir: &Path, turns: usize) -> (Vec<Record>, Vec<(usize, Vec<u
     let wall = started.elapsed();
 
     let records_total = turns * 10;
-    println!("\n## split (real Turso adapter, current design)");
+    println!("\n## real Turso adapter (shared journal)");
     println!(
         "turns={turns} records={records_total} process_tx={} agent_events={}",
         process_ops.0.len(),
