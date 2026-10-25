@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 use everruns_contracts::typed_id::SessionId;
 use everruns_core::CompactionCheckpointStore;
-use everruns_core::events::Event;
-use everruns_core::host::EventLog;
+use everruns_core::events::{Event, EventRequest};
+use everruns_core::host::{EventLog, EventLogError};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -660,6 +660,14 @@ pub trait DurableProcessHandle: Sized + Send + Sync {
     async fn enqueue_inbox(&mut self, value: Value) -> Result<Change>;
     /// Durably removes the exact expected inbox head.
     async fn acknowledge_inbox(&mut self, expected: &Value) -> Result<Change>;
+    /// Durably appends one canonical event and removes the exact expected
+    /// inbox head in one commit, so a recorded turn outcome and its inbox
+    /// acknowledgement are never persisted apart.
+    async fn append_event_acknowledging_inbox(
+        &mut self,
+        request: EventRequest,
+        expected: &Value,
+    ) -> std::result::Result<(Event, Change), EventLogError>;
     /// Attaches one host-selected runtime mount and durably records its descriptor.
     async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<Change>;
     /// Durably initializes Svit-owned conversation and reasoning state.

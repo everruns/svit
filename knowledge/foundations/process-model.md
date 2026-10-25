@@ -386,7 +386,9 @@ The model can inspect manuals through ordinary `discover` and `read` operations.
 
 The host obtains an `Inbox`, starts the process loop, and sends messages to the
 durable `/inbox` queue. The loop processes committed messages in order and
-acknowledges the exact queue head only after a successful Everruns turn. A failed
+acknowledges the exact queue head only after a successful Everruns turn. A durable
+loop commits that acknowledgement together with the turn's `turn.completed`
+event, so a crash cannot re-run an answered turn. A failed
 turn leaves its input committed for recovery. Hosts may send while a turn is
 running; those messages remain ordered and begin subsequent turns. Both APIs
 use Everruns `Message` values with ordered `ContentPart` values, preserving text,

@@ -137,6 +137,10 @@ The following scenarios execute with assertions and deterministic output under
   cannot append either kind, a removed or altered event entry fails resume,
   a fork taken at an event head restores, and a schema 3 store migrates its
   transaction chain into the journal.
+- a durable turn's `turn.completed` event and its inbox acknowledgement land
+  as adjacent journal entries in one commit and resume with an empty inbox;
+  a mismatched input or stale head writes neither; an iteration-capped
+  completion keeps the input queued.
 - Turso publishes a recovery checkpoint atomically at least every 32 journal
   positions, also between sparse transactions, retains only the newest
   checkpoint per process, resumes through it plus the

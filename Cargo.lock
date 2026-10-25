@@ -913,7 +913,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -929,8 +929,8 @@ dependencies = [
 
 [[package]]
 name = "everruns"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -938,6 +938,7 @@ dependencies = [
  "everruns-core",
  "everruns-drivers",
  "everruns-llmsim",
+ "serde",
  "serde_json",
  "tokio",
  "tokio-util",
@@ -947,9 +948,10 @@ dependencies = [
 
 [[package]]
 name = "everruns-contracts"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
+ "aho-corasick",
  "anyhow",
  "async-trait",
  "base64 0.23.1",
@@ -988,8 +990,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-core"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1024,10 +1026,11 @@ dependencies = [
 
 [[package]]
 name = "everruns-drivers"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
  "async-trait",
+ "base64 0.23.1",
  "chrono",
  "everruns-contracts",
  "futures",
@@ -1038,12 +1041,13 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tracing",
+ "web-time",
 ]
 
 [[package]]
 name = "everruns-llmsim"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1057,8 +1061,8 @@ dependencies = [
 
 [[package]]
 name = "everruns-test-support"
-version = "0.47.0"
-source = "git+https://github.com/everruns/everruns?branch=main#08820131224f924784bbcc8eed3db9c747eaadcc"
+version = "0.48.0"
+source = "git+https://github.com/everruns/everruns?branch=main#92c954d0fd603aaeaab9d9401c25215b8d33ffde"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2380,7 +2384,7 @@ checksum = "2c624fa1b7aab6bd2aff6e9b18565cc0363b6d45cbcd7465c9ed5e3740ebf097"
 dependencies = [
  "bitflags 2.13.2",
  "libc",
- "nix",
+ "nix 0.26.4",
  "smallstr",
  "terminfo",
  "unicode-normalization",
@@ -2396,6 +2400,18 @@ checksum = "598beaf3cc6fdd9a5dfb1630c2800c7acd31df7aaf0f565796fba2b53ca1af1b"
 dependencies = [
  "bitflags 1.3.2",
  "cfg-if 1.0.5",
+ "libc",
+]
+
+[[package]]
+name = "nix"
+version = "0.31.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
+dependencies = [
+ "bitflags 2.13.2",
+ "cfg-if 1.0.5",
+ "cfg_aliases",
  "libc",
 ]
 
@@ -2879,7 +2895,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3295,7 +3311,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3352,7 +3368,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3889,10 +3905,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4653,7 +4669,7 @@ version = "2.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 dependencies = [
- "rand 0.10.3",
+ "rand 0.9.5",
 ]
 
 [[package]]
@@ -4664,9 +4680,9 @@ checksum = "6af6ae20167a9ece4bcb41af5b80f8a1f1df981f6391189ce00fd257af04126a"
 
 [[package]]
 name = "typed-path"
-version = "0.12.3"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
+checksum = "9ce898823d8cd0f028662d2f349694b1af0a5cc9be83f1d213a00d3147445e1e"
 
 [[package]]
 name = "typenum"
@@ -4993,7 +5009,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5292,15 +5308,18 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.6.0"
+version = "9.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+checksum = "2886b00003a72c4ccee3f42cfc34908d33b2508a74d827dc2a4244706475c704"
 dependencies = [
  "crc32fast",
  "flate2",
+ "getrandom 0.4.3",
  "indexmap",
  "memchr",
+ "nix 0.31.3",
  "typed-path",
+ "windows-sys 0.61.2",
  "zopfli",
 ]
 

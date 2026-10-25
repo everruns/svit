@@ -304,10 +304,24 @@ checkpoints are stored separately with a monotonic source-sequence install;
 they bound model context without deleting canonical events.
 
 Reasoning-event commits and Lisp activations remain separate journal entries
-around external model and port calls. The shared journal orders them but does
-not yet commit a reasoning step and the process change it causes in one
-database transaction (**Under implementation**), and it never makes an
-external effect transactional.
+around external model and port calls. The shared journal orders them, and it
+never makes an external effect transactional.
+
+One pair does commit together. A durable reasoning loop appends a turn's
+`turn.completed` event and the `inbox.acknowledge` transaction for that turn's
+input in one database transaction: the event entry, then the transaction entry,
+under one head CAS. A crash can therefore leave either both or neither, never an
+answered input that resume would run again. Only an answered outcome consumes
+the input: the event must name a final message and an Everruns
+`termination_reason` other than `MaxTurnRequests`. Any other completion, or a
+host whose events carry no termination reason, leaves the input for the loop's
+separate post-turn acknowledgement, which keeps the earlier crash window. A
+rejected pair (input no longer at the inbox head, stale head) writes neither.
+If a later step of the same turn fails (for example `session.idled`), the
+answer stays durable and acknowledged but is not sent to live outbox
+receivers; hosts recover it from the event log.
+Committing every reasoning step with the process change it causes remains
+**Under implementation**.
 
 Stores created before schema 4 have only a transaction chain. Migration copies
 their transactions into the journal at their existing positions; their

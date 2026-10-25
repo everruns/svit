@@ -1,5 +1,16 @@
 # Svit Knowledge Update Log
 
+## 2026-10-25
+
+* **Turn outcome and inbox acknowledgement commit together**: A durable
+  reasoning loop now writes `turn.completed` and the `inbox.acknowledge`
+  transaction for that turn's input in one Turso transaction, closing the
+  crash window in which an answered input stayed queued and ran again on
+  resume. The pair is taken only for an answered outcome, read from the
+  Everruns `termination_reason` that `turn.completed` carries since the
+  dependency moved to Everruns `92c954d0`; an iteration-capped turn keeps
+  its input. Other reasoning steps still commit separately.
+
 ## 2026-10-19
 
 * **Shared journal**: Canonical Everruns events and process transactions now

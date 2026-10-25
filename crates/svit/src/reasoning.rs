@@ -188,7 +188,19 @@ struct ProcessState {
     event_log: Arc<dyn EventLog>,
     compaction_checkpoints: Arc<dyn CompactionCheckpointStore>,
     thread_retention: Arc<dyn ThreadHistoryRetention>,
+    turn_input: Arc<Mutex<TurnInput>>,
     durable: bool,
+}
+
+/// The inbox head a running turn consumes. A durable process acknowledges it
+/// in the same commit as the turn's terminal event, so a crash between the
+/// two can no longer leave an answered input queued to run again.
+#[derive(Default)]
+enum TurnInput {
+    #[default]
+    Idle,
+    Pending(Value),
+    Acknowledged,
 }
 
 struct SvitEventSink {
@@ -223,6 +235,7 @@ impl ProcessState {
             thread_retention: event_log.clone(),
             event_log,
             compaction_checkpoints,
+            turn_input: Arc::default(),
             durable: false,
         }
     }
@@ -240,6 +253,7 @@ impl ProcessState {
             event_log,
             compaction_checkpoints,
             thread_retention,
+            turn_input: Arc::default(),
             durable: true,
         })
     }
@@ -295,6 +309,71 @@ impl ProcessState {
         self.refresh_view(owner.as_ref())?;
         publish_committed(&self.event_sender, &change);
         Ok(change)
+    }
+
+    /// Marks the inbox head the next turn consumes. Volatile processes have
+    /// no crash window and keep acknowledging after the turn returns.
+    fn begin_turn_input(&self, value: &Value) -> crate::Result<()> {
+        if self.durable {
+            *self
+                .turn_input
+                .lock()
+                .map_err(|_| crate::Error::ControlUnavailable)? = TurnInput::Pending(value.clone());
+        }
+        Ok(())
+    }
+
+    /// Clears the turn input and reports whether its acknowledgement already
+    /// committed with the turn's terminal event.
+    fn finish_turn_input(&self) -> crate::Result<bool> {
+        let input = std::mem::take(
+            &mut *self
+                .turn_input
+                .lock()
+                .map_err(|_| crate::Error::ControlUnavailable)?,
+        );
+        Ok(matches!(input, TurnInput::Acknowledged))
+    }
+
+    /// Returns the pending turn input when `request` records a turn that
+    /// reached its final answer, the only outcome that may consume the input.
+    fn acknowledged_by(&self, request: &EventRequest) -> Result<Option<Value>, EventLogError> {
+        let answered = matches!(
+            &request.data,
+            EventData::TurnCompleted(data)
+                if data.final_message_id.is_some()
+                    && data
+                        .termination_reason
+                        .is_some_and(|reason| reason != TurnStopReason::MaxTurnRequests)
+        );
+        if !answered {
+            return Ok(None);
+        }
+        let input = self.turn_input.lock().map_err(|_| EventLogError::Backend {
+            detail: "Svit turn input lock is unavailable".into(),
+        })?;
+        Ok(match &*input {
+            TurnInput::Pending(value) => Some(value.clone()),
+            TurnInput::Idle | TurnInput::Acknowledged => None,
+        })
+    }
+
+    async fn append_acknowledging_input(
+        &self,
+        request: EventRequest,
+        expected: Value,
+    ) -> Result<Event, EventLogError> {
+        let mut owner = self.owner.lock().await;
+        let (event, change) = owner
+            .append_event_acknowledging_inbox(request, &expected)
+            .await?;
+        *self.turn_input.lock().map_err(|_| EventLogError::Backend {
+            detail: "Svit turn input lock is unavailable".into(),
+        })? = TurnInput::Acknowledged;
+        self.refresh_view(owner.as_ref())
+            .map_err(event_log_corruption)?;
+        publish_committed(&self.event_sender, &change);
+        Ok(event)
     }
 
     async fn attach_mount(&self, name: String, mount: Mount) -> crate::Result<Change> {
@@ -476,6 +555,11 @@ trait ProcessOwner: Send + Sync {
     ) -> crate::Result<Activation>;
     async fn enqueue_inbox(&mut self, value: Value) -> crate::Result<Change>;
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change>;
+    async fn append_event_acknowledging_inbox(
+        &mut self,
+        request: EventRequest,
+        expected: &Value,
+    ) -> Result<(Event, Change), EventLogError>;
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change>;
     async fn initialize_thread_state(&mut self, value: Value) -> crate::Result<Change>;
     async fn replace_thread_state(&mut self, value: Value) -> crate::Result<Change>;
@@ -537,6 +621,16 @@ impl ProcessOwner for VolatileProcess {
 
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change> {
         self.process.acknowledge_inbox(expected)
+    }
+
+    async fn append_event_acknowledging_inbox(
+        &mut self,
+        _request: EventRequest,
+        _expected: &Value,
+    ) -> Result<(Event, Change), EventLogError> {
+        Err(EventLogError::InvalidAppend {
+            detail: "volatile processes acknowledge after the turn".into(),
+        })
     }
 
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change> {
@@ -619,6 +713,16 @@ where
 
     async fn acknowledge_inbox(&mut self, expected: &Value) -> crate::Result<Change> {
         self.handle.acknowledge_inbox(expected).await
+    }
+
+    async fn append_event_acknowledging_inbox(
+        &mut self,
+        request: EventRequest,
+        expected: &Value,
+    ) -> Result<(Event, Change), EventLogError> {
+        self.handle
+            .append_event_acknowledging_inbox(request, expected)
+            .await
     }
 
     async fn attach_mount(&mut self, name: String, mount: Mount) -> crate::Result<Change> {
@@ -1079,14 +1183,19 @@ async fn run_process_loop(
         if let Some(value) = next {
             let message: Message = serde_json::from_value(value.to_json())
                 .map_err(|error| SvitError::InvalidInbox(error.to_string()))?;
-            reasoning.run(message).await?;
+            reasoning.process().begin_turn_input(&value)?;
+            let outcome = reasoning.run(message).await;
+            let acknowledged = reasoning.process().finish_turn_input()?;
+            outcome?;
             let response = reasoning
                 .messages()
                 .last()
                 .filter(|message| message.role == MessageRole::Agent)
                 .cloned()
                 .ok_or(SvitError::MissingOutboxMessage)?;
-            reasoning.process().acknowledge_inbox(&value).await?;
+            if !acknowledged {
+                reasoning.process().acknowledge_inbox(&value).await?;
+            }
             let _ = outbox.send(response);
             continue;
         }
@@ -1787,6 +1896,12 @@ impl ProcessEventLog {
 impl EventLog for ProcessEventLog {
     async fn append(&self, request: EventRequest) -> Result<Event, EventLogError> {
         self.admit(&request)?;
+        if let Some(expected) = self.process.acknowledged_by(&request)? {
+            return self
+                .process
+                .append_acknowledging_input(request, expected)
+                .await;
+        }
         self.process.event_log.append(request).await
     }
 
@@ -2210,6 +2325,61 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(1), Some(2)]
         );
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "persistence-turso")]
+    // THREAT[TM-MSG-002] THREAT[TM-PERS-002]
+    async fn only_an_answered_durable_turn_consumes_its_input_with_the_terminal_event() {
+        let address = "svit://local/turn-input";
+        let store = crate::TursoProcessStore::memory().await.unwrap();
+        let durable = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        let session_id = SessionId::new();
+        let process = ProcessState::persisted(durable).unwrap();
+        initialize_thread_state(&process, session_id, None, "system")
+            .await
+            .unwrap();
+        let input = crate::value!({"text": "question"});
+        process.enqueue_inbox(input.clone()).await.unwrap();
+        let event_log = ProcessEventLog::new(process.clone());
+        let turn_completed = |reason| {
+            EventRequest::new(
+                session_id,
+                EventContext::empty(),
+                everruns_core::events::TurnCompletedData {
+                    termination_reason: Some(reason),
+                    final_message_id: Some(MessageId::new()),
+                    ..Default::default()
+                },
+            )
+        };
+        let queued =
+            |process: &ProcessState| process.view().lock().unwrap().read("/inbox").unwrap();
+
+        // An iteration-capped turn reports completion, but Svit treats it as
+        // a failure, so its input stays queued.
+        process.begin_turn_input(&input).unwrap();
+        event_log
+            .append(turn_completed(TurnStopReason::MaxTurnRequests))
+            .await
+            .unwrap();
+        assert!(!process.finish_turn_input().unwrap());
+        assert_eq!(queued(&process), Some(Value::Array(vec![input.clone()])));
+
+        process.begin_turn_input(&input).unwrap();
+        event_log
+            .append(turn_completed(TurnStopReason::EndTurn))
+            .await
+            .unwrap();
+        assert!(process.finish_turn_input().unwrap());
+        assert_eq!(queued(&process), Some(crate::value!([])));
+
+        drop((event_log, process));
+        let resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.read("/inbox").unwrap(), Some(crate::value!([])));
     }
 
     #[tokio::test]

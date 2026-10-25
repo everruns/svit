@@ -684,12 +684,6 @@ impl TursoThreadEventLog {
         request: EventRequest,
         expected: Option<Option<i32>>,
     ) -> std::result::Result<Event, EventLogError> {
-        if request.is_ephemeral() {
-            return Err(EventLogError::InvalidAppend {
-                detail: "ephemeral events are sink-only".into(),
-            });
-        }
-        let session_id = request.session_id;
         let mut head = self.head.lock().await;
         let mut connection = self
             .store
@@ -700,81 +694,101 @@ impl TursoThreadEventLog {
             .transaction()
             .await
             .map_err(|_| thread_event_backend())?;
-        let (process_version, root_hash) = journal_head_state(&transaction, &self.address, &head)
-            .await
-            .map_err(journal_head_error)?;
-        let previous =
-            thread_history_high_in_transaction(&transaction, &self.address, session_id).await?;
-        if let Some(expected) = expected {
-            check_last_sequence(session_id, previous, expected)?;
-        }
-        let sequence = previous
-            .checked_add(1)
-            .ok_or_else(|| EventLogError::InvalidAppend {
-                detail: "event sequence exhausted".into(),
-            })?;
-        let event = request.into_event(EventId::new(), sequence);
-        let bytes = serde_json::to_vec(&event).map_err(|_| EventLogError::InvalidAppend {
-            detail: "event encoding failed".into(),
-        })?;
-        if bytes.len() > MAX_TRANSACTION_BYTES {
-            return Err(EventLogError::InvalidAppend {
-                detail: "event byte limit exceeded".into(),
-            });
-        }
-        let hash = bytes_hash(&bytes);
-        insert_blob(&transaction, &hash, &bytes)
-            .await
-            .map_err(thread_event_corruption)?;
-        transaction
-            .execute(
-                "INSERT INTO thread_events \
-                 (address, session_id, sequence, event_id, event_type, event_hash, event_blob_hash) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
-                params![
-                    self.address.as_str(),
-                    session_id.to_string(),
-                    i64::from(sequence),
-                    event.id.to_string(),
-                    event.event_type.as_str(),
-                    hash.as_str(),
-                ],
-            )
-            .await
-            .map_err(|error| match error {
-                turso::Error::Constraint(_) => EventLogError::InvalidAppend {
-                    detail: "event identity or sequence conflicts with an existing event".into(),
-                },
-                _ => thread_event_backend(),
-            })?;
-        // THREAT[TM-PERS-002]: The event row, its journal entry, and the head
-        // CAS commit together, so an event is ordered against every process
-        // transaction of this address or not written at all.
-        let entry = JournalEvent::next(&self.address, &head, session_id, sequence, &hash)
-            .map_err(thread_event_corruption)?;
-        insert_journal_entry(
-            &transaction,
-            &self.address,
-            &entry.head,
-            JOURNAL_EVENT,
-            &head.hash,
-            &hash,
-            Some((session_id, sequence)),
-            process_version,
-            &root_hash,
-        )
-        .await
-        .map_err(thread_event_corruption)?;
-        move_head(&transaction, &self.address, &head, &entry.head)
-            .await
-            .map_err(journal_head_error)?;
+        let (event, next) =
+            append_event_in(&transaction, &self.address, &head, request, expected).await?;
         transaction
             .commit()
             .await
             .map_err(|_| thread_event_backend())?;
-        *head = entry.head;
+        *head = next;
         Ok(event)
     }
+}
+
+/// Writes one canonical event and its journal entry inside `transaction` and
+/// moves the head past it. The caller commits, so other journal entries may
+/// join the same atomic write.
+async fn append_event_in(
+    transaction: &Transaction<'_>,
+    address: &ProcessId,
+    head: &TransactionHead,
+    request: EventRequest,
+    expected: Option<Option<i32>>,
+) -> std::result::Result<(Event, TransactionHead), EventLogError> {
+    if request.is_ephemeral() {
+        return Err(EventLogError::InvalidAppend {
+            detail: "ephemeral events are sink-only".into(),
+        });
+    }
+    let session_id = request.session_id;
+    let (process_version, root_hash) = journal_head_state(transaction, address, head)
+        .await
+        .map_err(journal_head_error)?;
+    let previous = thread_history_high_in_transaction(transaction, address, session_id).await?;
+    if let Some(expected) = expected {
+        check_last_sequence(session_id, previous, expected)?;
+    }
+    let sequence = previous
+        .checked_add(1)
+        .ok_or_else(|| EventLogError::InvalidAppend {
+            detail: "event sequence exhausted".into(),
+        })?;
+    let event = request.into_event(EventId::new(), sequence);
+    let bytes = serde_json::to_vec(&event).map_err(|_| EventLogError::InvalidAppend {
+        detail: "event encoding failed".into(),
+    })?;
+    if bytes.len() > MAX_TRANSACTION_BYTES {
+        return Err(EventLogError::InvalidAppend {
+            detail: "event byte limit exceeded".into(),
+        });
+    }
+    let hash = bytes_hash(&bytes);
+    insert_blob(transaction, &hash, &bytes)
+        .await
+        .map_err(thread_event_corruption)?;
+    transaction
+        .execute(
+            "INSERT INTO thread_events \
+             (address, session_id, sequence, event_id, event_type, event_hash, event_blob_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+            params![
+                address.as_str(),
+                session_id.to_string(),
+                i64::from(sequence),
+                event.id.to_string(),
+                event.event_type.as_str(),
+                hash.as_str(),
+            ],
+        )
+        .await
+        .map_err(|error| match error {
+            turso::Error::Constraint(_) => EventLogError::InvalidAppend {
+                detail: "event identity or sequence conflicts with an existing event".into(),
+            },
+            _ => thread_event_backend(),
+        })?;
+    // THREAT[TM-PERS-002]: The event row, its journal entry, and the head
+    // CAS commit together, so an event is ordered against every process
+    // transaction of this address or not written at all.
+    let entry = JournalEvent::next(address, head, session_id, sequence, &hash)
+        .map_err(thread_event_corruption)?;
+    insert_journal_entry(
+        transaction,
+        address,
+        &entry.head,
+        JOURNAL_EVENT,
+        &head.hash,
+        &hash,
+        Some((session_id, sequence)),
+        process_version,
+        &root_hash,
+    )
+    .await
+    .map_err(thread_event_corruption)?;
+    move_head(transaction, address, head, &entry.head)
+        .await
+        .map_err(journal_head_error)?;
+    Ok((event, entry.head))
 }
 
 async fn thread_history_floor(
@@ -1750,122 +1764,9 @@ impl TursoProcessStore {
         event: &ProcessTransaction,
         candidate: &Process,
     ) -> Result<TransactionHead> {
-        event.validate_successor(expected)?;
-        if candidate.id() != &event.address || candidate.version() != event.process_version_after {
-            return invalid("checkpoint candidate does not match transaction result");
-        }
-        let event_bytes = event.to_bytes()?;
-        let event_blob_hash = bytes_hash(&event_bytes);
-        let next_head = TransactionHead {
-            position: Some(event.position),
-            hash: event.transaction_hash.clone(),
-        };
-        if candidate.root_hash() != event.resulting_root_hash {
-            return invalid("checkpoint root does not match transaction result");
-        }
         let mut connection = self.write_connection().await?;
         let transaction = connection.transaction().await.map_err(store_error)?;
-        // Canonical events share the journal, so transaction positions have
-        // gaps. Checkpoint by distance from the last recovery boundary rather
-        // than by position modulus, which a gapped stream could skip forever.
-        let mut checkpoint_rows = transaction
-            .query(
-                "SELECT covered_position FROM recovery_checkpoints WHERE address = ?1",
-                [event.address.as_str()],
-            )
-            .await
-            .map_err(store_error)?;
-        let covered = checkpoint_rows
-            .next()
-            .await
-            .map_err(store_error)?
-            .map(|row| u64_column(&row, 0))
-            .transpose()?;
-        drop(checkpoint_rows);
-        let due = match covered {
-            Some(covered) => event.position.saturating_sub(covered) >= RECOVERY_CHECKPOINT_INTERVAL,
-            None => event.position + 1 >= RECOVERY_CHECKPOINT_INTERVAL,
-        };
-        let checkpoint = due
-            .then(|| RecoveryCheckpoint::new(candidate, &next_head))
-            .transpose()?;
-
-        // THREAT[TM-PERS-002]: The event, path projection, and head CAS share
-        // one database transaction, so failure cannot publish a partial commit.
-        insert_blob(&transaction, &event_blob_hash, &event_bytes).await?;
-        transaction
-            .execute(
-                "INSERT INTO events \
-                 (address, position, previous_hash, process_version_before, process_version_after, \
-                  source, resulting_root_hash, event_hash, event_blob_hash) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    event.address.as_str(),
-                    to_i64(event.position)?,
-                    event.previous_hash.as_str(),
-                    to_i64(event.process_version_before)?,
-                    to_i64(event.process_version_after)?,
-                    event.source.as_str(),
-                    event.resulting_root_hash.as_str(),
-                    event.transaction_hash.as_str(),
-                    event_blob_hash.as_str(),
-                ],
-            )
-            .await
-            .map_err(conflict_or_store)?;
-        insert_journal_entry(
-            &transaction,
-            &event.address,
-            &next_head,
-            JOURNAL_TRANSACTION,
-            &event.previous_hash,
-            &event_blob_hash,
-            None,
-            event.process_version_after,
-            &event.resulting_root_hash,
-        )
-        .await?;
-        for path in &event.touched_paths {
-            transaction
-                .execute(
-                    "INSERT INTO event_paths (address, position, path) VALUES (?1, ?2, ?3)",
-                    params![
-                        event.address.as_str(),
-                        to_i64(event.position)?,
-                        path.as_str()
-                    ],
-                )
-                .await
-                .map_err(store_error)?;
-        }
-        let expected_position = sql_position(expected.position)?;
-        let changed = transaction
-            .execute(
-                "UPDATE svits SET head_position = ?1, head_hash = ?2, process_version = ?3, root_hash = ?4 \
-                 WHERE address = ?5 AND head_hash = ?6 \
-                   AND ((head_position IS NULL AND ?7 IS NULL) OR head_position = ?8)",
-                params![
-                    to_i64(event.position)?,
-                    event.transaction_hash.as_str(),
-                    to_i64(event.process_version_after)?,
-                    event.resulting_root_hash.as_str(),
-                    event.address.as_str(),
-                    expected.hash.as_str(),
-                    expected_position.clone(),
-                    expected_position,
-                ],
-            )
-            .await
-            .map_err(store_error)?;
-        if changed != 1 {
-            return Err(Error::PersistenceConflict);
-        }
-        if let Some(checkpoint) = &checkpoint {
-            // THREAT[TM-PERS-001]: The checkpoint and event head are published
-            // atomically. Resume validates the complete checkpoint before it
-            // trusts that boundary and replays the remaining hash-chained tail.
-            upsert_recovery_checkpoint(&transaction, checkpoint).await?;
-        }
+        let next_head = append_transaction_in(&transaction, expected, event, candidate).await?;
         transaction.commit().await.map_err(store_error)?;
         Ok(next_head)
     }
@@ -2701,6 +2602,61 @@ impl DurableProcess {
             .await
     }
 
+    /// Durably appends one canonical event and removes the exact expected
+    /// inbox head in the same commit.
+    ///
+    /// The reasoning loop records a turn's terminal event this way, so a
+    /// crash can never leave a completed turn whose input is still queued and
+    /// would run again on resume.
+    pub async fn append_event_acknowledging_inbox(
+        &mut self,
+        request: EventRequest,
+        expected: &Value,
+    ) -> std::result::Result<(Event, crate::Change), EventLogError> {
+        let mut candidate = self.process.clone();
+        let change =
+            candidate
+                .acknowledge_inbox(expected)
+                .map_err(|_| EventLogError::InvalidAppend {
+                    detail: "the turn input is no longer the inbox head".into(),
+                })?;
+        let mut head = self.head.lock().await;
+        let mut connection = self
+            .store
+            .write_connection()
+            .await
+            .map_err(|_| thread_event_backend())?;
+        let transaction = connection
+            .transaction()
+            .await
+            .map_err(|_| thread_event_backend())?;
+        // THREAT[TM-MSG-002] THREAT[TM-PERS-002]: The terminal event and the
+        // acknowledgement it licenses share one database transaction and one
+        // head CAS, so a crash cannot leave an answered input queued.
+        let (event, event_head) =
+            append_event_in(&transaction, self.process.id(), &head, request, None).await?;
+        let acknowledgement = ProcessTransaction::new(
+            self.process.id().clone(),
+            &event_head,
+            self.process.version(),
+            candidate.version(),
+            change.mutations().to_vec(),
+            "inbox.acknowledge",
+            candidate.root_hash(),
+        )
+        .map_err(thread_event_corruption)?;
+        let next = append_transaction_in(&transaction, &event_head, &acknowledgement, &candidate)
+            .await
+            .map_err(journal_head_error)?;
+        transaction
+            .commit()
+            .await
+            .map_err(|_| thread_event_backend())?;
+        *head = next;
+        self.process = candidate;
+        Ok((event, change))
+    }
+
     /// Publishes a transition that already reported its own mutations.
     ///
     /// A change with no mutations touched no committed state — a granted mount
@@ -2977,6 +2933,14 @@ impl DurableProcessHandle for DurableProcess {
         DurableProcess::acknowledge_inbox(self, expected).await
     }
 
+    async fn append_event_acknowledging_inbox(
+        &mut self,
+        request: EventRequest,
+        expected: &Value,
+    ) -> std::result::Result<(Event, crate::Change), EventLogError> {
+        DurableProcess::append_event_acknowledging_inbox(self, request, expected).await
+    }
+
     async fn attach_mount(&mut self, name: String, mount: Mount) -> Result<crate::Change> {
         DurableProcess::attach_mount(self, name, mount)
     }
@@ -3055,6 +3019,132 @@ fn thread_session_id(process: &Process) -> Result<Option<SessionId>> {
         .parse()
         .map(Some)
         .map_err(|_| Error::InvalidPersistence("thread session ID is invalid".into()))
+}
+
+/// Writes one process transaction, its journal entry, and any due recovery
+/// checkpoint inside `transaction`, moving the head from `expected`. The
+/// caller commits, so a canonical event may share the same atomic write.
+async fn append_transaction_in(
+    transaction: &Transaction<'_>,
+    expected: &TransactionHead,
+    event: &ProcessTransaction,
+    candidate: &Process,
+) -> Result<TransactionHead> {
+    event.validate_successor(expected)?;
+    if candidate.id() != &event.address || candidate.version() != event.process_version_after {
+        return invalid("checkpoint candidate does not match transaction result");
+    }
+    if candidate.root_hash() != event.resulting_root_hash {
+        return invalid("checkpoint root does not match transaction result");
+    }
+    let event_bytes = event.to_bytes()?;
+    let event_blob_hash = bytes_hash(&event_bytes);
+    let next_head = TransactionHead {
+        position: Some(event.position),
+        hash: event.transaction_hash.clone(),
+    };
+    // Canonical events share the journal, so transaction positions have
+    // gaps. Checkpoint by distance from the last recovery boundary rather
+    // than by position modulus, which a gapped stream could skip forever.
+    let mut checkpoint_rows = transaction
+        .query(
+            "SELECT covered_position FROM recovery_checkpoints WHERE address = ?1",
+            [event.address.as_str()],
+        )
+        .await
+        .map_err(store_error)?;
+    let covered = checkpoint_rows
+        .next()
+        .await
+        .map_err(store_error)?
+        .map(|row| u64_column(&row, 0))
+        .transpose()?;
+    drop(checkpoint_rows);
+    let due = match covered {
+        Some(covered) => event.position.saturating_sub(covered) >= RECOVERY_CHECKPOINT_INTERVAL,
+        None => event.position + 1 >= RECOVERY_CHECKPOINT_INTERVAL,
+    };
+    let checkpoint = due
+        .then(|| RecoveryCheckpoint::new(candidate, &next_head))
+        .transpose()?;
+
+    // THREAT[TM-PERS-002]: The event, path projection, and head CAS share
+    // one database transaction, so failure cannot publish a partial commit.
+    insert_blob(transaction, &event_blob_hash, &event_bytes).await?;
+    transaction
+        .execute(
+            "INSERT INTO events \
+             (address, position, previous_hash, process_version_before, process_version_after, \
+              source, resulting_root_hash, event_hash, event_blob_hash) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                event.address.as_str(),
+                to_i64(event.position)?,
+                event.previous_hash.as_str(),
+                to_i64(event.process_version_before)?,
+                to_i64(event.process_version_after)?,
+                event.source.as_str(),
+                event.resulting_root_hash.as_str(),
+                event.transaction_hash.as_str(),
+                event_blob_hash.as_str(),
+            ],
+        )
+        .await
+        .map_err(conflict_or_store)?;
+    insert_journal_entry(
+        transaction,
+        &event.address,
+        &next_head,
+        JOURNAL_TRANSACTION,
+        &event.previous_hash,
+        &event_blob_hash,
+        None,
+        event.process_version_after,
+        &event.resulting_root_hash,
+    )
+    .await?;
+    for path in &event.touched_paths {
+        transaction
+            .execute(
+                "INSERT INTO event_paths (address, position, path) VALUES (?1, ?2, ?3)",
+                params![
+                    event.address.as_str(),
+                    to_i64(event.position)?,
+                    path.as_str()
+                ],
+            )
+            .await
+            .map_err(store_error)?;
+    }
+    let expected_position = sql_position(expected.position)?;
+    let changed = transaction
+        .execute(
+            "UPDATE svits SET head_position = ?1, head_hash = ?2, process_version = ?3, root_hash = ?4 \
+             WHERE address = ?5 AND head_hash = ?6 \
+               AND ((head_position IS NULL AND ?7 IS NULL) OR head_position = ?8)",
+            params![
+                to_i64(event.position)?,
+                event.transaction_hash.as_str(),
+                to_i64(event.process_version_after)?,
+                event.resulting_root_hash.as_str(),
+                event.address.as_str(),
+                expected.hash.as_str(),
+                expected_position.clone(),
+                expected_position,
+            ],
+        )
+        .await
+        .map_err(store_error)?;
+    if changed != 1 {
+        return Err(Error::PersistenceConflict);
+    }
+    if let Some(checkpoint) = &checkpoint {
+        // THREAT[TM-PERS-001]: The checkpoint and event head are published
+        // atomically. Resume validates the complete checkpoint before it
+        // trusts that boundary and replays the remaining hash-chained tail.
+        upsert_recovery_checkpoint(transaction, checkpoint).await?;
+    }
+    Ok(next_head)
 }
 
 async fn insert_blob(transaction: &Transaction<'_>, hash: &str, bytes: &[u8]) -> Result<()> {
@@ -4023,6 +4113,105 @@ mod tests {
         let resumed = store.resume(address).await.unwrap();
         assert_eq!(resumed.read("/memory/value").unwrap(), Some(value!(3)));
         assert_eq!(journal_kinds(&store, address).await.len(), 7);
+    }
+
+    fn answered_turn(session_id: SessionId) -> EventRequest {
+        EventRequest::new(
+            session_id,
+            EventContext::empty(),
+            everruns_core::events::TurnCompletedData {
+                termination_reason: Some(everruns_contracts::turn::TurnStopReason::EndTurn),
+                final_message_id: Some(everruns_contracts::typed_id::MessageId::new()),
+                status: Some("completed".into()),
+                ..Default::default()
+            },
+        )
+    }
+
+    #[tokio::test]
+    // THREAT[TM-MSG-002] THREAT[TM-PERS-002]
+    async fn a_turn_outcome_and_its_inbox_acknowledgement_commit_together() {
+        let address = "svit://local/journal/turn-ack";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut durable = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        durable.enqueue_inbox(value!("question")).await.unwrap();
+
+        let (event, change) = durable
+            .append_event_acknowledging_inbox(answered_turn(session_id), &value!("question"))
+            .await
+            .unwrap();
+
+        assert_eq!(event.event_type, "turn.completed");
+        assert!(change.touches("/inbox"));
+        assert_eq!(
+            journal_kinds(&store, address).await,
+            vec![
+                (0, JOURNAL_TRANSACTION.to_string()),
+                (1, JOURNAL_EVENT.to_string()),
+                (2, JOURNAL_TRANSACTION.to_string()),
+            ]
+        );
+        drop(durable);
+        // A crash right after the turn's terminal event finds no answered
+        // input left to run again.
+        let resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.read("/inbox").unwrap(), Some(value!([])));
+        let sources = resumed
+            .transactions(TransactionQuery::new())
+            .await
+            .unwrap()
+            .iter()
+            .map(|transaction| transaction.source().to_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(sources, vec!["inbox.enqueue", "inbox.acknowledge"]);
+        let events = resumed.recent_thread_events(session_id, 8).await.unwrap();
+        assert_eq!(events.len(), 1);
+    }
+
+    #[tokio::test]
+    // THREAT[TM-MSG-002] THREAT[TM-PERS-002]
+    async fn a_rejected_turn_acknowledgement_writes_neither_the_event_nor_the_ack() {
+        let address = "svit://local/journal/turn-ack-rejected";
+        let store = TursoProcessStore::memory().await.unwrap();
+        let session_id = SessionId::new();
+        let mut durable = store
+            .create(Process::builder(address).unwrap().build().unwrap())
+            .await
+            .unwrap();
+        durable.enqueue_inbox(value!("question")).await.unwrap();
+        let version = durable.version();
+
+        assert!(matches!(
+            durable
+                .append_event_acknowledging_inbox(answered_turn(session_id), &value!("other"))
+                .await,
+            Err(EventLogError::InvalidAppend { .. })
+        ));
+        let mut stale = store.resume(address).await.unwrap();
+        durable.write("/memory/moved", value!(true)).await.unwrap();
+        assert!(matches!(
+            stale
+                .append_event_acknowledging_inbox(answered_turn(session_id), &value!("question"))
+                .await,
+            Err(EventLogError::InvalidAppend { .. })
+        ));
+
+        drop((durable, stale));
+        let resumed = store.resume(address).await.unwrap();
+        assert_eq!(resumed.version(), version + 1);
+        assert_eq!(resumed.read("/inbox").unwrap(), Some(value!(["question"])));
+        assert!(
+            resumed
+                .recent_thread_events(session_id, 8)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(journal_kinds(&store, address).await.len(), 2);
     }
 
     #[tokio::test]

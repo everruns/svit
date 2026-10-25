@@ -37,13 +37,16 @@ sequenceDiagram
     L->>E: append canonical event
     E-->>O: Canonical event
     E-->>O: Projected message
-    L->>P: acknowledge exact inbox head
+    L->>P: turn.completed + acknowledge exact inbox head
     P-->>O: Committed change
     L-->>O: completed-turn Outbox message
 ```
 
 The canonical event is published before its derived message. A completed-turn
 outbox message is sent only after the corresponding inbox item is acknowledged.
+A persisted Svit writes the turn's `turn.completed` event and that
+acknowledgement in one commit, so after a crash an answered message is never
+processed again.
 If the turn fails, the inbox item remains committed for recovery, no completed
 outbox response is published, and event observers receive a bounded sanitized
 failure.
