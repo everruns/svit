@@ -1,0 +1,246 @@
+{
+  "id": "overseas-meeting-invites",
+  "input": [
+    "I have three meeting requests from overseas in my inbox. Accept the ones that fit my hours and calendar, put them on my calendar, and for any that don't, reply with a time that works for both of us."
+  ],
+  "tags": [
+    "scheduling",
+    "timezones",
+    "email",
+    "calendar"
+  ],
+  "metadata": {
+    "world": {
+      "emails": [
+        {
+          "id": "mail-3001",
+          "folder": "inbox",
+          "from": "Kenji Sato <kenji.sato@mirai.co.jp>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Partnership sync?",
+          "body": "Hi Jordan, could we do a 30-minute partnership sync on Thursday Nov 5 at 10:00 AM Tokyo time? Best, Kenji",
+          "date": "2026-11-01T21:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-3002",
+          "folder": "inbox",
+          "from": "Anna Becker <anna.becker@kraftwerk.de>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Integration kickoff",
+          "body": "Hello Jordan, would Friday Nov 6 at 07:30 CET work for a 45-minute integration kickoff? I'm in the office 09:00-18:00 Berlin time otherwise. Viele Grüße, Anna",
+          "date": "2026-11-02T03:10:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-3003",
+          "folder": "inbox",
+          "from": "Mia Thompson <mia.thompson@harbourlabs.com.au>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Quick intro call",
+          "body": "G'day Jordan, keen for a 30 min intro. How's Tuesday Nov 10 at 9:00 AM Sydney time? Cheers, Mia",
+          "date": "2026-11-02T01:30:00-05:00",
+          "read": false,
+          "attachments": []
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "kenji.sato@mirai.co.jp",
+            "any": []
+          },
+          "reply": {
+            "from": "Kenji Sato <kenji.sato@mirai.co.jp>",
+            "body": "Thank you Jordan. A client meeting just landed at 10:30 my time, so could we start 30 minutes earlier, at 9:30 AM Tokyo on Thursday? Same 30 minutes. Sorry for the change. Kenji"
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "All three requests answered, the workable ones on your calendar at the right times.",
+      "knows": [],
+      "behavior": "Approve the replies and calendar entries the assistant proposes if they respect your 8 AM-9 PM Eastern hours. Approve Kenji's earlier time if the assistant says it still fits."
+    },
+    "checks": [
+      {
+        "desc": "Kenji call moved to Wed Nov 4 19:30 ET after his reply",
+        "weight": 3,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-04T19:30:00-05:00"
+          },
+          "end": {
+            "$time_eq": "2026-11-04T20:00:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Moved rather than duplicated: the 19:30 call exists and no 20:00 entry remains",
+        "weight": 1,
+        "all_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "start": {
+                "$time_eq": "2026-11-04T19:30:00-05:00"
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "start": {
+                "$time_eq": "2026-11-04T20:00:00-05:00"
+              }
+            },
+            "min": 0,
+            "max": 0
+          }
+        ]
+      },
+      {
+        "desc": "Confirmed Kenji's new 9:30 Tokyo time",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "kenji.sato"
+          },
+          "body": {
+            "$regex": "9[:.]30|19[:.]30|7[:.]30\\s*pm"
+          }
+        }
+      },
+      {
+        "desc": "Mia call on Mon Nov 9 17:00 ET",
+        "weight": 2,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-09T17:00:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Accepted Kenji",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "kenji.sato"
+          }
+        }
+      },
+      {
+        "desc": "Accepted Mia",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "mia.thompson"
+          }
+        }
+      },
+      {
+        "desc": "Replied to Anna with an alternative inside both working windows",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "anna.becker"
+          },
+          "body": {
+            "$regex": "(1[4-7][:.]\\d{2}|\\b[2-5](:\\d{2})?\\s*pm).{0,30}(cet|berlin|your time)|(cet|berlin)[^.\\n]{0,20}(1[4-7][:.]\\d{2})"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Converts correctly: Tokyo (UTC+9) Thu 10:00 = Wed Nov 4 20:00 ET; Sydney (AEDT, UTC+11 in November) Tue 9:00 = Mon Nov 9 17:00 ET; Berlin (CET, UTC+1) Fri 07:30 = Fri 01:30 ET.",
+        "weight": 3
+      },
+      {
+        "criterion": "Accepts Kenji and Mia (within 8 AM-9 PM ET, no conflicts) and adds both to the calendar on the correct ET dates.",
+        "weight": 2
+      },
+      {
+        "criterion": "Notices Kenji's follow-up, confirms 9:30 Tokyo = 19:30 ET Wed Nov 4 still fits, moves the event rather than adding a second one, and confirms with Kenji.",
+        "weight": 2
+      },
+      {
+        "criterion": "Declines Anna's 01:30 ET slot and proposes a time inside both windows (Berlin 14:00-17:15 = 8:00-11:15 ET) that is free on Jordan's calendar (Fri Nov 6 has the 9:30 standup and the 10:00 Eng/PM sync), stated in both zones.",
+        "weight": 2
+      },
+      {
+        "criterion": "Summarizes all three outcomes for Jordan.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Kenji: Thu Nov 5 10:00 JST = Wed Nov 4 20:00 ET (accept); Kenji then asks for 9:30 JST = Wed Nov 4 19:30-20:00 ET, still inside hours, so move the event and confirm. Mia: Tue Nov 10 09:00 AEDT (UTC+11) = Mon Nov 9 17:00 ET (accept). Anna: Fri Nov 6 07:30 CET = 01:30 ET (decline); propose e.g. Fri 14:00 CET = 8:00 ET or 16:30 CET = 10:30 ET (avoid the 9:30-9:45 standup and 10:00-10:30 Eng/PM sync on Fri Nov 6).",
+    "forbid": [
+      {
+        "desc": "Put a meeting at 1:30 AM ET",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-06T01:30:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Put Kenji or Mia on the wrong day/time (local time read as ET)",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "$or": [
+            {
+              "start": {
+                "$time_eq": "2026-11-05T10:00:00-05:00"
+              }
+            },
+            {
+              "start": {
+                "$time_eq": "2026-11-10T09:00:00-05:00"
+              }
+            },
+            {
+              "start": {
+                "$time_eq": "2026-11-09T18:00:00-05:00"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

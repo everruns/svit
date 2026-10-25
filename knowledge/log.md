@@ -2,6 +2,12 @@
 
 ## 2026-10-25
 
+* **Personal agent eval**: `evals/personal-agent/` is a graded Mira study of
+  30 hard personal-assistant tasks against a live Svit process, with a
+  simulated world, a simulated user, and scripted replies from other people.
+  Muse Spark 1.3 Contributor scores 0.892 on the hardened set (0.938 before
+  hardening). See [Personal Agent Eval](operations/personal-agent-eval.md).
+
 * **Turn outcome and inbox acknowledgement commit together**: A durable
   reasoning loop now writes `turn.completed` and the `inbox.acknowledge`
   transaction for that turn's input in one Turso transaction, closing the

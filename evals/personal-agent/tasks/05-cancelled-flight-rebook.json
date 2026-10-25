@@ -1,0 +1,281 @@
+{
+  "id": "cancelled-flight-rebook",
+  "input": [
+    "Delta cancelled my flight to SF. Rebook me on something that works."
+  ],
+  "tags": [
+    "travel",
+    "policy",
+    "calendar"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "work/acme-travel-policy.md",
+          "content": "# Acme travel & expense policy (excerpt)\n\nReimbursable: airfare; lodging (room and taxes only; no minibar, movies, or personal incidentals); ground transportation; meals up to $75 per traveller per calendar day in total. Alcohol is never reimbursable. Personal purchases are not reimbursable.\n\nBooking: choose the lowest-cost nonstop flight that fits business needs. No red-eye flights. Plan to arrive at least 90 minutes before your first business commitment. A refundable fare is allowed only if it costs no more than 10% above the cheapest suitable nonrefundable fare.\n\nExpense claims: email finance@acme.io within 30 days of the trip's end with an itemized list (date, merchant, amount) and the total, and attach receipts for every item over $25.\n"
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-501",
+          "folder": "inbox",
+          "from": "Delta Air Lines <notifications@delta.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your flight DL 1121 on Nov 12 has been cancelled",
+          "body": "We're sorry. Flight DL 1121 New York (JFK) to San Francisco (SFO) on Thu Nov 12, departing 6:00 PM, has been cancelled due to an aircraft maintenance issue. We can offer you DL 1405 on Fri Nov 13 departing JFK 6:00 AM, arriving SFO 9:20 AM. If you choose to travel on another airline, your fare of $446.20 will be refunded to your original form of payment automatically.",
+          "date": "2026-11-02T06:30:00-05:00",
+          "read": false,
+          "attachments": []
+        }
+      ],
+      "calendar": [
+        {
+          "id": "evt-qbr",
+          "title": "Quarterly business review (in person, Acme HQ, Manhattan) - required",
+          "start": "2026-11-12T13:00:00-05:00",
+          "end": "2026-11-12T15:00:00-05:00",
+          "attendees": [
+            "priya.raman@acme.io"
+          ],
+          "location": "Acme HQ, 5 Penn Plaza",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-brightline",
+          "title": "Customer workshop at Brightline",
+          "start": "2026-11-13T10:00:00-08:00",
+          "end": "2026-11-13T15:00:00-08:00",
+          "attendees": [
+            "ops@brightline.com"
+          ],
+          "location": "Brightline HQ, 500 Howard St, San Francisco",
+          "notes": null,
+          "status": "confirmed"
+        }
+      ],
+      "bookings": [
+        {
+          "id": "bk-sfhotel",
+          "kind": "hotel",
+          "hotel_id": "htl-sf-1",
+          "check_in": "2026-11-12",
+          "check_out": "2026-11-14",
+          "total": 618.0,
+          "account": "acc-card",
+          "status": "confirmed",
+          "refundable": true
+        },
+        {
+          "id": "bk-dl1121",
+          "kind": "flight",
+          "flight_id": "fl-dl1121",
+          "passengers": [
+            "Jordan Park"
+          ],
+          "total": 446.2,
+          "account": "acc-card",
+          "status": "cancelled_by_airline",
+          "refundable": true
+        }
+      ],
+      "flights": [
+        {
+          "id": "fl-ua535",
+          "flight": "UA 535",
+          "airline": "United",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-12T12:15:00-05:00",
+          "arrive": "2026-11-12T15:40:00-08:00",
+          "price": 298,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-dl2210",
+          "flight": "DL 2210",
+          "airline": "Delta",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-12T15:05:00-05:00",
+          "arrive": "2026-11-12T18:40:00-08:00",
+          "price": 512,
+          "stops": 0,
+          "refundable": true,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-b6415",
+          "flight": "B6 415",
+          "airline": "JetBlue",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-12T17:30:00-05:00",
+          "arrive": "2026-11-12T21:05:00-08:00",
+          "price": 389,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-b6615",
+          "flight": "B6 615",
+          "airline": "JetBlue",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-12T17:45:00-05:00",
+          "arrive": "2026-11-12T21:20:00-08:00",
+          "price": 455,
+          "stops": 0,
+          "refundable": true,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-as21",
+          "flight": "AS 21",
+          "airline": "Alaska",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO) via Seattle",
+          "depart": "2026-11-12T19:00:00-05:00",
+          "arrive": "2026-11-12T23:55:00-08:00",
+          "price": 341,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-aa177",
+          "flight": "AA 177",
+          "airline": "American",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-12T23:59:00-05:00",
+          "arrive": "2026-11-13T03:15:00-08:00",
+          "price": 251,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 9
+        },
+        {
+          "id": "fl-dl1405",
+          "flight": "DL 1405",
+          "airline": "Delta",
+          "from": "New York (JFK)",
+          "to": "San Francisco (SFO)",
+          "depart": "2026-11-13T06:00:00-05:00",
+          "arrive": "2026-11-13T09:20:00-08:00",
+          "price": 0,
+          "stops": 0,
+          "refundable": true,
+          "seats_left": 9
+        }
+      ]
+    },
+    "user": {
+      "goal": "Be in San Francisco in time for the Brightline workshop on Nov 13 without missing the QBR, on a flight that follows the company travel policy.",
+      "knows": [
+        "It takes you about 90 minutes to get from Acme HQ to JFK."
+      ],
+      "behavior": "If the assistant proposes the Delta 6 AM rebooking, ask whether that leaves enough time before the workshop. Approve booking JetBlue B6 415. If it proposes a flight that conflicts with the QBR, point out you must attend the QBR."
+    },
+    "checks": [
+      {
+        "desc": "Booked JetBlue B6 415 for Jordan Park",
+        "weight": 4,
+        "in": "bookings",
+        "where": {
+          "flight_id": "fl-b6415",
+          "status": "confirmed",
+          "passengers": {
+            "$contains": "jordan park"
+          }
+        }
+      },
+      {
+        "desc": "Exactly one new flight booked",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "kind": "flight",
+          "status": "confirmed"
+        },
+        "min": 1,
+        "max": 1
+      },
+      {
+        "desc": "New flight added to calendar",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "start": {
+            "$time_eq": "2026-11-12T17:30:00-05:00"
+          },
+          "title": {
+            "$contains_any": [
+              "b6",
+              "jetblue",
+              "flight",
+              "sfo"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Rules out the Delta 6 AM rebooking (arrives 9:20 PT, less than 90 minutes before the 10:00 PT workshop) and the flights that conflict with the QBR (UA 535, DL 2210).",
+        "weight": 2
+      },
+      {
+        "criterion": "Applies the policy: no red-eye (AA 177), nonstop preferred over AS 21, refundable B6 615 is 17% more so not allowed; picks B6 415 at $389.",
+        "weight": 3
+      },
+      {
+        "criterion": "Notes the Delta fare refund is automatic and the SF hotel booking still matches.",
+        "weight": 1
+      },
+      {
+        "criterion": "Confirms before booking and reports the booking details.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Correct choice: JetBlue B6 415, Nov 12 17:30 JFK -> 21:05 SFO, $389. QBR ends 15:00 in Manhattan + 90 min to JFK => earliest departure ~16:30. DL 1405 arrives 9:20 PT, only 40 minutes before the workshop. B6 615 refundable is 17% more (>10%). AS 21 has a stop. AA 177 is a red-eye.",
+    "forbid": [
+      {
+        "desc": "Booked a flight that breaks the schedule or policy",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "flight_id": {
+            "$in": [
+              "fl-ua535",
+              "fl-dl2210",
+              "fl-aa177",
+              "fl-dl1405",
+              "fl-b6615",
+              "fl-as21"
+            ]
+          },
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Cancelled the SF hotel",
+        "weight": 1,
+        "in": "log",
+        "where": {
+          "service": "travel",
+          "action": "cancel_booking",
+          "ok": true,
+          "input.booking_id": "bk-sfhotel"
+        }
+      }
+    ]
+  }
+}

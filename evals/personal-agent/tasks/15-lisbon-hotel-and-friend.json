@@ -1,0 +1,193 @@
+{
+  "id": "lisbon-hotel-and-friend",
+  "input": [
+    "Book a hotel in Lisbon for me and Maya, Dec 18-22. We want to be walkable to Alfama, under $220 a night, well reviewed (4.3+), and refundable since plans might shift. Also let Leo know we're coming and ask if he's free for dinner one night."
+  ],
+  "tags": [
+    "travel",
+    "constraints",
+    "timezones",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "hotels": [
+        {
+          "id": "htl-memmo",
+          "name": "Memmo Alfama",
+          "city": "Lisbon",
+          "area": "Alfama",
+          "price_per_night": 265,
+          "rating": 4.8,
+          "distance_to_alfama_km": 0.1,
+          "refundable": true,
+          "unavailable_nights": []
+        },
+        {
+          "id": "htl-solar",
+          "name": "Solar do Castelo",
+          "city": "Lisbon",
+          "area": "Alfama",
+          "price_per_night": 210,
+          "rating": 4.6,
+          "distance_to_alfama_km": 0.2,
+          "refundable": false,
+          "unavailable_nights": []
+        },
+        {
+          "id": "htl-convento",
+          "name": "Hotel Convento do Salvador",
+          "city": "Lisbon",
+          "area": "Alfama",
+          "price_per_night": 189,
+          "rating": 4.5,
+          "distance_to_alfama_km": 0.3,
+          "refundable": true,
+          "unavailable_nights": [
+            "2026-12-20"
+          ]
+        },
+        {
+          "id": "htl-prata",
+          "name": "Lisboa Prata Boutique Hotel",
+          "city": "Lisbon",
+          "area": "Baixa",
+          "price_per_night": 198,
+          "rating": 4.4,
+          "distance_to_alfama_km": 0.9,
+          "refundable": true,
+          "unavailable_nights": []
+        },
+        {
+          "id": "htl-mundial",
+          "name": "Hotel Mundial",
+          "city": "Lisbon",
+          "area": "Martim Moniz",
+          "price_per_night": 175,
+          "rating": 4.1,
+          "distance_to_alfama_km": 1.1,
+          "refundable": true,
+          "unavailable_nights": []
+        },
+        {
+          "id": "htl-lumiares",
+          "name": "The Lumiares",
+          "city": "Lisbon",
+          "area": "Bairro Alto",
+          "price_per_night": 205,
+          "rating": 4.7,
+          "distance_to_alfama_km": 2.4,
+          "refundable": true,
+          "unavailable_nights": []
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "leo.martins@sapo.pt",
+            "any": [
+              "dinner",
+              "lisbon",
+              "december",
+              "dec"
+            ]
+          },
+          "reply": {
+            "from": "Leo Martins <leo.martins@sapo.pt>",
+            "body": "Que bom!! I'm free on the 19th. Dinner at 8pm at Tasca do Chico in Bairro Alto? I'll book it. Abraço!"
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "A refundable, well-located Lisbon hotel for Dec 18-22 within budget, and a dinner with Leo on your calendar.",
+      "knows": [
+        "Walkable means roughly 1 km or less."
+      ],
+      "behavior": "Approve a hotel that meets every constraint. Approve emailing Leo. If told Leo suggested dinner on the 19th at 8pm, say great, accept it."
+    },
+    "checks": [
+      {
+        "desc": "Booked Lisboa Prata Dec 18-22",
+        "weight": 4,
+        "in": "bookings",
+        "where": {
+          "hotel_id": "htl-prata",
+          "check_in": "2026-12-18",
+          "check_out": "2026-12-22",
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Exactly one hotel booked",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "kind": "hotel",
+          "status": "confirmed"
+        },
+        "max": 1
+      },
+      {
+        "desc": "Emailed Leo",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "leo.martins@sapo.pt"
+          }
+        }
+      },
+      {
+        "desc": "Dinner with Leo on Dec 19 at 8pm Lisbon time (3pm ET)",
+        "weight": 2,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-12-19T20:00:00+00:00"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Rejects Memmo (over budget), Solar do Castelo (nonrefundable), Convento (no availability Dec 20), Mundial (rating 4.1), Lumiares (2.4 km); picks Lisboa Prata.",
+        "weight": 3
+      },
+      {
+        "criterion": "Books 4 nights for 2 guests and reports the $792 total.",
+        "weight": 1
+      },
+      {
+        "criterion": "Emails Leo, relays his reply, accepts after Jordan agrees, and books dinner at 20:00 Lisbon time (15:00 ET) on Dec 19.",
+        "weight": 2
+      },
+      {
+        "criterion": "Confirms with Jordan before booking.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Only Lisboa Prata Boutique Hotel (Baixa, 0.9 km, $198, 4.4, refundable, available) meets everything. 4 nights = $792. Leo proposes Dec 19 20:00 Lisbon (UTC+0) = 15:00 ET.",
+    "forbid": [
+      {
+        "desc": "Booked a hotel that breaks a constraint",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "hotel_id": {
+            "$in": [
+              "htl-memmo",
+              "htl-solar",
+              "htl-convento",
+              "htl-mundial",
+              "htl-lumiares"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

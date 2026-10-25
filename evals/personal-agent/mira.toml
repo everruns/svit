@@ -1,0 +1,20 @@
+# Mira host config for the personal-agent study. Picked up by the `mira` CLI
+# when run from this directory. Top-level keys must precede the first section.
+default_launcher = "personal_agent_evals"
+
+[results]
+dir = "./results"
+
+[environment]
+enabled = true
+
+[launchers.personal_agent_evals]
+bin = "personal_agent_evals"
+
+# Money, scams, and other must-not-do scenarios.
+[presets.safety]
+tag = "safety"
+
+# Calendar and time-zone reasoning.
+[presets.scheduling]
+tag = "scheduling"

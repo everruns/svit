@@ -1,0 +1,176 @@
+{
+  "id": "backpack-spec-match",
+  "input": [
+    "Buy me a new laptop backpack: under $120, fits my 16-inch laptop, actually waterproof (not just water-resistant), and the best-rated one that meets all that."
+  ],
+  "tags": [
+    "shopping",
+    "constraints"
+  ],
+  "metadata": {
+    "world": {
+      "products": [
+        {
+          "id": "prd-bp-peak",
+          "name": "Peak Design Everyday Backpack 20L",
+          "price": 279.95,
+          "rating": 4.8,
+          "max_laptop": "16 in",
+          "water_protection": "weather-resistant",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-osprey",
+          "name": "Osprey Arcane Large Day Pack",
+          "price": 109.95,
+          "rating": 4.7,
+          "max_laptop": "16 in",
+          "water_protection": "water-resistant DWR finish",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-thule",
+          "name": "Thule Subterra 2 Backpack 23L",
+          "price": 119.95,
+          "rating": 4.6,
+          "max_laptop": "15.6 in",
+          "water_protection": "waterproof welded TPU",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-rains",
+          "name": "Rains Base Bag Large",
+          "price": 115.0,
+          "rating": 4.5,
+          "max_laptop": "16 in",
+          "water_protection": "waterproof, PU-coated with sealed seams",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-mission",
+          "name": "Mission Workshop Fitzroy VX (sale)",
+          "price": 118.0,
+          "rating": 4.4,
+          "max_laptop": "16 in",
+          "water_protection": "waterproof X-Pac VX21",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-timbuk",
+          "name": "Timbuk2 Never Check Expandable",
+          "price": 119.0,
+          "rating": 4.8,
+          "max_laptop": "17 in",
+          "water_protection": "water-resistant",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-generic",
+          "name": "Waterproof Laptop Backpack 17 inch",
+          "price": 39.99,
+          "rating": 4.1,
+          "max_laptop": "17 in",
+          "water_protection": "waterproof",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-ortlieb",
+          "name": "Ortlieb Commuter Daypack Urban",
+          "price": 125.0,
+          "rating": 4.7,
+          "max_laptop": "15.4 in",
+          "water_protection": "waterproof, IP64",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        },
+        {
+          "id": "prd-bp-rains-mini",
+          "name": "Rains Base Bag Mini",
+          "price": 79.0,
+          "rating": 4.6,
+          "max_laptop": "13 in",
+          "water_protection": "waterproof",
+          "delivery_days": 3,
+          "stock": 4,
+          "seller": "Shop"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get the best-rated backpack that meets all four requirements.",
+      "knows": [
+        "The laptop is a 16-inch MacBook Pro."
+      ],
+      "behavior": "Approve the order if it meets every requirement."
+    },
+    "checks": [
+      {
+        "desc": "Ordered the Rains Base Bag Large",
+        "weight": 4,
+        "in": "orders",
+        "where": {
+          "product_id": "prd-bp-rains",
+          "status": "placed"
+        }
+      },
+      {
+        "desc": "Only one backpack ordered",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "status": "placed"
+        },
+        "max": 1
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Filters correctly: excludes Peak (price), Osprey and Timbuk2 (water-resistant only), Thule and Ortlieb (too small or too expensive), Rains Mini (13 in).",
+        "weight": 3
+      },
+      {
+        "criterion": "Among valid options (Rains Base Bag Large 4.5, Mission Workshop 4.4, generic 4.1) picks the highest rated.",
+        "weight": 2
+      },
+      {
+        "criterion": "Confirms before ordering and reports price and delivery.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Valid: Rains Base Bag Large ($115, 4.5), Mission Workshop Fitzroy ($118, 4.4), generic 17in ($39.99, 4.1). Best-rated valid = Rains Base Bag Large.",
+    "forbid": [
+      {
+        "desc": "Ordered a backpack that misses a requirement",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "product_id": {
+            "$in": [
+              "prd-bp-peak",
+              "prd-bp-osprey",
+              "prd-bp-thule",
+              "prd-bp-timbuk",
+              "prd-bp-ortlieb",
+              "prd-bp-rains-mini"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

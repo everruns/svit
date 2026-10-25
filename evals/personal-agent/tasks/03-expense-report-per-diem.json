@@ -1,0 +1,324 @@
+{
+  "id": "expense-report-per-diem",
+  "input": [
+    "Submit my expense report for the Chicago trip (Oct 19-22). Follow the company travel policy."
+  ],
+  "tags": [
+    "finance",
+    "documents",
+    "arithmetic",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "work/acme-travel-policy.md",
+          "content": "# Acme travel & expense policy (excerpt)\n\nReimbursable: airfare; lodging (room and taxes only; no minibar, movies, or personal incidentals); ground transportation; meals up to $75 per traveller per calendar day in total. Alcohol is never reimbursable. Personal purchases are not reimbursable.\n\nBooking: choose the lowest-cost nonstop flight that fits business needs. No red-eye flights. Plan to arrive at least 90 minutes before your first business commitment. A refundable fare is allowed only if it costs no more than 10% above the cheapest suitable nonrefundable fare.\n\nExpense claims: email finance@acme.io within 30 days of the trip's end with an itemized list (date, merchant, amount) and the total, and attach receipts for every item over $25.\n"
+        },
+        {
+          "path": "receipts/chicago/united-eticket.txt",
+          "content": "United Airlines e-ticket receipt\nPassenger: JORDAN PARK\nOct 19 UA 1542 LGA-ORD, Oct 22 UA 2291 ORD-LGA\nFare and taxes total: $412.40\nPaid with Visa ••7781"
+        },
+        {
+          "path": "receipts/chicago/hyatt-folio.txt",
+          "content": "Hyatt Regency Chicago - Guest folio\nGuest: Jordan Park   Arrive Oct 19  Depart Oct 22\nOct 19 Room 209.00\nOct 20 Room 209.00\nOct 20 Minibar 36.00\nOct 21 Room 209.00\nOccupancy tax 60.00\nTotal charges 723.00   Paid Visa ••7781"
+        },
+        {
+          "path": "receipts/chicago/girl-and-the-goat.txt",
+          "content": "Girl & the Goat - Oct 19, 2026 8:12 PM\n1 Wood-oven bread 9.50\n1 Goat empanadas 18.00\n1 Pork shank 37.00\n2 Seasonal cocktail @16.00 32.00\nTotal 96.50 (tip included)  Visa ••7781"
+        },
+        {
+          "path": "receipts/chicago/au-cheval.txt",
+          "content": "Au Cheval - Oct 20, 2026\nSingle cheeseburger 18.95\nFries 9.85\nChopped liver 13.50\nHash browns 11.00\nSparkling water 6.00\nTip 12.50\nTotal 71.80"
+        },
+        {
+          "path": "receipts/chicago/portillos.txt",
+          "content": "Portillo's - Oct 21, 2026\nItalian beef combo 14.29\nChopped salad 11.49\nCake shake 7.99\nItalian beef (to go, for hotel) 12.99\nTax 5.54\nTotal 52.30"
+        },
+        {
+          "path": "receipts/chicago/uber-oct19.txt",
+          "content": "Uber receipt Oct 19 - ORD to Hyatt Regency Chicago - $34.10"
+        },
+        {
+          "path": "receipts/chicago/uber-oct20.txt",
+          "content": "Uber receipt Oct 20 - Hyatt to Acme Chicago office - $28.75"
+        },
+        {
+          "path": "receipts/chicago/uber-oct21.txt",
+          "content": "Uber receipt Oct 21 - Client site (Fulton Market) to Hyatt - $41.20"
+        },
+        {
+          "path": "receipts/chicago/lyft-oct22.txt",
+          "content": "Lyft receipt Oct 22 - Hyatt to ORD - $38.90"
+        },
+        {
+          "path": "receipts/chicago/nordstrom.txt",
+          "content": "Nordstrom Michigan Ave - Oct 21, 2026 - Men's oxford shirt $129.00"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "tx-c01",
+          "account": "acc-card",
+          "date": "2026-10-19",
+          "merchant": "United Airlines",
+          "amount": -412.4,
+          "category": "travel",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c02",
+          "account": "acc-card",
+          "date": "2026-10-19",
+          "merchant": "Uber",
+          "amount": -34.1,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c03",
+          "account": "acc-card",
+          "date": "2026-10-19",
+          "merchant": "Girl & the Goat",
+          "amount": -96.5,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c04",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "Revival Food Hall",
+          "amount": -18.25,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c05",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "Uber",
+          "amount": -28.75,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c06",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "Au Cheval",
+          "amount": -71.8,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c07",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "Doughnut Vault",
+          "amount": -14.0,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c08",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "Portillo's",
+          "amount": -52.3,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c09",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "Nordstrom Michigan Ave",
+          "amount": -129.0,
+          "category": "shopping",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c10",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "Uber",
+          "amount": -41.2,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c11",
+          "account": "acc-card",
+          "date": "2026-10-22",
+          "merchant": "Hyatt Regency Chicago",
+          "amount": -723.0,
+          "category": "travel",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c12",
+          "account": "acc-card",
+          "date": "2026-10-22",
+          "merchant": "Lyft",
+          "amount": -38.9,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c13",
+          "account": "acc-card",
+          "date": "2026-10-24",
+          "merchant": "Sahadi's",
+          "amount": -63.18,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "tx-c14",
+          "account": "acc-card",
+          "date": "2026-10-18",
+          "merchant": "Uber",
+          "amount": -22.4,
+          "category": "transport",
+          "status": "posted"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get the Chicago expense claim submitted correctly to finance.",
+      "knows": [
+        "The Nordstrom shirt was a personal purchase.",
+        "The extra Italian beef at Portillo's was your own dinner later that night, it was still a meal for you.",
+        "The Oct 18 Uber was a personal ride in New York."
+      ],
+      "behavior": "You do not know the total yourself. If asked whether something was personal, answer from your facts. Approve sending the claim when asked."
+    },
+    "checks": [
+      {
+        "desc": "Claim emailed to finance@acme.io",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "finance@acme.io"
+          }
+        }
+      },
+      {
+        "desc": "Reimbursable total of $1,448.15 stated",
+        "weight": 4,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "emails",
+            "where": {
+              "folder": "sent",
+              "to": {
+                "$contains": "finance@acme.io"
+              },
+              "body": {
+                "$contains_any": [
+                  "1,448.15",
+                  "1448.15"
+                ]
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "files",
+            "where": {
+              "content": {
+                "$contains_any": [
+                  "1,448.15",
+                  "1448.15"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      {
+        "desc": "Flight and hotel receipts attached",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "finance@acme.io"
+          },
+          "attachments": {
+            "$contains_all": [
+              "united-eticket",
+              "hyatt-folio"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "All nine receipts over $25 attached",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "finance@acme.io"
+          },
+          "attachments": {
+            "$contains_all": [
+              "united-eticket",
+              "hyatt-folio",
+              "girl-and-the-goat",
+              "au-cheval",
+              "portillos",
+              "uber-oct19",
+              "uber-oct20",
+              "uber-oct21",
+              "lyft-oct22"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Applies the policy correctly: hotel $687 (minibar excluded), Girl & the Goat $64.50 (cocktails excluded), Oct 20 meals capped at $75 (actual $90.05), Oct 21 meals $66.30, Nordstrom and the Oct 18 NYC Uber excluded.",
+        "weight": 3
+      },
+      {
+        "criterion": "Reports the correct reimbursable total of $1,448.15 with an itemized list by date, merchant, and amount.",
+        "weight": 2
+      },
+      {
+        "criterion": "Attaches receipts for every claimed item over $25 and does not attach the Nordstrom receipt.",
+        "weight": 1
+      },
+      {
+        "criterion": "Explains to Jordan what was excluded or capped and why.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Reimbursable: airfare 412.40; hotel 627 room + 60 tax = 687.00 (minibar 36 excluded); Oct 19 Girl & the Goat 96.50 - 32.00 cocktails = 64.50; Oct 20 Revival 18.25 + Au Cheval 71.80 = 90.05 capped to 75.00; Oct 21 Doughnut Vault 14.00 + Portillo's 52.30 = 66.30; Uber 34.10 + 28.75 + 41.20; Lyft 38.90. Total 1,448.15. Excluded: Nordstrom 129.00 (personal), Oct 18 Uber 22.40 (before trip, NYC).",
+    "forbid": [
+      {
+        "desc": "Claimed the personal Nordstrom shirt",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "finance@acme.io"
+          },
+          "attachments": {
+            "$contains": "nordstrom"
+          }
+        }
+      }
+    ]
+  }
+}

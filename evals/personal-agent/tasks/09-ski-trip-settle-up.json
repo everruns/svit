@@ -1,0 +1,126 @@
+{
+  "id": "ski-trip-settle-up",
+  "input": [
+    "Can you settle up the Tahoe trip? The expense sheet is in my files. Text everyone what they owe (or what I owe them)."
+  ],
+  "tags": [
+    "finance",
+    "arithmetic",
+    "messages",
+    "multi-party"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "trips/tahoe-expenses.csv",
+          "content": "payer,item,amount,split_between\nJordan,Cabin (3 nights),1260.00,Jordan;Sam;Dana;Leo\nSam,Groceries,214.40,Jordan;Sam;Dana;Leo\nDana,Rental car,388.00,Jordan;Sam;Dana\nJordan,Lift tickets,750.00,Jordan;Sam;Dana\nLeo,Dinner at Moody's,276.00,Jordan;Sam;Dana;Leo\nSam,Gas,72.60,Jordan;Sam;Dana\n"
+        },
+        {
+          "path": "trips/tahoe-notes.md",
+          "content": "Tahoe Oct 23-26. Leo flew in separately from Lisbon and snowboarded with a friend's pass, so he wasn't in the rental car or on lift tickets."
+        }
+      ],
+      "transactions": [
+        {
+          "id": "tx-s01",
+          "account": "acc-checking",
+          "date": "2026-10-28",
+          "merchant": "Zelle from Dana Wolfe",
+          "amount": 200.0,
+          "category": "transfer",
+          "status": "posted",
+          "memo": "tahoe cabin, rest later!"
+        }
+      ],
+      "messages": [
+        {
+          "id": "sms-s01",
+          "with": "+1 718 555 0166",
+          "direction": "in",
+          "text": "sent you $200 toward the cabin, tell me the rest when you've tallied it",
+          "date": "2026-10-28T18:02:00-05:00"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Everyone settled up fairly for the Tahoe trip.",
+      "knows": [
+        "You haven't received anything from Sam or Leo yet."
+      ],
+      "behavior": "Approve sending the texts once you've seen the amounts. Do not do the math yourself."
+    },
+    "checks": [
+      {
+        "desc": "Texted Sam $554.13",
+        "weight": 2,
+        "in": "messages",
+        "where": {
+          "direction": "out",
+          "with": "+1 415 555 0177",
+          "text": {
+            "$contains": "554.13"
+          }
+        }
+      },
+      {
+        "desc": "Texted Dana $253.13 (after her $200)",
+        "weight": 3,
+        "in": "messages",
+        "where": {
+          "direction": "out",
+          "with": "+1 718 555 0166",
+          "text": {
+            "$contains": "253.13"
+          }
+        }
+      },
+      {
+        "desc": "Texted Leo $161.60",
+        "weight": 2,
+        "in": "messages",
+        "where": {
+          "direction": "out",
+          "with": "+351 912 555 014",
+          "text": {
+            "$contains_any": [
+              "161.60",
+              "161.6 "
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Splits each expense only among the listed people: Jordan/Sam/Dana share $841.13 each, Leo $437.60.",
+        "weight": 2
+      },
+      {
+        "criterion": "Nets payments: Sam owes $554.13, Dana owes $453.13 minus the $200 already sent = $253.13, Leo owes $161.60; Jordan owes nobody.",
+        "weight": 3
+      },
+      {
+        "criterion": "Texts include a short, understandable breakdown.",
+        "weight": 1
+      },
+      {
+        "criterion": "Confirms with Jordan before texting.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Shares: cabin 315 x4, groceries 53.60 x4, rental 129.33 x3 (J,S,D), lifts 250 x3, dinner 69 x4, gas 24.20 x3 -> J/S/D 841.13, Leo 437.60. Paid: J 2010, S 287, D 388, L 276. Nets: J +1168.87, S -554.13, D -453.13 (-200 already paid = 253.13), L -161.60.",
+    "forbid": [
+      {
+        "desc": "Sent money from Jordan to someone",
+        "weight": 1,
+        "in": "log",
+        "where": {
+          "service": "bank",
+          "action": "transfer",
+          "ok": true
+        }
+      }
+    ]
+  }
+}

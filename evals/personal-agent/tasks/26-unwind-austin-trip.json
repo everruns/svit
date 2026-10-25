@@ -1,0 +1,270 @@
+{
+  "id": "unwind-austin-trip",
+  "input": [
+    "My Austin trip next week is off. Unwind everything and get back whatever money you can."
+  ],
+  "tags": [
+    "travel",
+    "judgment",
+    "email",
+    "calendar"
+  ],
+  "metadata": {
+    "world": {
+      "bookings": [
+        {
+          "id": "bk-aus-out",
+          "kind": "flight",
+          "flight_id": "fl-aa2211",
+          "passengers": [
+            "Jordan Park"
+          ],
+          "total": 312.4,
+          "account": "acc-card",
+          "status": "confirmed",
+          "refundable": true,
+          "depart": "2026-11-09T08:10:00-05:00"
+        },
+        {
+          "id": "bk-aus-ret",
+          "kind": "flight",
+          "flight_id": "fl-aa1890",
+          "passengers": [
+            "Jordan Park"
+          ],
+          "total": 198.0,
+          "account": "acc-card",
+          "status": "confirmed",
+          "refundable": false,
+          "depart": "2026-11-12T17:40:00-06:00"
+        },
+        {
+          "id": "bk-aus-htl",
+          "kind": "hotel",
+          "hotel_id": "htl-sanjose",
+          "check_in": "2026-11-09",
+          "check_out": "2026-11-12",
+          "nights": 3,
+          "total": 687.0,
+          "account": "acc-card",
+          "status": "confirmed",
+          "refundable": false
+        }
+      ],
+      "reservations": [
+        {
+          "id": "rsv-uchi",
+          "restaurant_id": "rst-uchi",
+          "restaurant": "Uchi Austin",
+          "date": "2026-11-10",
+          "time": "19:30",
+          "party_size": 2,
+          "name": "Jordan Park",
+          "status": "confirmed"
+        }
+      ],
+      "calendar": [
+        {
+          "id": "evt-aus-trip",
+          "title": "Austin trip",
+          "start": "2026-11-09T08:10:00-05:00",
+          "end": "2026-11-12T21:30:00-05:00",
+          "attendees": [],
+          "location": "Austin, TX",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-aus-uchi",
+          "title": "Dinner at Uchi with Marisol",
+          "start": "2026-11-10T19:30:00-06:00",
+          "end": "2026-11-10T21:00:00-06:00",
+          "attendees": [
+            "marisol.vega@gmail.com"
+          ],
+          "location": "Uchi, 801 S Lamar",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-aus-talk",
+          "title": "Speaking: 'Pricing experiments that work' - Austin Product Meetup",
+          "start": "2026-11-11T18:00:00-06:00",
+          "end": "2026-11-11T19:30:00-06:00",
+          "attendees": [
+            "events@austinproductmeetup.org"
+          ],
+          "location": "Capital Factory",
+          "notes": null,
+          "status": "confirmed"
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-2601",
+          "folder": "inbox",
+          "from": "Austin Product Meetup <events@austinproductmeetup.org>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Speaker logistics for Nov 11",
+          "body": "Hi Jordan! Excited for your talk on Nov 11. Doors 6pm, you're on at 6:30. Please send slides by Nov 9.",
+          "date": "2026-10-28T12:00:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ],
+      "contacts": [
+        {
+          "id": "ct-marisol",
+          "name": "Marisol Vega",
+          "email": "marisol.vega@gmail.com",
+          "phone": "+1 512 555 0148",
+          "relationship": "friend in Austin"
+        }
+      ],
+      "web": [
+        {
+          "url": "https://hotelsanjose.example.com/policies",
+          "title": "Hotel San José - policies",
+          "content": "Non-refundable rates cannot be cancelled or changed. The reservation may be transferred to another guest's name at no charge up to 24 hours before arrival."
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "events@austinproductmeetup.org",
+            "any": [
+              "cancel",
+              "can't make",
+              "cannot make",
+              "withdraw",
+              "unable",
+              "not be able",
+              "won't be able"
+            ]
+          },
+          "reply": {
+            "from": "Austin Product Meetup <events@austinproductmeetup.org>",
+            "body": "So sorry to hear that, Jordan, thanks for the heads-up. We'll find a replacement. Hope we can have you in the spring!"
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Unwind the Austin trip, recover what you can, and not leave anyone hanging.",
+      "knows": [
+        "Your brother Sam might use the hotel room those nights, so don't cancel the hotel if it wouldn't refund anything.",
+        "You'd rather not cancel the return flight if it gets you nothing back; whatever, it doesn't matter either way."
+      ],
+      "behavior": "If the assistant says the hotel is non-refundable and asks what to do, say keep it, Sam might use it, and ask it to tell you how to transfer it. Approve cancelling refundable items and emailing the meetup organizers and Marisol."
+    },
+    "checks": [
+      {
+        "desc": "Refundable outbound flight cancelled",
+        "weight": 3,
+        "in": "bookings",
+        "where": {
+          "id": "bk-aus-out",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Uchi reservation cancelled",
+        "weight": 2,
+        "in": "reservations",
+        "where": {
+          "id": "rsv-uchi",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Trip calendar events cleared",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$in": [
+              "evt-aus-trip",
+              "evt-aus-uchi",
+              "evt-aus-talk"
+            ]
+          }
+        },
+        "min": 3,
+        "expect": {
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Withdrew from the meetup talk with the organizers",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "events@austinproductmeetup.org"
+          }
+        }
+      },
+      {
+        "desc": "Told Marisol dinner is off",
+        "weight": 1,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "emails",
+            "where": {
+              "folder": "sent",
+              "to": {
+                "$contains": "marisol.vega"
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "messages",
+            "where": {
+              "direction": "out",
+              "with": "+1 512 555 0148"
+            }
+          }
+        ]
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Cancels the refundable outbound flight ($312.40 back) and the Uchi reservation.",
+        "weight": 2
+      },
+      {
+        "criterion": "Recognizes the hotel and return flight are non-refundable, so cancelling recovers nothing; asks Jordan instead of cancelling, and mentions the free name transfer for the hotel.",
+        "weight": 3
+      },
+      {
+        "criterion": "Notices Jordan is a speaker on Nov 11 and withdraws politely with the organizers; tells Marisol.",
+        "weight": 2
+      },
+      {
+        "criterion": "Reports exactly what was refunded ($312.40) and what remains.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Cancel bk-aus-out (refundable, $312.40 back), rsv-uchi, and the three trip calendar events. Email events@austinproductmeetup.org to withdraw from the Nov 11 talk; tell Marisol (dinner Nov 10). Hotel bk-aus-htl is non-refundable ($0 back) and transferable by name: keep it for Sam. Return flight non-refundable: cancelling recovers nothing.",
+    "forbid": [
+      {
+        "desc": "Cancelled the non-refundable hotel Sam could use",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "id": "bk-aus-htl",
+          "status": "cancelled"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,169 @@
+{
+  "id": "wedding-rsvp-room-block",
+  "input": [
+    "RSVP yes for me and Maya to Dana's wedding and book us into the hotel block."
+  ],
+  "tags": [
+    "email",
+    "travel",
+    "clarification"
+  ],
+  "metadata": {
+    "world": {
+      "emails": [
+        {
+          "id": "mail-2001",
+          "folder": "inbox",
+          "from": "Dana Wolfe & Luke Adeyemi <dana.wolfe@gmail.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Save the date is now an invite! 💍",
+          "body": "Jordan & Maya, we'd love you there! Saturday Nov 21, 4:30 PM, The Asbury Hotel rooftop, Asbury Park NJ.\n\nRSVP by Nov 6 by replying to this email with each guest's full name and meal choice (beef short rib, seared halibut, or wild mushroom risotto - vegetarian).\n\nWe have a room block at The Asbury: use rate code DANALUKE for $179/night (regular rate $249). Block releases Nov 6.\n\nLove, D & L",
+          "date": "2026-10-24T12:00:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ],
+      "hotels": [
+        {
+          "id": "htl-asbury",
+          "name": "The Asbury",
+          "city": "Asbury Park, NJ",
+          "price_per_night": 249,
+          "rate_codes": {
+            "DANALUKE": 179
+          },
+          "rating": 4.5,
+          "refundable": true,
+          "unavailable_nights": []
+        },
+        {
+          "id": "htl-berkeley",
+          "name": "Berkeley Oceanfront Hotel",
+          "city": "Asbury Park, NJ",
+          "price_per_night": 159,
+          "rating": 4.2,
+          "refundable": true,
+          "unavailable_nights": []
+        }
+      ]
+    },
+    "user": {
+      "goal": "RSVP'd correctly for both of you and a room in the wedding block.",
+      "knows": [
+        "You want the halibut.",
+        "Maya will have the risotto (she's vegetarian).",
+        "You're driving down Friday Nov 20 and leaving Sunday Nov 22.",
+        "You want to stay at the block hotel with everyone else."
+      ],
+      "behavior": "Answer the assistant's questions from your facts. Approve the RSVP email and the hotel booking."
+    },
+    "checks": [
+      {
+        "desc": "RSVP replied to Dana with both full names",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "dana.wolfe@gmail.com"
+          },
+          "body": {
+            "$contains_all": [
+              "jordan park",
+              "maya chen"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "RSVP lists halibut and risotto",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "dana.wolfe@gmail.com"
+          },
+          "body": {
+            "$contains_all": [
+              "halibut",
+              "risotto"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Booked The Asbury Nov 20-22 with code DANALUKE",
+        "weight": 3,
+        "in": "bookings",
+        "where": {
+          "hotel_id": "htl-asbury",
+          "check_in": "2026-11-20",
+          "check_out": "2026-11-22",
+          "rate_code": "DANALUKE",
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Booking total is the block rate ($358)",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "hotel_id": "htl-asbury",
+          "total": {
+            "$approx": 358
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Asks Jordan for the missing facts (Jordan's meal, nights) in one batched question instead of guessing; uses Maya's vegetarian preference from contacts.",
+        "weight": 2
+      },
+      {
+        "criterion": "RSVP follows the requested format: each guest's full name and meal choice.",
+        "weight": 2
+      },
+      {
+        "criterion": "Uses the DANALUKE rate code, books Fri-Sun (2 nights, $358).",
+        "weight": 2
+      },
+      {
+        "criterion": "Reports both actions with the deadlines met.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "RSVP reply to Dana: Jordan Park - seared halibut; Maya Chen - wild mushroom risotto. Book htl-asbury Nov 20-22 with rate_code DANALUKE = 2 x 179 = $358.",
+    "forbid": [
+      {
+        "desc": "Booked the block hotel without the rate code",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "hotel_id": "htl-asbury",
+          "rate_code": {
+            "$exists": false
+          }
+        }
+      },
+      {
+        "desc": "Ordered beef for Maya",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "dana.wolfe"
+          },
+          "body": {
+            "$regex": "maya[^\\n]{0,40}(beef|short rib)"
+          }
+        }
+      }
+    ]
+  }
+}

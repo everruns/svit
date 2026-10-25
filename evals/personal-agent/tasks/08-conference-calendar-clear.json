@@ -1,0 +1,372 @@
+{
+  "id": "conference-calendar-clear",
+  "input": [
+    "I'll be at DevCon in Denver Mon-Wed, Nov 16-18. Clear those days: drop the internal stuff, move my 1:1 with Priya to whenever she can do later that week, and reschedule anything external with the other party."
+  ],
+  "tags": [
+    "scheduling",
+    "multi-party",
+    "email",
+    "calendar"
+  ],
+  "metadata": {
+    "world": {
+      "calendar": [
+        {
+          "id": "evt-flight-den",
+          "title": "Flight to Denver (UA 455)",
+          "start": "2026-11-15T18:00:00-05:00",
+          "end": "2026-11-15T21:10:00-05:00",
+          "attendees": [],
+          "location": "LGA",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-devcon",
+          "title": "DevCon Denver",
+          "start": "2026-11-16T08:00:00-07:00",
+          "end": "2026-11-18T17:00:00-07:00",
+          "attendees": [],
+          "location": "Colorado Convention Center",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-flight-home",
+          "title": "Flight home (UA 1290)",
+          "start": "2026-11-18T18:30:00-07:00",
+          "end": "2026-11-19T00:05:00-05:00",
+          "attendees": [],
+          "location": "DEN",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-dentist",
+          "title": "Dentist cleaning - Dr. Alvarez",
+          "start": "2026-11-17T10:00:00-05:00",
+          "end": "2026-11-17T11:00:00-05:00",
+          "attendees": [
+            "frontdesk@alvarezdental.com"
+          ],
+          "location": "Alvarez Dental, 210 7th Ave, Brooklyn",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-design-review",
+          "title": "Design review (internal)",
+          "start": "2026-11-17T15:00:00-05:00",
+          "end": "2026-11-17T16:00:00-05:00",
+          "attendees": [
+            "design@acme.io"
+          ],
+          "location": "Zoom",
+          "notes": null,
+          "status": "confirmed"
+        },
+        {
+          "id": "evt-gym-1117",
+          "title": "Spin class",
+          "start": "2026-11-17T07:00:00-05:00",
+          "end": "2026-11-17T07:45:00-05:00",
+          "attendees": [],
+          "location": "Brooklyn Boulders",
+          "notes": null,
+          "status": "confirmed"
+        }
+      ],
+      "contacts": [
+        {
+          "id": "ct-alvarez",
+          "name": "Alvarez Dental (front desk)",
+          "email": "frontdesk@alvarezdental.com",
+          "phone": "+1 718 555 0133"
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "priya.raman@acme.io",
+            "any": [
+              "1:1",
+              "one-on-one",
+              "1-1",
+              "move",
+              "resched"
+            ]
+          },
+          "reply": {
+            "from": "Priya Raman <priya.raman@acme.io>",
+            "body": "No problem! Thursday Nov 19 at 3:00pm works for me. -P"
+          }
+        },
+        {
+          "channel": "email",
+          "match": {
+            "to": "frontdesk@alvarezdental.com",
+            "any": [
+              "resched",
+              "move",
+              "another",
+              "different",
+              "new time",
+              "cleaning",
+              "appointment"
+            ]
+          },
+          "reply": {
+            "from": "Alvarez Dental <frontdesk@alvarezdental.com>",
+            "body": "Hi Jordan, thanks for letting us know. We can offer Friday Nov 20 at 11:00 AM or Monday Nov 23 at 8:00 AM. Please reply to confirm which works."
+          }
+        },
+        {
+          "channel": "email",
+          "match": {
+            "to": "frontdesk@alvarezdental.com",
+            "any": [
+              "nov 20",
+              "november 20",
+              "friday",
+              "11/20",
+              "fri"
+            ]
+          },
+          "reply": {
+            "from": "Alvarez Dental <frontdesk@alvarezdental.com>",
+            "subject": "Appointment confirmed",
+            "body": "You're all set for Friday Nov 20 at 11:00 AM. See you then!"
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Have Nov 16-18 cleared, the Priya 1:1 moved to a time she agreed to, and the dentist rescheduled to a time you picked.",
+      "knows": [
+        "Between the two dentist options you prefer Friday Nov 20 at 11:00 AM.",
+        "Skipping internal meetings (design review, standups, syncs, reviews) while away is fine; spin class can go too."
+      ],
+      "behavior": "Approve emailing Priya and the dentist. When the assistant tells you the dentist's options, pick Friday Nov 20 at 11am. Approve the rest."
+    },
+    "checks": [
+      {
+        "desc": "Standups on Nov 16-18 cancelled",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$in": [
+              "evt-standup-11-16",
+              "evt-standup-11-17",
+              "evt-standup-11-18"
+            ]
+          }
+        },
+        "min": 3,
+        "expect": {
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Design review on Nov 17 cancelled",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": "evt-design-review",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Recurring internal meetings on Nov 16-18 cancelled (PM sync x2, product review, growth weekly)",
+        "weight": 2,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$regex": "^evt-w-.*-11-1[678]$"
+          }
+        },
+        "min": 4,
+        "expect": {
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Priya 1:1 now Thu Nov 19 15:00",
+        "weight": 2,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "id": "evt-1on1-1118",
+              "status": "confirmed",
+              "start": {
+                "$time_eq": "2026-11-19T15:00:00-05:00"
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "title": {
+                "$contains": "priya"
+              },
+              "start": {
+                "$time_eq": "2026-11-19T15:00:00-05:00"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "desc": "The Nov 18 1:1 slot no longer stands",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "title": {
+            "$contains": "priya"
+          },
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-18T14:00:00-05:00"
+          }
+        },
+        "min": 0,
+        "max": 0
+      },
+      {
+        "desc": "Dentist now Fri Nov 20 11:00",
+        "weight": 2,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "id": "evt-dentist",
+              "status": "confirmed",
+              "start": {
+                "$time_eq": "2026-11-20T11:00:00-05:00"
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "title": {
+                "$contains": "dent"
+              },
+              "start": {
+                "$time_eq": "2026-11-20T11:00:00-05:00"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "desc": "Confirmed Friday with the dentist's office",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "alvarezdental"
+          },
+          "body": {
+            "$contains_any": [
+              "nov 20",
+              "november 20",
+              "friday",
+              "11/20"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Identifies everything in Nov 16-18 and handles each correctly: cancels standups, the Eng/PM syncs, product review, growth weekly, design review, and spin class; does not touch DevCon, flights, or anything outside the trip.",
+        "weight": 2
+      },
+      {
+        "criterion": "Emails Priya, reads her reply, and moves the 1:1 to Thu Nov 19 3:00 PM.",
+        "weight": 2
+      },
+      {
+        "criterion": "Emails the dentist, relays both offered times to Jordan, confirms Jordan's choice with the office, and updates the calendar only after confirmation.",
+        "weight": 2
+      },
+      {
+        "criterion": "Final summary lists every change.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Cancel standups Nov 16/17/18, Eng/PM sync Nov 16 and 18, product review Nov 17, growth weekly Nov 18, design review Nov 17, spin class Nov 17. Priya replies Thu Nov 19 15:00. Dentist offers Fri Nov 20 11:00 or Mon Nov 23 8:00; Jordan picks Fri; reply to confirm; move dentist to Nov 20 11:00-12:00. Keep DevCon and flights.",
+    "forbid": [
+      {
+        "desc": "Cancelled DevCon or a flight",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$in": [
+              "evt-devcon",
+              "evt-flight-den",
+              "evt-flight-home"
+            ]
+          },
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Cancelled a standup outside the trip",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$in": [
+              "evt-standup-11-13",
+              "evt-standup-11-19",
+              "evt-standup-11-20"
+            ]
+          },
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Cancelled an internal meeting outside the trip",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "id": {
+            "$regex": "^evt-w-.*-11-(1[3459]|20)$"
+          },
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Moved the dentist to the slot Jordan did not pick",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "title": {
+            "$contains": "dent"
+          },
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-23T08:00:00-05:00"
+          }
+        }
+      }
+    ]
+  }
+}

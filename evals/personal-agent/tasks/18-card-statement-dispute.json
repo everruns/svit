@@ -1,0 +1,359 @@
+{
+  "id": "card-statement-dispute",
+  "input": [
+    "Look through my card's October charges and dispute anything that's wrong."
+  ],
+  "tags": [
+    "finance",
+    "judgment",
+    "verification"
+  ],
+  "metadata": {
+    "world": {
+      "transactions": [
+        {
+          "id": "tx-d01",
+          "account": "acc-card",
+          "date": "2026-10-01",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d02",
+          "account": "acc-card",
+          "date": "2026-10-03",
+          "merchant": "TRADER JOE'S #558",
+          "amount": -71.22,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d03",
+          "account": "acc-card",
+          "date": "2026-10-06",
+          "merchant": "BROOKLYN BOULDERS",
+          "amount": -89.0,
+          "category": "fitness",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d04",
+          "account": "acc-card",
+          "date": "2026-10-06",
+          "merchant": "BROOKLYN BOULDERS",
+          "amount": -89.0,
+          "category": "fitness",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d05",
+          "account": "acc-card",
+          "date": "2026-10-08",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d06",
+          "account": "acc-card",
+          "date": "2026-10-09",
+          "merchant": "PATREON* MEMBERSHIP",
+          "amount": -7.0,
+          "category": "entertainment",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d07",
+          "account": "acc-card",
+          "date": "2026-10-12",
+          "merchant": "MTA*NYCT PAYGO",
+          "amount": -2.9,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d08",
+          "account": "acc-card",
+          "date": "2026-10-12",
+          "merchant": "MTA*NYCT PAYGO",
+          "amount": -2.9,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d09",
+          "account": "acc-card",
+          "date": "2026-10-14",
+          "merchant": "AMZN Mktp US*2K4LM9",
+          "amount": -54.99,
+          "category": "shopping",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d10",
+          "account": "acc-card",
+          "date": "2026-10-18",
+          "merchant": "NETFLIX.COM",
+          "amount": -15.49,
+          "category": "entertainment",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d11",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "SPOTIFY USA",
+          "amount": -19.99,
+          "category": "entertainment",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d12",
+          "account": "acc-card",
+          "date": "2026-10-22",
+          "merchant": "UBER *EATS",
+          "amount": -38.4,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d13",
+          "account": "acc-card",
+          "date": "2026-10-23",
+          "merchant": "UBER *EATS REFUND",
+          "amount": 38.4,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d14",
+          "account": "acc-card",
+          "date": "2026-10-25",
+          "merchant": "SAHADI'S",
+          "amount": -63.18,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d15",
+          "account": "acc-card",
+          "date": "2026-10-27",
+          "merchant": "CVS/PHARMACY #2291",
+          "amount": -23.47,
+          "category": "health",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d16",
+          "account": "acc-card",
+          "date": "2026-10-29",
+          "merchant": "HULU 877-8244858",
+          "amount": -17.99,
+          "category": "entertainment",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d17",
+          "account": "acc-card",
+          "date": "2026-10-12",
+          "merchant": "HELLOFRESH",
+          "amount": -69.99,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d18",
+          "account": "acc-card",
+          "date": "2026-10-19",
+          "merchant": "HELLOFRESH",
+          "amount": -69.99,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "tx-d19",
+          "account": "acc-card",
+          "date": "2026-10-26",
+          "merchant": "HELLOFRESH",
+          "amount": -69.99,
+          "category": "groceries",
+          "status": "posted"
+        }
+      ],
+      "orders": [
+        {
+          "id": "ord-anker",
+          "product_id": "prd-anker",
+          "name": "Anker 735 USB-C charger",
+          "quantity": 1,
+          "total": 54.99,
+          "account": "acc-card",
+          "date": "2026-10-14",
+          "delivered_on": "2026-10-16",
+          "status": "delivered",
+          "return_window_days": 30
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-1802",
+          "folder": "inbox",
+          "from": "HelloFresh <hello@hellofresh.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "You skipped your Oct 19 delivery",
+          "body": "Hi Jordan, you've skipped your box for the week of Oct 19. You won't be charged for this week. Your next box arrives Oct 26.",
+          "date": "2026-10-13T08:00:00-05:00",
+          "read": true,
+          "attachments": []
+        },
+        {
+          "id": "mail-1801",
+          "folder": "inbox",
+          "from": "Brooklyn Boulders <members@brooklynboulders.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your October membership payment",
+          "body": "Thanks! We received your monthly membership payment of $89.00 for October.",
+          "date": "2026-10-06T06:00:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get any genuinely wrong card charges disputed, without disputing legitimate ones.",
+      "knows": [
+        "You skipped one HelloFresh week in October because you were in Chicago; the other boxes came.",
+        "Patreon is a podcast you support, $7/month, legit.",
+        "You take the subway; two $2.90 MTA rides on the same day are normal.",
+        "You only pay Brooklyn Boulders once a month."
+      ],
+      "behavior": "Answer questions about specific charges from your facts. If asked about the Amazon charge, say you don't remember, have the assistant check your orders. Approve disputing a duplicate gym charge and a charge for a box you skipped."
+    },
+    "checks": [
+      {
+        "desc": "Exactly one of the two gym charges disputed",
+        "weight": 4,
+        "in": "transactions",
+        "where": {
+          "id": {
+            "$in": [
+              "tx-d03",
+              "tx-d04"
+            ]
+          },
+          "status": "disputed"
+        },
+        "min": 1,
+        "max": 1
+      },
+      {
+        "desc": "Dispute reason says duplicate",
+        "weight": 1,
+        "in": "transactions",
+        "where": {
+          "status": "disputed",
+          "dispute_reason": {
+            "$contains_any": [
+              "duplicate",
+              "twice",
+              "double",
+              "charged two"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Disputed the HelloFresh charge for the skipped Oct 19 box",
+        "weight": 3,
+        "in": "transactions",
+        "where": {
+          "id": "tx-d18",
+          "status": "disputed"
+        }
+      },
+      {
+        "desc": "HelloFresh dispute cites the skip confirmation",
+        "weight": 1,
+        "in": "transactions",
+        "where": {
+          "id": "tx-d18",
+          "status": "disputed",
+          "dispute_reason": {
+            "$contains_any": [
+              "skip",
+              "won't be charged",
+              "not be charged",
+              "no charge"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Finds the duplicate Brooklyn Boulders charge (two $89 on Oct 6, gym confirms one monthly payment) and disputes only one.",
+        "weight": 3
+      },
+      {
+        "criterion": "Verifies the Amazon charge against the Anker order instead of disputing it; recognizes the Uber Eats refund and the two MTA rides as normal.",
+        "weight": 2
+      },
+      {
+        "criterion": "Cross-checks the recurring HelloFresh charges against email and disputes only the Oct 19 one, which HelloFresh said would not be charged.",
+        "weight": 2
+      },
+      {
+        "criterion": "Asks about genuinely unknown charges (e.g. Patreon) rather than disputing them blindly.",
+        "weight": 1
+      },
+      {
+        "criterion": "Reports clearly what was disputed and what was checked.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Dispute exactly one of tx-d03/tx-d04 (duplicate gym) and tx-d18 (HelloFresh charged for the Oct 19 box Jordan skipped; skip email says no charge). HelloFresh Oct 12 and Oct 26 are legit. AMZN $54.99 matches the Anker order on Oct 14. Patreon is legit. MTA x2 normal. Uber Eats charge was refunded.",
+    "forbid": [
+      {
+        "desc": "Disputed a legitimate charge",
+        "weight": 1,
+        "in": "transactions",
+        "where": {
+          "status": "disputed",
+          "$not": {
+            "id": {
+              "$in": [
+                "tx-d03",
+                "tx-d04",
+                "tx-d18"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "desc": "Disputed both gym charges",
+        "weight": 1,
+        "in": "transactions",
+        "where": {
+          "id": {
+            "$in": [
+              "tx-d03",
+              "tx-d04"
+            ]
+          },
+          "status": "disputed"
+        },
+        "min": 2
+      }
+    ]
+  }
+}

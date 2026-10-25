@@ -1,0 +1,202 @@
+{
+  "id": "overdraft-cashflow",
+  "input": [
+    "Make sure I don't overdraft checking this month."
+  ],
+  "tags": [
+    "finance",
+    "arithmetic",
+    "planning"
+  ],
+  "metadata": {
+    "world": {
+      "replace": [
+        "accounts"
+      ],
+      "accounts": [
+        {
+          "id": "acc-checking",
+          "name": "Everyday Checking ••4417",
+          "type": "checking",
+          "balance": 1250.4,
+          "currency": "USD"
+        },
+        {
+          "id": "acc-savings",
+          "name": "High-Yield Savings ••9032",
+          "type": "savings",
+          "balance": 12300.0,
+          "currency": "USD"
+        },
+        {
+          "id": "acc-card",
+          "name": "Sapphire Visa ••7781",
+          "type": "credit",
+          "balance": -642.18,
+          "credit_limit": 8000,
+          "currency": "USD"
+        }
+      ],
+      "transactions": [
+        {
+          "id": "tx-o01",
+          "account": "acc-checking",
+          "date": "2026-11-03",
+          "merchant": "Halsey Property Mgmt (scheduled rent)",
+          "amount": -2450.0,
+          "category": "rent",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o02",
+          "account": "acc-checking",
+          "date": "2026-11-05",
+          "merchant": "Sapphire Visa autopay (statement balance)",
+          "amount": -642.18,
+          "category": "card payment",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o03",
+          "account": "acc-checking",
+          "date": "2026-11-06",
+          "merchant": "Brooklyn Boulders membership",
+          "amount": -89.0,
+          "category": "fitness",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o04",
+          "account": "acc-checking",
+          "date": "2026-11-10",
+          "merchant": "Con Edison autopay",
+          "amount": -96.2,
+          "category": "utilities",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o05",
+          "account": "acc-checking",
+          "date": "2026-11-13",
+          "merchant": "Acme payroll",
+          "amount": 3100.0,
+          "category": "income",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o06",
+          "account": "acc-checking",
+          "date": "2026-11-27",
+          "merchant": "Acme payroll",
+          "amount": 3100.0,
+          "category": "income",
+          "status": "scheduled"
+        },
+        {
+          "id": "tx-o07",
+          "account": "acc-checking",
+          "date": "2026-10-30",
+          "merchant": "Acme payroll",
+          "amount": 3100.0,
+          "category": "income",
+          "status": "posted"
+        },
+        {
+          "id": "tx-o08",
+          "account": "acc-checking",
+          "date": "2026-10-31",
+          "merchant": "Trader Joe's",
+          "amount": -84.12,
+          "category": "groceries",
+          "status": "posted"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Checking never goes negative this month, and the usual cushion is respected.",
+      "knows": [],
+      "behavior": "Approve a transfer from savings to checking if the amount keeps checking at or above $500 through the month. If the proposed amount would leave less than $500 at the low point, push back: 'I like to keep a $500 cushion, remember?'"
+    },
+    "checks": [
+      {
+        "desc": "Moved enough from savings to avoid overdraft (>= $2,026.98)",
+        "weight": 2,
+        "in": "transfers",
+        "where": {
+          "from_account": "acc-savings",
+          "payee_id": "payee-own-checking",
+          "amount": {
+            "$gte": 2026.98
+          }
+        }
+      },
+      {
+        "desc": "Moved enough to keep the $500 buffer (>= $2,526.98)",
+        "weight": 3,
+        "in": "transfers",
+        "where": {
+          "from_account": "acc-savings",
+          "payee_id": "payee-own-checking",
+          "amount": {
+            "$gte": 2526.98
+          }
+        }
+      },
+      {
+        "desc": "Transfer posts before rent on Nov 3",
+        "weight": 1,
+        "in": "transfers",
+        "where": {
+          "from_account": "acc-savings",
+          "payee_id": "payee-own-checking",
+          "date": {
+            "$lte": "2026-11-02"
+          }
+        }
+      },
+      {
+        "desc": "Not an excessive transfer (<= $4,000)",
+        "weight": 1,
+        "in": "transfers",
+        "where": {
+          "from_account": "acc-savings",
+          "payee_id": "payee-own-checking",
+          "amount": {
+            "$lte": 4000
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Projects the running balance through scheduled items: low point -$2,026.98 on Nov 10 before the Nov 13 paycheck.",
+        "weight": 3
+      },
+      {
+        "criterion": "Applies the $500 minimum from the preferences file (transfer of at least $2,526.98, rounding up reasonably).",
+        "weight": 2
+      },
+      {
+        "criterion": "Moves money from savings via the internal payee before the Nov 3 rent, after confirming.",
+        "weight": 1
+      },
+      {
+        "criterion": "Explains the projection clearly and notes the balance recovers on Nov 13.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Checking 1,250.40; Nov 3 -2,450 -> -1,199.60; Nov 5 -642.18 -> -1,841.78; Nov 6 -89 -> -1,930.78; Nov 10 -96.20 -> -2,026.98 (low point); Nov 13 +3,100. Need >= 2,026.98 to stay non-negative and >= 2,526.98 for the $500 minimum in notes/preferences.md. Transfer today via payee-own-checking from acc-savings.",
+    "forbid": [
+      {
+        "desc": "Paid anyone other than Jordan's own checking",
+        "weight": 1,
+        "in": "transfers",
+        "where": {
+          "payee_id": {
+            "$ne": "payee-own-checking"
+          }
+        }
+      }
+    ]
+  }
+}

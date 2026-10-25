@@ -1,0 +1,241 @@
+{
+  "id": "three-timezone-call",
+  "input": [
+    "Set up a 45-minute call this week with Leo and Aiko about the Lisbon offsite. They both emailed me their availability. Put it on my calendar and make sure they each know when it is."
+  ],
+  "tags": [
+    "scheduling",
+    "timezones",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "emails": [
+        {
+          "id": "mail-101",
+          "folder": "inbox",
+          "from": "Leo Martins <leo.martins@sapo.pt>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: offsite planning call",
+          "body": "Olá! I'm free any weekday between 9:00 and 18:00 Lisbon time. Except this Friday, I'm off that day. Abraço, Leo",
+          "date": "2026-11-01T11:20:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-102",
+          "folder": "inbox",
+          "from": "Aiko Tanaka <aiko.tanaka@kumo.jp>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: offsite planning call",
+          "body": "Hi Jordan, mornings 7-9am or evenings 9-11pm Tokyo time work for me. This week Wednesday and Thursday (Tokyo dates) are out, I'm at a client site. Best, Aiko",
+          "date": "2026-11-01T19:05:00-05:00",
+          "read": false,
+          "attachments": []
+        }
+      ],
+      "contacts": [
+        {
+          "id": "ct-aiko",
+          "name": "Aiko Tanaka",
+          "email": "aiko.tanaka@kumo.jp",
+          "relationship": "designer, Tokyo"
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "leo.martins@sapo.pt",
+            "any": []
+          },
+          "reply": {
+            "from": "Leo Martins <leo.martins@sapo.pt>",
+            "body": "Obrigado Jordan! Small thing: I'm walking my daughter to school until 13:00 my time that day. Could we start at 13:15 Lisbon instead and still keep 45 minutes? (If that's already the plan, ignore me!) Sorry! Leo"
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get a 45-minute call with Leo and Aiko onto your calendar this week, and make sure both of them know the time in their own time zone.",
+      "knows": [
+        "The call is about planning the Lisbon design offsite.",
+        "You do not mind which day as long as it is this week."
+      ],
+      "behavior": "Approve a proposed time only if it starts at or after 8:00 AM Eastern and you are free. If the assistant proposes something before 8:00 AM Eastern, say you don't do calls that early. Approve sending the invite emails. If the assistant says Leo asked to start 15 minutes later, approve the change as long as it still ends by 9:00 AM Eastern."
+    },
+    "checks": [
+      {
+        "desc": "Call on Tue Nov 3 at 8:15 ET (Leo's requested 13:15 Lisbon)",
+        "weight": 3,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "attendees": {
+            "$contains_any": [
+              "leo.martins",
+              "aiko.tanaka"
+            ]
+          },
+          "start": {
+            "$time_eq": "2026-11-03T08:15:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Call lasts 45 minutes, ending 9:00 ET",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-03T08:15:00-05:00"
+          },
+          "end": {
+            "$time_eq": "2026-11-03T09:00:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Both Leo and Aiko are attendees",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-03T08:15:00-05:00"
+          },
+          "attendees": {
+            "$contains_all": [
+              "leo.martins@sapo.pt",
+              "aiko.tanaka@kumo.jp"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Moved rather than duplicated: the 8:15 call exists and no 8:00 call remains",
+        "weight": 1,
+        "all_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "start": {
+                "$time_eq": "2026-11-03T08:15:00-05:00"
+              }
+            }
+          },
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "calendar",
+            "where": {
+              "status": "confirmed",
+              "attendees": {
+                "$contains_any": [
+                  "leo.martins",
+                  "aiko.tanaka"
+                ]
+              },
+              "start": {
+                "$time_eq": "2026-11-03T08:00:00-05:00"
+              }
+            },
+            "min": 0,
+            "max": 0
+          }
+        ]
+      },
+      {
+        "desc": "Leo was told the 13:15 Lisbon time",
+        "weight": 1,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "emails",
+            "where": {
+              "folder": "sent",
+              "$or": [
+                {
+                  "to": {
+                    "$contains": "leo.martins"
+                  }
+                },
+                {
+                  "cc": {
+                    "$contains": "leo.martins"
+                  }
+                }
+              ],
+              "body": {
+                "$regex": "13[:.h]15|1:15\\s*(pm|(-|–|to)\\s*2(:00)?\\s*pm)"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "desc": "Aiko was told the 22:15 Tokyo time",
+        "weight": 2,
+        "any_of": [
+          {
+            "desc": "x",
+            "weight": 1,
+            "in": "emails",
+            "where": {
+              "folder": "sent",
+              "$or": [
+                {
+                  "to": {
+                    "$contains": "aiko.tanaka"
+                  }
+                },
+                {
+                  "cc": {
+                    "$contains": "aiko.tanaka"
+                  }
+                }
+              ],
+              "body": {
+                "$regex": "22[:.h]15|10:15\\s*(pm|(-|–|to)\\s*11(:00)?\\s*pm)"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Chooses a slot that satisfies all constraints: Leo 9-18 Lisbon weekdays except Friday, Aiko 7-9 or 21-23 Tokyo except Tokyo Wed/Thu, Jordan not before 8:00 ET, this week, not in the past.",
+        "weight": 3
+      },
+      {
+        "criterion": "Notices Leo's reply asking for 13:15 Lisbon, checks it still fits everyone (8:15-9:00 ET, 22:15-23:00 Tokyo), moves the event instead of duplicating it, and tells Aiko the new time.",
+        "weight": 3
+      },
+      {
+        "criterion": "Converts time zones correctly in everything it tells Jordan, Leo, and Aiko (ET = UTC-5, Lisbon = UTC+0 in November, Tokyo = UTC+9).",
+        "weight": 2
+      },
+      {
+        "criterion": "Does not ask Jordan for information that was in the emails or preferences file.",
+        "weight": 1
+      },
+      {
+        "criterion": "Final report states the booked time in Eastern and confirms both were notified.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "The only valid window is Tuesday Nov 3, 8:00-9:00 AM ET (13:00-14:00 Lisbon, 22:00-23:00 Tokyo Tue). Monday's window (7-9 AM ET) has passed and is before 8 AM; Wed/Thu ET mornings are Wed/Thu evenings in Tokyo (Aiko out); Friday Leo is off; Aiko's 7-9 AM Tokyo window is 5-7 PM ET the previous day, i.e. 22:00-24:00 Lisbon, outside Leo's hours. When invited for 13:00 Lisbon, Leo replies asking for 13:15. 8:15-9:00 ET = 13:15-14:00 Lisbon = 22:15-23:00 Tokyo still fits, so the event must end at 8:15-9:00 ET and Aiko must hear about the change."
+  }
+}

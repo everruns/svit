@@ -1,0 +1,573 @@
+{
+  "id": "food-budget-analysis",
+  "input": [
+    "How much did I spend on food in October vs September? Am I within my food budget? Save the breakdown in my budget folder."
+  ],
+  "tags": [
+    "finance",
+    "arithmetic",
+    "documents"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "budget/README.md",
+          "content": "# Budget\nFood budget: $900/month. Food = groceries, restaurants, coffee, and delivery. Meals I get reimbursed for by work don't count.\n"
+        }
+      ],
+      "replace": [
+        "transactions"
+      ],
+      "transactions": [
+        {
+          "id": "f-s01",
+          "account": "acc-card",
+          "date": "2026-09-02",
+          "merchant": "TRADER JOE'S #558",
+          "amount": -84.12,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-s02",
+          "account": "acc-card",
+          "date": "2026-09-09",
+          "merchant": "SAHADI'S",
+          "amount": -63.18,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-s03",
+          "account": "acc-card",
+          "date": "2026-09-16",
+          "merchant": "WHOLEFDS ATL #10237",
+          "amount": -102.45,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-s04",
+          "account": "acc-card",
+          "date": "2026-09-23",
+          "merchant": "TRADER JOE'S #558",
+          "amount": -71.22,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-s05",
+          "account": "acc-card",
+          "date": "2026-09-29",
+          "merchant": "FAIRWAY MARKET",
+          "amount": -58.9,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-s06",
+          "account": "acc-card",
+          "date": "2026-09-05",
+          "merchant": "FRANKIES 457",
+          "amount": -46.8,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-s07",
+          "account": "acc-card",
+          "date": "2026-09-12",
+          "merchant": "LILIA",
+          "amount": -92.15,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-s08",
+          "account": "acc-card",
+          "date": "2026-09-19",
+          "merchant": "JOE'S PIZZA",
+          "amount": -38.0,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-s09",
+          "account": "acc-card",
+          "date": "2026-09-26",
+          "merchant": "MISI",
+          "amount": -120.4,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-s10",
+          "account": "acc-card",
+          "date": "2026-09-08",
+          "merchant": "UBER *EATS",
+          "amount": -38.4,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-s11",
+          "account": "acc-card",
+          "date": "2026-09-17",
+          "merchant": "DOORDASH*SUSHI",
+          "amount": -27.95,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-s12",
+          "account": "acc-card",
+          "date": "2026-09-27",
+          "merchant": "CAVIAR*DIG",
+          "amount": -44.1,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-s13",
+          "account": "acc-card",
+          "date": "2026-09-14",
+          "merchant": "UBER *TRIP",
+          "amount": -24.5,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "f-s14",
+          "account": "acc-card",
+          "date": "2026-09-20",
+          "merchant": "CVS/PHARMACY",
+          "amount": -31.12,
+          "category": "health",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc0",
+          "account": "acc-card",
+          "date": "2026-09-03",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc1",
+          "account": "acc-card",
+          "date": "2026-09-06",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc2",
+          "account": "acc-card",
+          "date": "2026-09-09",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc3",
+          "account": "acc-card",
+          "date": "2026-09-12",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc4",
+          "account": "acc-card",
+          "date": "2026-09-15",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc5",
+          "account": "acc-card",
+          "date": "2026-09-18",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc6",
+          "account": "acc-card",
+          "date": "2026-09-21",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-sc7",
+          "account": "acc-card",
+          "date": "2026-09-24",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-o01",
+          "account": "acc-card",
+          "date": "2026-10-03",
+          "merchant": "TRADER JOE'S #558",
+          "amount": -91.3,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-o02",
+          "account": "acc-card",
+          "date": "2026-10-08",
+          "merchant": "SAHADI'S",
+          "amount": -66.75,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-o03",
+          "account": "acc-card",
+          "date": "2026-10-14",
+          "merchant": "WHOLEFDS ATL #10237",
+          "amount": -110.2,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-o04",
+          "account": "acc-card",
+          "date": "2026-10-24",
+          "merchant": "TRADER JOE'S #558",
+          "amount": -71.22,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-o05",
+          "account": "acc-card",
+          "date": "2026-10-29",
+          "merchant": "SAHADI'S",
+          "amount": -63.18,
+          "category": "groceries",
+          "status": "posted"
+        },
+        {
+          "id": "f-o06",
+          "account": "acc-card",
+          "date": "2026-10-02",
+          "merchant": "FRANKIES 457",
+          "amount": -54.6,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-o07",
+          "account": "acc-card",
+          "date": "2026-10-10",
+          "merchant": "LUCALI",
+          "amount": -88.0,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-o08",
+          "account": "acc-card",
+          "date": "2026-10-30",
+          "merchant": "MISI",
+          "amount": -142.3,
+          "category": "restaurants",
+          "status": "posted"
+        },
+        {
+          "id": "f-o09",
+          "account": "acc-card",
+          "date": "2026-10-19",
+          "merchant": "GIRL & THE GOAT CHICAGO",
+          "amount": -96.5,
+          "category": "restaurants",
+          "status": "posted",
+          "memo": "Chicago trip - expensed"
+        },
+        {
+          "id": "f-o10",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "REVIVAL FOOD HALL CHICAGO",
+          "amount": -18.25,
+          "category": "restaurants",
+          "status": "posted",
+          "memo": "Chicago trip - expensed"
+        },
+        {
+          "id": "f-o11",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "AU CHEVAL CHICAGO",
+          "amount": -71.8,
+          "category": "restaurants",
+          "status": "posted",
+          "memo": "Chicago trip - expensed"
+        },
+        {
+          "id": "f-o12",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "DOUGHNUT VAULT CHICAGO",
+          "amount": -14.0,
+          "category": "restaurants",
+          "status": "posted",
+          "memo": "Chicago trip - expensed"
+        },
+        {
+          "id": "f-o13",
+          "account": "acc-card",
+          "date": "2026-10-21",
+          "merchant": "PORTILLO'S CHICAGO",
+          "amount": -52.3,
+          "category": "restaurants",
+          "status": "posted",
+          "memo": "Chicago trip - expensed"
+        },
+        {
+          "id": "f-o14",
+          "account": "acc-card",
+          "date": "2026-10-11",
+          "merchant": "UBER *EATS",
+          "amount": -38.4,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-o15",
+          "account": "acc-card",
+          "date": "2026-10-12",
+          "merchant": "UBER *EATS REFUND",
+          "amount": 38.4,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-o16",
+          "account": "acc-card",
+          "date": "2026-10-15",
+          "merchant": "DOORDASH*THAI",
+          "amount": -31.2,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-o17",
+          "account": "acc-card",
+          "date": "2026-10-25",
+          "merchant": "CAVIAR*SWEETGREEN",
+          "amount": -45.85,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-o18",
+          "account": "acc-card",
+          "date": "2026-10-28",
+          "merchant": "DOORDASH*BURGER",
+          "amount": -29.99,
+          "category": "delivery",
+          "status": "posted"
+        },
+        {
+          "id": "f-o19",
+          "account": "acc-card",
+          "date": "2026-10-18",
+          "merchant": "SEAMLESS*PIZZA SUPREME",
+          "amount": -33.75,
+          "category": "shopping",
+          "status": "posted"
+        },
+        {
+          "id": "f-o20",
+          "account": "acc-card",
+          "date": "2026-10-09",
+          "merchant": "UBER *TRIP",
+          "amount": -19.8,
+          "category": "transport",
+          "status": "posted"
+        },
+        {
+          "id": "f-o21",
+          "account": "acc-card",
+          "date": "2026-10-27",
+          "merchant": "CVS/PHARMACY",
+          "amount": -23.47,
+          "category": "health",
+          "status": "posted"
+        },
+        {
+          "id": "f-o22",
+          "account": "acc-card",
+          "date": "2026-10-16",
+          "merchant": "BROOKLYN BOULDERS",
+          "amount": -89.0,
+          "category": "fitness",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc0",
+          "account": "acc-card",
+          "date": "2026-10-02",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc1",
+          "account": "acc-card",
+          "date": "2026-10-05",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc2",
+          "account": "acc-card",
+          "date": "2026-10-08",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc3",
+          "account": "acc-card",
+          "date": "2026-10-11",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc4",
+          "account": "acc-card",
+          "date": "2026-10-14",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc5",
+          "account": "acc-card",
+          "date": "2026-10-17",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc6",
+          "account": "acc-card",
+          "date": "2026-10-20",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc7",
+          "account": "acc-card",
+          "date": "2026-10-23",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc8",
+          "account": "acc-card",
+          "date": "2026-10-26",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        },
+        {
+          "id": "f-oc9",
+          "account": "acc-card",
+          "date": "2026-10-29",
+          "merchant": "SQ *BLUE BOTTLE COFFEE",
+          "amount": -6.5,
+          "category": "coffee",
+          "status": "posted"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Know your food spending for Sep and Oct versus the $900 budget, with a saved breakdown.",
+      "knows": [],
+      "behavior": "You don't know the numbers. Accept the answer."
+    },
+    "checks": [
+      {
+        "desc": "Breakdown saved with the October total $893.34",
+        "weight": 3,
+        "in": "files",
+        "where": {
+          "path": {
+            "$contains": "budget/"
+          },
+          "content": {
+            "$contains_any": [
+              "893.34"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Breakdown includes the September total $839.67",
+        "weight": 2,
+        "in": "files",
+        "where": {
+          "path": {
+            "$contains": "budget/"
+          },
+          "content": {
+            "$contains_any": [
+              "839.67"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Excludes the five Chicago meals marked 'expensed' ($252.85) per the budget rule.",
+        "weight": 2
+      },
+      {
+        "criterion": "Nets the Uber Eats refund, includes the miscategorized Seamless delivery, and excludes Uber rides, CVS, and the gym.",
+        "weight": 2
+      },
+      {
+        "criterion": "Reports October $893.34 (under the $900 budget by $6.66) and September $839.67, with a category breakdown.",
+        "weight": 2
+      },
+      {
+        "criterion": "Saves a clear breakdown file in budget/.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "September: groceries 379.87 + restaurants 297.35 + coffee 52.00 + delivery 110.45 = 839.67. October: groceries 402.65 + restaurants 284.90 + coffee 65.00 + delivery (31.20+45.85+29.99+33.75 Seamless; Uber Eats 38.40 refunded) 140.79 = 893.34; Chicago expensed meals 252.85 excluded. Under budget by $6.66."
+  }
+}

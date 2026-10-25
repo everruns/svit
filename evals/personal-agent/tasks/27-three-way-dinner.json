@@ -1,0 +1,220 @@
+{
+  "id": "three-way-dinner",
+  "input": [
+    "Set up dinner next week with Dana and Tom. Figure out a night that works for all of us, book somewhere, and send the invite."
+  ],
+  "tags": [
+    "scheduling",
+    "multi-party",
+    "dining",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "dana.wolfe@gmail.com",
+            "any": [
+              "dinner"
+            ]
+          },
+          "reply": {
+            "from": "Dana Wolfe <dana.wolfe@gmail.com>",
+            "body": "Yes!! Next week Tuesday or Thursday evening works for me. Just no seafood places please, shellfish allergy."
+          }
+        },
+        {
+          "channel": "email",
+          "match": {
+            "to": "tom.becker@acme.io",
+            "any": [
+              "dinner"
+            ]
+          },
+          "reply": {
+            "from": "Tom Becker <tom.becker@acme.io>",
+            "body": "I'm in. Wednesday or Thursday, Tuesday I do kid pickup. Somewhere in Brooklyn would be ideal, 7:30 or later."
+          }
+        }
+      ],
+      "restaurants": [
+        {
+          "id": "rst-premiere",
+          "name": "Maison Premiere",
+          "city": "Brooklyn (Williamsburg)",
+          "cuisine": "Oyster bar & seafood",
+          "price_level": "$$$",
+          "rating": 4.6,
+          "slots": {
+            "2026-11-12": [
+              {
+                "time": "19:30",
+                "max_party": 4
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-viacarota",
+          "name": "Via Carota",
+          "city": "Manhattan (West Village)",
+          "cuisine": "Italian",
+          "price_level": "$$$",
+          "rating": 4.7,
+          "slots": {
+            "2026-11-12": [
+              {
+                "time": "19:45",
+                "max_party": 4
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-frankies",
+          "name": "Frankies 457 Spuntino",
+          "city": "Brooklyn (Carroll Gardens)",
+          "cuisine": "Italian",
+          "price_level": "$$",
+          "rating": 4.6,
+          "slots": {
+            "2026-11-10": [
+              {
+                "time": "19:30",
+                "max_party": 4
+              }
+            ],
+            "2026-11-11": [
+              {
+                "time": "20:00",
+                "max_party": 4
+              }
+            ],
+            "2026-11-12": [
+              {
+                "time": "18:30",
+                "max_party": 4
+              },
+              {
+                "time": "19:45",
+                "max_party": 4
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-ugly",
+          "name": "Ugly Baby",
+          "city": "Brooklyn (Carroll Gardens)",
+          "cuisine": "Thai",
+          "price_level": "$$",
+          "rating": 4.5,
+          "slots": {
+            "2026-11-12": [
+              {
+                "time": "21:30",
+                "max_party": 2
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Dinner with Dana and Tom next week on a night that works for everyone, booked and on everyone's calendar.",
+      "knows": [],
+      "behavior": "Approve emailing Dana and Tom, the booking, and the invite."
+    },
+    "checks": [
+      {
+        "desc": "Booked Frankies 457 for 3 on Thu Nov 12 at 19:45",
+        "weight": 4,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": "rst-frankies",
+          "date": "2026-11-12",
+          "time": "19:45",
+          "party_size": 3,
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Calendar event Thu Nov 12 19:45 with Dana and Tom",
+        "weight": 2,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-12T19:45:00-05:00"
+          },
+          "attendees": {
+            "$contains_all": [
+              "dana.wolfe",
+              "tom.becker"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Invite email to both with the venue",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains_all": [
+              "dana.wolfe",
+              "tom.becker"
+            ]
+          },
+          "body": {
+            "$contains": "frankies"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Asks both friends, reads their replies, and intersects: Dana Tue/Thu, Tom Wed/Thu (not Tue), Jordan free Thu (book club Wed) -> Thursday Nov 12.",
+        "weight": 3
+      },
+      {
+        "criterion": "Applies venue constraints: Brooklyn, 7:30 PM or later, no seafood (rules out Maison Premiere), party of 3 (rules out Ugly Baby's 2-top), so Frankies at 7:45.",
+        "weight": 2
+      },
+      {
+        "criterion": "Books, adds the event with both as attendees, and emails the details.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Thursday Nov 12 is the only common night. Frankies 457 at 19:45 for 3 (18:30 is before Tom's 7:30). Via Carota is in Manhattan; Maison Premiere is seafood; Ugly Baby seats 2.",
+    "forbid": [
+      {
+        "desc": "Booked a venue or night that breaks someone's constraint",
+        "weight": 1,
+        "in": "reservations",
+        "where": {
+          "status": "confirmed",
+          "$or": [
+            {
+              "restaurant_id": {
+                "$in": [
+                  "rst-premiere",
+                  "rst-ugly",
+                  "rst-viacarota"
+                ]
+              }
+            },
+            {
+              "date": {
+                "$ne": "2026-11-12"
+              }
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

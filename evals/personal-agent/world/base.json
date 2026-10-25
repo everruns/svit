@@ -1,0 +1,3529 @@
+{
+  "now": "2026-11-02T09:00:00-05:00",
+  "timezone": "America/New_York (UTC-05:00 until March)",
+  "utc_offset_minutes": -300,
+  "user": {
+    "name": "Jordan Park",
+    "email": "jordan.park@fastmail.com",
+    "phone": "+1 917 555 0199",
+    "address": "417 Prospect Pl, Apt 3R, Brooklyn, NY 11238",
+    "employer": "Acme (product manager)",
+    "persona": "You are Jordan Park, 34, a product manager at Acme living in Brooklyn with your partner Maya. You are busy, friendly, a bit terse over chat, and you expect your assistant to sweat the details."
+  },
+  "default_card": "acc-card",
+  "emails": [
+    {
+      "id": "mail-001",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Markets wobble, AI chips, and pumpkin spice economics",
+      "body": "Today's newsletter...",
+      "date": "2026-11-02T06:02:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-002",
+      "folder": "inbox",
+      "from": "Priya Raman <priya.raman@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Re: Q4 planning doc",
+      "body": "Thanks Jordan, looks good. Let's discuss at our 1:1.",
+      "date": "2026-10-30T16:40:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-003",
+      "folder": "inbox",
+      "from": "Con Edison <noreply@coned.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your October bill is ready",
+      "body": "Amount due: $96.20. Due date: Nov 10, 2026.",
+      "date": "2026-10-28T08:00:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-004",
+      "folder": "inbox",
+      "from": "Spotify <no-reply@spotify.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Premium Family receipt",
+      "body": "$19.99 charged to Visa ••7781.",
+      "date": "2026-10-21T09:00:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-005",
+      "folder": "inbox",
+      "from": "Maya Chen <maya.chen@gmail.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "pics from the weekend",
+      "body": "so cute 📸",
+      "date": "2026-10-26T20:12:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n001",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Rate cuts, chips, and pumpkins",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-04T18:40:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n002",
+      "folder": "inbox",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Soups for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-02T12:49:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n003",
+      "folder": "archive",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Roadmaps that survive contact",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-29T12:50:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n004",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Night markets and jazz",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-26T20:37:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n005",
+      "folder": "inbox",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "The bundle returns",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-11-01T07:40:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n006",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Sheet-pan dinners",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-04T06:01:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n007",
+      "folder": "archive",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Pricing pages for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-04T19:54:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n008",
+      "folder": "archive",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Fall foliage day trips",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-14T09:18:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n009",
+      "folder": "archive",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Aggregators again",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-27T09:18:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n010",
+      "folder": "inbox",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Braises",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-10-17T16:53:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n011",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Saying no",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-01T21:10:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n012",
+      "folder": "inbox",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Flea markets for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-27T10:25:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n013",
+      "folder": "inbox",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Rate cuts, chips, and pumpkins",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-26T14:16:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n014",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Soups",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-05T11:16:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n015",
+      "folder": "archive",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Roadmaps that survive contact",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-10-16T20:31:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n016",
+      "folder": "archive",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Night markets and jazz",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-04T08:06:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n017",
+      "folder": "inbox",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "The bundle returns for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-14T11:11:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n018",
+      "folder": "inbox",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Sheet-pan dinners",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-11T11:46:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n019",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Pricing pages",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-23T16:43:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n020",
+      "folder": "archive",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Fall foliage day trips",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-10-26T15:30:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n021",
+      "folder": "archive",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Aggregators again",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-22T19:52:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n022",
+      "folder": "archive",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Braises for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-29T07:46:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n023",
+      "folder": "archive",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Saying no",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-25T08:04:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n024",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Flea markets",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-30T12:19:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n025",
+      "folder": "inbox",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Rate cuts, chips, and pumpkins",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-10-24T09:24:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n026",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Soups",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-01T08:56:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n027",
+      "folder": "archive",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Roadmaps that survive contact for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-09-30T16:52:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n028",
+      "folder": "inbox",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Night markets and jazz",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-28T17:52:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n029",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: The bundle returns",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-13T16:31:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n030",
+      "folder": "inbox",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Sheet-pan dinners",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-11-01T15:44:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n031",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Pricing pages",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-10-25T14:23:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n032",
+      "folder": "inbox",
+      "from": "NYT Cooking <cooking@nytimes.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Fall foliage day trips for a cozy week",
+      "body": "Five recipes for busy weeknights.",
+      "date": "2026-10-06T15:52:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n033",
+      "folder": "inbox",
+      "from": "Lenny's Newsletter <lenny@substack.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Aggregators again",
+      "body": "This week: how the best PMs run planning.",
+      "date": "2026-10-14T12:06:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n034",
+      "folder": "inbox",
+      "from": "Brooklyn Magazine <hello@bkmag.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Weekend picks: Braises",
+      "body": "Things to do in Brooklyn this weekend.",
+      "date": "2026-10-28T17:03:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n035",
+      "folder": "inbox",
+      "from": "Stratechery <email@stratechery.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Saying no",
+      "body": "Weekly article for subscribers.",
+      "date": "2026-10-20T21:55:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n036",
+      "folder": "inbox",
+      "from": "The Morning Brew <crew@morningbrew.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "☕ Flea markets",
+      "body": "Today's newsletter: markets, tech, and one weird chart.",
+      "date": "2026-09-30T15:57:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n037",
+      "folder": "inbox",
+      "from": "REI Co-op <rei@notices.rei.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Members save 20% on one item",
+      "body": "Use code at checkout through Sunday.",
+      "date": "2026-10-09T16:23:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n038",
+      "folder": "inbox",
+      "from": "Uniqlo <info@mail.uniqlo.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "HEATTECH is back",
+      "body": "Stay warm this season.",
+      "date": "2026-10-18T21:45:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n039",
+      "folder": "inbox",
+      "from": "Warby Parker <hello@warbyparker.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Time for an eye exam?",
+      "body": "It's been a year since your last exam.",
+      "date": "2026-10-25T18:46:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n040",
+      "folder": "inbox",
+      "from": "Allbirds <hello@allbirds.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "New colors just dropped",
+      "body": "Meet the fall collection.",
+      "date": "2026-10-27T08:18:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n041",
+      "folder": "inbox",
+      "from": "Delta SkyMiles <skymiles@e.delta.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your November SkyMiles statement",
+      "body": "You have 41,220 miles.",
+      "date": "2026-10-07T19:08:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n042",
+      "folder": "inbox",
+      "from": "Citi Bike <noreply@citibikenyc.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your October ride summary",
+      "body": "You rode 23 times in October.",
+      "date": "2026-10-21T10:57:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n043",
+      "folder": "inbox",
+      "from": "Seamless <noreply@seamless.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "$5 off your next order",
+      "body": "Hungry? We've got you.",
+      "date": "2026-10-16T14:36:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n044",
+      "folder": "archive",
+      "from": "Airbnb <express@airbnb.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Ideas for your next trip",
+      "body": "Stays in the Catskills.",
+      "date": "2026-10-12T16:19:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n045",
+      "folder": "archive",
+      "from": "REI Co-op <rei@notices.rei.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Members save 20% on one item",
+      "body": "Use code at checkout through Sunday.",
+      "date": "2026-10-15T16:56:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n046",
+      "folder": "inbox",
+      "from": "Uniqlo <info@mail.uniqlo.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "HEATTECH is back",
+      "body": "Stay warm this season.",
+      "date": "2026-10-21T13:03:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n047",
+      "folder": "inbox",
+      "from": "Warby Parker <hello@warbyparker.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Time for an eye exam?",
+      "body": "It's been a year since your last exam.",
+      "date": "2026-10-05T13:00:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n048",
+      "folder": "inbox",
+      "from": "Allbirds <hello@allbirds.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "New colors just dropped",
+      "body": "Meet the fall collection.",
+      "date": "2026-10-14T20:36:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n049",
+      "folder": "inbox",
+      "from": "Delta SkyMiles <skymiles@e.delta.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your November SkyMiles statement",
+      "body": "You have 41,220 miles.",
+      "date": "2026-10-06T10:58:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n050",
+      "folder": "inbox",
+      "from": "Citi Bike <noreply@citibikenyc.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your October ride summary",
+      "body": "You rode 23 times in October.",
+      "date": "2026-10-24T19:00:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n051",
+      "folder": "inbox",
+      "from": "Seamless <noreply@seamless.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "$5 off your next order",
+      "body": "Hungry? We've got you.",
+      "date": "2026-10-09T12:07:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n052",
+      "folder": "inbox",
+      "from": "Airbnb <express@airbnb.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Ideas for your next trip",
+      "body": "Stays in the Catskills.",
+      "date": "2026-10-05T18:05:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n053",
+      "folder": "inbox",
+      "from": "REI Co-op <rei@notices.rei.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Members save 20% on one item",
+      "body": "Use code at checkout through Sunday.",
+      "date": "2026-10-29T06:37:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n054",
+      "folder": "inbox",
+      "from": "Uniqlo <info@mail.uniqlo.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "HEATTECH is back",
+      "body": "Stay warm this season.",
+      "date": "2026-10-19T15:57:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n055",
+      "folder": "inbox",
+      "from": "Warby Parker <hello@warbyparker.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Time for an eye exam?",
+      "body": "It's been a year since your last exam.",
+      "date": "2026-10-22T19:11:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n056",
+      "folder": "inbox",
+      "from": "Allbirds <hello@allbirds.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "New colors just dropped",
+      "body": "Meet the fall collection.",
+      "date": "2026-10-31T07:05:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n057",
+      "folder": "archive",
+      "from": "Delta SkyMiles <skymiles@e.delta.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your November SkyMiles statement",
+      "body": "You have 41,220 miles.",
+      "date": "2026-10-09T20:10:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n058",
+      "folder": "archive",
+      "from": "Citi Bike <noreply@citibikenyc.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your October ride summary",
+      "body": "You rode 23 times in October.",
+      "date": "2026-10-17T12:36:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n059",
+      "folder": "inbox",
+      "from": "Seamless <noreply@seamless.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "$5 off your next order",
+      "body": "Hungry? We've got you.",
+      "date": "2026-10-26T11:14:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n060",
+      "folder": "archive",
+      "from": "Airbnb <express@airbnb.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Ideas for your next trip",
+      "body": "Stays in the Catskills.",
+      "date": "2026-10-27T13:20:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n061",
+      "folder": "inbox",
+      "from": "REI Co-op <rei@notices.rei.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Members save 20% on one item",
+      "body": "Use code at checkout through Sunday.",
+      "date": "2026-10-21T20:32:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n062",
+      "folder": "inbox",
+      "from": "Uniqlo <info@mail.uniqlo.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "HEATTECH is back",
+      "body": "Stay warm this season.",
+      "date": "2026-10-01T06:18:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n063",
+      "folder": "archive",
+      "from": "Felix Grant <felix@grantandco.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "long time!",
+      "body": "we should grab a beer sometime this month, no rush",
+      "date": "2026-10-05T13:28:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n064",
+      "folder": "inbox",
+      "from": "Nora Quinn <nora.quinn@gmail.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "package",
+      "body": "fyi I grabbed a package for you from the lobby, it's at my place whenever",
+      "date": "2026-10-27T17:54:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n065",
+      "folder": "inbox",
+      "from": "Pete's Super <super@417prospect.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Boiler maintenance",
+      "body": "Heads up: hot water will be off Thursday Nov 19 from 10am to noon for boiler maintenance.",
+      "date": "2026-10-31T10:40:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n066",
+      "folder": "inbox",
+      "from": "Owen Brandt <owen.brandt@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Re: metrics dashboard",
+      "body": "Pushed the fix, numbers should look right now.",
+      "date": "2026-10-09T16:15:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n067",
+      "folder": "inbox",
+      "from": "Ivy Morales <ivy.morales@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Q3 expense reports closed",
+      "body": "Thanks all, Q3 is closed. Boston September trip reimbursements were paid on Oct 15.",
+      "date": "2026-10-06T06:48:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n068",
+      "folder": "inbox",
+      "from": "Hana Yoshida <hana.yoshida@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Figma file for onboarding",
+      "body": "Here's the latest. No action needed, just FYI.",
+      "date": "2026-10-18T20:46:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n069",
+      "folder": "inbox",
+      "from": "Rosa Delgado <rosa.delgado@gmail.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "thanksgiving?",
+      "body": "are you two coming to Philly for thanksgiving? mom is asking",
+      "date": "2026-10-22T15:34:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n070",
+      "folder": "archive",
+      "from": "Greenlight Bookstore <events@greenlightbookstore.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Book club: November pick",
+      "body": "We're reading 'The Safekeep' for Nov 11.",
+      "date": "2026-10-19T13:05:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n071",
+      "folder": "inbox",
+      "from": "Theo Lindqvist <theo.lindqvist@icloud.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "new route set",
+      "body": "they reset the cave wall, it's spicy",
+      "date": "2026-10-11T09:00:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n072",
+      "folder": "archive",
+      "from": "Chloe Martin <chloe.martin@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "customer quote",
+      "body": "Brightline loved the demo, quote below for your deck.",
+      "date": "2026-10-20T11:13:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n073",
+      "folder": "archive",
+      "from": "Acme IT <it@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Laptop security update",
+      "body": "Please restart your laptop by Friday to install the update.",
+      "date": "2026-10-14T16:42:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n074",
+      "folder": "inbox",
+      "from": "Con Edison <noreply@coned.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Payment received",
+      "body": "Thanks, we received your payment of $88.40 on Oct 10.",
+      "date": "2026-11-02T08:53:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n075",
+      "folder": "inbox",
+      "from": "Acme People Team <people@acme.io>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Open enrollment starts Nov 9",
+      "body": "Benefits open enrollment runs Nov 9-20.",
+      "date": "2026-09-30T09:01:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n076",
+      "folder": "inbox",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 35 searches",
+      "body": "See who's looking.",
+      "date": "2026-11-01T10:11:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n077",
+      "folder": "inbox",
+      "from": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Daily Digest for Oct 6",
+      "body": "2 mailpieces arriving today.",
+      "date": "2026-11-02T06:34:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n078",
+      "folder": "inbox",
+      "from": "Google <no-reply@accounts.google.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Security alert",
+      "body": "New sign-in on Mac. If this was you, no action needed.",
+      "date": "2026-10-07T18:47:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n079",
+      "folder": "archive",
+      "from": "Chase <no.reply.alerts@chase.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your statement is ready",
+      "body": "Your Sapphire Visa statement is available.",
+      "date": "2026-10-16T08:41:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n080",
+      "folder": "inbox",
+      "from": "Fidelity Investments <fidelity.alerts@fidelity.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your monthly statement is ready",
+      "body": "View your October statement online.",
+      "date": "2026-10-25T10:32:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n081",
+      "folder": "archive",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 50 searches",
+      "body": "See who's looking.",
+      "date": "2026-10-30T21:55:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n082",
+      "folder": "inbox",
+      "from": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Daily Digest for Oct 8",
+      "body": "2 mailpieces arriving today.",
+      "date": "2026-10-14T19:20:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n083",
+      "folder": "inbox",
+      "from": "Google <no-reply@accounts.google.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Security alert",
+      "body": "New sign-in on Mac. If this was you, no action needed.",
+      "date": "2026-10-12T17:15:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n084",
+      "folder": "inbox",
+      "from": "Chase <no.reply.alerts@chase.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your statement is ready",
+      "body": "Your Sapphire Visa statement is available.",
+      "date": "2026-10-24T10:41:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n085",
+      "folder": "inbox",
+      "from": "Fidelity Investments <fidelity.alerts@fidelity.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your monthly statement is ready",
+      "body": "View your October statement online.",
+      "date": "2026-10-01T15:18:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n086",
+      "folder": "inbox",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 38 searches",
+      "body": "See who's looking.",
+      "date": "2026-10-11T12:59:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n087",
+      "folder": "inbox",
+      "from": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Daily Digest for Oct 15",
+      "body": "2 mailpieces arriving today.",
+      "date": "2026-10-19T18:35:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n088",
+      "folder": "inbox",
+      "from": "Google <no-reply@accounts.google.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Security alert",
+      "body": "New sign-in on Mac. If this was you, no action needed.",
+      "date": "2026-10-05T18:30:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n089",
+      "folder": "archive",
+      "from": "Chase <no.reply.alerts@chase.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your statement is ready",
+      "body": "Your Sapphire Visa statement is available.",
+      "date": "2026-09-30T10:59:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n090",
+      "folder": "inbox",
+      "from": "Fidelity Investments <fidelity.alerts@fidelity.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your monthly statement is ready",
+      "body": "View your October statement online.",
+      "date": "2026-10-27T18:27:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n091",
+      "folder": "inbox",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 37 searches",
+      "body": "See who's looking.",
+      "date": "2026-10-04T13:27:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n092",
+      "folder": "inbox",
+      "from": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Daily Digest for Oct 27",
+      "body": "2 mailpieces arriving today.",
+      "date": "2026-10-25T10:48:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n093",
+      "folder": "inbox",
+      "from": "Google <no-reply@accounts.google.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Security alert",
+      "body": "New sign-in on Mac. If this was you, no action needed.",
+      "date": "2026-10-25T18:42:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n094",
+      "folder": "archive",
+      "from": "Chase <no.reply.alerts@chase.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your statement is ready",
+      "body": "Your Sapphire Visa statement is available.",
+      "date": "2026-10-25T06:02:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n095",
+      "folder": "inbox",
+      "from": "Fidelity Investments <fidelity.alerts@fidelity.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your monthly statement is ready",
+      "body": "View your October statement online.",
+      "date": "2026-10-23T09:36:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n096",
+      "folder": "archive",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 37 searches",
+      "body": "See who's looking.",
+      "date": "2026-10-18T20:09:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n097",
+      "folder": "inbox",
+      "from": "USPS Informed Delivery <USPSInformeddelivery@email.informeddelivery.usps.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your Daily Digest for Oct 16",
+      "body": "2 mailpieces arriving today.",
+      "date": "2026-10-30T07:34:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n098",
+      "folder": "inbox",
+      "from": "Google <no-reply@accounts.google.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Security alert",
+      "body": "New sign-in on Mac. If this was you, no action needed.",
+      "date": "2026-10-06T19:02:00-05:00",
+      "read": true,
+      "attachments": []
+    },
+    {
+      "id": "mail-n099",
+      "folder": "inbox",
+      "from": "Chase <no.reply.alerts@chase.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your statement is ready",
+      "body": "Your Sapphire Visa statement is available.",
+      "date": "2026-10-23T21:15:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n100",
+      "folder": "inbox",
+      "from": "Fidelity Investments <fidelity.alerts@fidelity.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "Your monthly statement is ready",
+      "body": "View your October statement online.",
+      "date": "2026-10-07T21:41:00-05:00",
+      "read": false,
+      "attachments": []
+    },
+    {
+      "id": "mail-n101",
+      "folder": "inbox",
+      "from": "LinkedIn <messages-noreply@linkedin.com>",
+      "to": [
+        "jordan.park@fastmail.com"
+      ],
+      "cc": [],
+      "subject": "You appeared in 12 searches",
+      "body": "See who's looking.",
+      "date": "2026-10-18T09:36:00-05:00",
+      "read": true,
+      "attachments": []
+    }
+  ],
+  "calendar": [
+    {
+      "id": "evt-standup-11-02",
+      "title": "Team standup",
+      "start": "2026-11-02T09:30:00-05:00",
+      "end": "2026-11-02T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-03",
+      "title": "Team standup",
+      "start": "2026-11-03T09:30:00-05:00",
+      "end": "2026-11-03T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-04",
+      "title": "Team standup",
+      "start": "2026-11-04T09:30:00-05:00",
+      "end": "2026-11-04T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-05",
+      "title": "Team standup",
+      "start": "2026-11-05T09:30:00-05:00",
+      "end": "2026-11-05T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-06",
+      "title": "Team standup",
+      "start": "2026-11-06T09:30:00-05:00",
+      "end": "2026-11-06T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-09",
+      "title": "Team standup",
+      "start": "2026-11-09T09:30:00-05:00",
+      "end": "2026-11-09T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-10",
+      "title": "Team standup",
+      "start": "2026-11-10T09:30:00-05:00",
+      "end": "2026-11-10T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-11",
+      "title": "Team standup",
+      "start": "2026-11-11T09:30:00-05:00",
+      "end": "2026-11-11T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-12",
+      "title": "Team standup",
+      "start": "2026-11-12T09:30:00-05:00",
+      "end": "2026-11-12T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-13",
+      "title": "Team standup",
+      "start": "2026-11-13T09:30:00-05:00",
+      "end": "2026-11-13T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-16",
+      "title": "Team standup",
+      "start": "2026-11-16T09:30:00-05:00",
+      "end": "2026-11-16T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-17",
+      "title": "Team standup",
+      "start": "2026-11-17T09:30:00-05:00",
+      "end": "2026-11-17T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-18",
+      "title": "Team standup",
+      "start": "2026-11-18T09:30:00-05:00",
+      "end": "2026-11-18T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-19",
+      "title": "Team standup",
+      "start": "2026-11-19T09:30:00-05:00",
+      "end": "2026-11-19T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-standup-11-20",
+      "title": "Team standup",
+      "start": "2026-11-20T09:30:00-05:00",
+      "end": "2026-11-20T09:45:00-05:00",
+      "attendees": [
+        "team@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-lunch-tom",
+      "title": "Lunch with Tom",
+      "start": "2026-11-03T12:00:00-05:00",
+      "end": "2026-11-03T13:00:00-05:00",
+      "attendees": [
+        "tom.becker@acme.io"
+      ],
+      "location": "Sweetgreen, Flatiron",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-1on1-1104",
+      "title": "1:1 with Priya",
+      "start": "2026-11-04T14:00:00-05:00",
+      "end": "2026-11-04T14:30:00-05:00",
+      "attendees": [
+        "priya.raman@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-climb-1105",
+      "title": "Climbing with Dana",
+      "start": "2026-11-05T18:30:00-05:00",
+      "end": "2026-11-05T20:00:00-05:00",
+      "attendees": [
+        "dana.wolfe@gmail.com"
+      ],
+      "location": "Brooklyn Boulders",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-market-1107",
+      "title": "Farmers market",
+      "start": "2026-11-07T10:00:00-05:00",
+      "end": "2026-11-07T11:00:00-05:00",
+      "attendees": [],
+      "location": "Grand Army Plaza",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-1on1-1111",
+      "title": "1:1 with Priya",
+      "start": "2026-11-11T14:00:00-05:00",
+      "end": "2026-11-11T14:30:00-05:00",
+      "attendees": [
+        "priya.raman@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-bookclub-1111",
+      "title": "Book club",
+      "start": "2026-11-11T19:00:00-05:00",
+      "end": "2026-11-11T21:00:00-05:00",
+      "attendees": [],
+      "location": "Greenlight Bookstore",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-1on1-1118",
+      "title": "1:1 with Priya",
+      "start": "2026-11-18T14:00:00-05:00",
+      "end": "2026-11-18T14:30:00-05:00",
+      "attendees": [
+        "priya.raman@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-02",
+      "title": "Eng/PM sync",
+      "start": "2026-11-02T10:00:00-05:00",
+      "end": "2026-11-02T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-review-11-03",
+      "title": "Product review",
+      "start": "2026-11-03T11:00:00-05:00",
+      "end": "2026-11-03T12:00:00-05:00",
+      "attendees": [
+        "product-leads@acme.io"
+      ],
+      "location": "Acme HQ 14B",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-04",
+      "title": "Eng/PM sync",
+      "start": "2026-11-04T10:00:00-05:00",
+      "end": "2026-11-04T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-growth-11-04",
+      "title": "Growth weekly",
+      "start": "2026-11-04T15:30:00-05:00",
+      "end": "2026-11-04T16:15:00-05:00",
+      "attendees": [
+        "growth@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pricing-11-05",
+      "title": "Pricing working group",
+      "start": "2026-11-05T10:30:00-05:00",
+      "end": "2026-11-05T11:30:00-05:00",
+      "attendees": [
+        "pricing-wg@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-06",
+      "title": "Eng/PM sync",
+      "start": "2026-11-06T10:00:00-05:00",
+      "end": "2026-11-06T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-09",
+      "title": "Eng/PM sync",
+      "start": "2026-11-09T10:00:00-05:00",
+      "end": "2026-11-09T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-review-11-10",
+      "title": "Product review",
+      "start": "2026-11-10T11:00:00-05:00",
+      "end": "2026-11-10T12:00:00-05:00",
+      "attendees": [
+        "product-leads@acme.io"
+      ],
+      "location": "Acme HQ 14B",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-11",
+      "title": "Eng/PM sync",
+      "start": "2026-11-11T10:00:00-05:00",
+      "end": "2026-11-11T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-growth-11-11",
+      "title": "Growth weekly",
+      "start": "2026-11-11T15:30:00-05:00",
+      "end": "2026-11-11T16:15:00-05:00",
+      "attendees": [
+        "growth@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pricing-11-12",
+      "title": "Pricing working group",
+      "start": "2026-11-12T10:30:00-05:00",
+      "end": "2026-11-12T11:30:00-05:00",
+      "attendees": [
+        "pricing-wg@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-13",
+      "title": "Eng/PM sync",
+      "start": "2026-11-13T10:00:00-05:00",
+      "end": "2026-11-13T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-16",
+      "title": "Eng/PM sync",
+      "start": "2026-11-16T10:00:00-05:00",
+      "end": "2026-11-16T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-review-11-17",
+      "title": "Product review",
+      "start": "2026-11-17T11:00:00-05:00",
+      "end": "2026-11-17T12:00:00-05:00",
+      "attendees": [
+        "product-leads@acme.io"
+      ],
+      "location": "Acme HQ 14B",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-18",
+      "title": "Eng/PM sync",
+      "start": "2026-11-18T10:00:00-05:00",
+      "end": "2026-11-18T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-growth-11-18",
+      "title": "Growth weekly",
+      "start": "2026-11-18T15:30:00-05:00",
+      "end": "2026-11-18T16:15:00-05:00",
+      "attendees": [
+        "growth@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pricing-11-19",
+      "title": "Pricing working group",
+      "start": "2026-11-19T10:30:00-05:00",
+      "end": "2026-11-19T11:30:00-05:00",
+      "attendees": [
+        "pricing-wg@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-w-pmsync-11-20",
+      "title": "Eng/PM sync",
+      "start": "2026-11-20T10:00:00-05:00",
+      "end": "2026-11-20T10:30:00-05:00",
+      "attendees": [
+        "eng-pm@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-haircut-1107",
+      "title": "Haircut - Fellow Barber",
+      "start": "2026-11-07T13:00:00-05:00",
+      "end": "2026-11-07T13:45:00-05:00",
+      "attendees": [],
+      "location": "Fellow Barber, Vanderbilt Ave",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-call-mom-1108",
+      "title": "Call Mom",
+      "start": "2026-11-08T11:00:00-05:00",
+      "end": "2026-11-08T11:30:00-05:00",
+      "attendees": [],
+      "location": null,
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-yoga-1114",
+      "title": "Yoga with Maya",
+      "start": "2026-11-14T09:00:00-05:00",
+      "end": "2026-11-14T10:15:00-05:00",
+      "attendees": [
+        "maya.chen@gmail.com"
+      ],
+      "location": "Bend & Bloom",
+      "notes": null,
+      "status": "confirmed"
+    },
+    {
+      "id": "evt-allhands-1110",
+      "title": "Acme all-hands",
+      "start": "2026-11-10T16:00:00-05:00",
+      "end": "2026-11-10T17:00:00-05:00",
+      "attendees": [
+        "all@acme.io"
+      ],
+      "location": "Zoom",
+      "notes": null,
+      "status": "confirmed"
+    }
+  ],
+  "contacts": [
+    {
+      "id": "ct-maya",
+      "name": "Maya Chen",
+      "email": "maya.chen@gmail.com",
+      "phone": "+1 917 555 0142",
+      "relationship": "partner",
+      "notes": "Vegetarian. Lives with Jordan."
+    },
+    {
+      "id": "ct-sam",
+      "name": "Sam Park",
+      "email": "sam.park@outlook.com",
+      "phone": "+1 415 555 0177",
+      "relationship": "brother",
+      "notes": "Lives in San Francisco."
+    },
+    {
+      "id": "ct-linda",
+      "name": "Linda Park",
+      "email": "linda.park52@yahoo.com",
+      "phone": "+1 503 555 0110",
+      "relationship": "mother",
+      "address": "2218 SE Ankeny St, Portland, OR 97214",
+      "birthday": "11-09"
+    },
+    {
+      "id": "ct-priya",
+      "name": "Priya Raman",
+      "email": "priya.raman@acme.io",
+      "phone": "+1 646 555 0190",
+      "relationship": "manager"
+    },
+    {
+      "id": "ct-tom",
+      "name": "Tom Becker",
+      "email": "tom.becker@acme.io",
+      "phone": "+1 646 555 0123",
+      "relationship": "coworker"
+    },
+    {
+      "id": "ct-dana",
+      "name": "Dana Wolfe",
+      "email": "dana.wolfe@gmail.com",
+      "phone": "+1 718 555 0166",
+      "relationship": "friend"
+    },
+    {
+      "id": "ct-leo",
+      "name": "Leo Martins",
+      "email": "leo.martins@sapo.pt",
+      "phone": "+351 912 555 014",
+      "relationship": "friend",
+      "notes": "Lives in Lisbon."
+    },
+    {
+      "id": "ct-grace",
+      "name": "Grace Lee",
+      "email": "grace@halseyproperty.com",
+      "phone": "+1 718 555 0101",
+      "relationship": "landlord (Halsey Property Management)"
+    },
+    {
+      "id": "ct-ruth",
+      "name": "Ruth Okafor, CPA",
+      "email": "ruth@okafortax.com",
+      "phone": "+1 212 555 0155",
+      "relationship": "accountant"
+    },
+    {
+      "id": "ct-n00",
+      "name": "Owen Brandt",
+      "email": "owen.brandt@acme.io",
+      "phone": "+1 646 555 0131",
+      "relationship": "coworker (engineering)"
+    },
+    {
+      "id": "ct-n01",
+      "name": "Hana Yoshida",
+      "email": "hana.yoshida@acme.io",
+      "relationship": "coworker (design)"
+    },
+    {
+      "id": "ct-n02",
+      "name": "Felix Grant",
+      "email": "felix@grantandco.com",
+      "phone": "+1 212 555 0174",
+      "relationship": "college friend"
+    },
+    {
+      "id": "ct-n03",
+      "name": "Nora Quinn",
+      "email": "nora.quinn@gmail.com",
+      "phone": "+1 718 555 0108",
+      "relationship": "neighbor (3L)"
+    },
+    {
+      "id": "ct-n04",
+      "name": "Ivy Morales",
+      "email": "ivy.morales@acme.io",
+      "relationship": "coworker (finance)"
+    },
+    {
+      "id": "ct-n05",
+      "name": "Theo Lindqvist",
+      "email": "theo.lindqvist@icloud.com",
+      "phone": "+1 347 555 0112",
+      "relationship": "friend from climbing"
+    },
+    {
+      "id": "ct-n06",
+      "name": "Rosa Delgado",
+      "email": "rosa.delgado@gmail.com",
+      "phone": "+1 917 555 0185",
+      "relationship": "Maya's sister"
+    },
+    {
+      "id": "ct-n07",
+      "name": "Ben Adler",
+      "email": "ben.adler@outlook.com",
+      "relationship": "former coworker"
+    },
+    {
+      "id": "ct-n08",
+      "name": "Chloe Martin",
+      "email": "chloe.martin@acme.io",
+      "relationship": "coworker (sales)"
+    },
+    {
+      "id": "ct-n09",
+      "name": "Victor Huang",
+      "email": "vhuang@huangcpa.com",
+      "relationship": "Maya's accountant"
+    },
+    {
+      "id": "ct-n10",
+      "name": "Fellow Barber",
+      "email": "vanderbilt@fellowbarber.com",
+      "phone": "+1 718 555 0127",
+      "relationship": "barber"
+    },
+    {
+      "id": "ct-n11",
+      "name": "Dr. Paul Kim",
+      "email": "office@parkslopefamilymed.com",
+      "phone": "+1 718 555 0140",
+      "relationship": "primary care doctor"
+    },
+    {
+      "id": "ct-n12",
+      "name": "Greenlight Bookstore",
+      "email": "events@greenlightbookstore.com",
+      "relationship": "book club host"
+    },
+    {
+      "id": "ct-n13",
+      "name": "Zoe Fischer",
+      "email": "zoe.fischer@gmail.com",
+      "phone": "+1 646 555 0161",
+      "relationship": "friend"
+    },
+    {
+      "id": "ct-n14",
+      "name": "Mateo Silva",
+      "email": "mateo.silva@acme.io",
+      "relationship": "coworker (data)"
+    },
+    {
+      "id": "ct-n15",
+      "name": "Lucy Barnes",
+      "email": "lucy.barnes@gmail.com",
+      "relationship": "book club"
+    },
+    {
+      "id": "ct-n16",
+      "name": "Pete's Super",
+      "email": "super@417prospect.com",
+      "phone": "+1 718 555 0119",
+      "relationship": "building super"
+    },
+    {
+      "id": "ct-n17",
+      "name": "Ana Petrova",
+      "email": "ana.petrova@yandex.com",
+      "relationship": "Duolingo tutor"
+    },
+    {
+      "id": "ct-n18",
+      "name": "Jack O'Neill",
+      "email": "jack.oneill@acme.io",
+      "relationship": "coworker (support)"
+    },
+    {
+      "id": "ct-n19",
+      "name": "Wen Li",
+      "email": "wen.li@gmail.com",
+      "phone": "+1 929 555 0150",
+      "relationship": "friend"
+    },
+    {
+      "id": "ct-n20",
+      "name": "Isaac Cohen",
+      "email": "icohen@cohenlaw.com",
+      "relationship": "lawyer (2024 lease review)"
+    },
+    {
+      "id": "ct-n21",
+      "name": "Eva Novak",
+      "email": "eva.novak@acme.io",
+      "relationship": "coworker (marketing)"
+    },
+    {
+      "id": "ct-n22",
+      "name": "Hugo Laurent",
+      "email": "hugo.laurent@free.fr",
+      "relationship": "friend in Paris"
+    },
+    {
+      "id": "ct-n23",
+      "name": "Brooklyn Boulders",
+      "email": "members@brooklynboulders.com",
+      "relationship": "climbing gym"
+    },
+    {
+      "id": "ct-n24",
+      "name": "Mike Ferraro",
+      "email": "mike@ferraroplumbing.com",
+      "phone": "+1 718 555 0170",
+      "relationship": "plumber"
+    }
+  ],
+  "files": [
+    {
+      "path": "notes/preferences.md",
+      "content": "# Jordan's standing preferences\n\n- No meetings or calls before 8:00 AM Eastern, none after 9:00 PM Eastern.\n- Prefer nonstop flights; aisle seat.\n- Default payment: Sapphire Visa (acc-card) for purchases and travel; rent and bills from checking.\n- Keep at least $500 in checking at all times.\n- Maya is vegetarian.\n"
+    },
+    {
+      "path": "receipts/boston-sep/delta-eticket.txt",
+      "content": "Delta e-ticket receipt\nPassenger: JORDAN PARK\nSep 14 DL 2190 LGA-BOS, Sep 16 DL 2205 BOS-LGA\nTotal: $286.40\nPaid with Visa ••7781"
+    },
+    {
+      "path": "receipts/boston-sep/marriott-folio.txt",
+      "content": "Boston Marriott Copley Place - Guest folio\nGuest: Jordan Park  Arrive Sep 14  Depart Sep 16\nRoom 2 nights 248.00 x2\nTax 77.97\nTotal 573.97"
+    },
+    {
+      "path": "receipts/boston-sep/legal-sea-foods.txt",
+      "content": "Legal Sea Foods - Sep 15, 2026\nClam chowder 11.95\nLobster roll 34.00\nTotal 52.10 (tip incl.)"
+    },
+    {
+      "path": "receipts/boston-sep/submitted.md",
+      "content": "Boston trip expense report submitted Sep 18 and approved. Reimbursed $612.37 on Oct 15."
+    },
+    {
+      "path": "receipts/home/ikea-2026-08.txt",
+      "content": "IKEA Brooklyn - Aug 22, 2026 - KALLAX shelf, lamp - $148.97"
+    },
+    {
+      "path": "receipts/home/ferraro-plumbing-invoice.txt",
+      "content": "Ferraro Plumbing - Invoice 2219 - Kitchen faucet repair - Sep 3, 2026 - $185.00 - paid by card"
+    },
+    {
+      "path": "notes/books-2026.md",
+      "content": "# Books 2026\n- Tomorrow, and Tomorrow, and Tomorrow\n- The Safekeep (book club, Nov)\n- Poor Charlie's Almanack\n"
+    },
+    {
+      "path": "notes/climbing-log.md",
+      "content": "# Climbing log\n- Oct 1: V4 project sent\n- Oct 15: finger tweak, rest\n- Oct 29: back on the wall\n"
+    },
+    {
+      "path": "notes/apartment-todo.md",
+      "content": "# Apartment\n- Replace bathroom fan\n- Ask Pete about radiator noise\n- Hang shelves in office\n"
+    },
+    {
+      "path": "notes/thanksgiving-2026.md",
+      "content": "# Thanksgiving\nMaybe Philly with Rosa's family. Decide by mid-Nov.\n"
+    },
+    {
+      "path": "notes/1on1-priya.md",
+      "content": "# 1:1 notes with Priya\n- Oct 28: talked about promotion timeline; revisit in January.\n- Oct 21: Q4 planning, usage-based pricing pilot.\n"
+    },
+    {
+      "path": "notes/recipes.md",
+      "content": "# Recipes to try\n- Marcella's tomato sauce\n- Miso salmon\n- Chana masala (Maya's favorite)\n"
+    },
+    {
+      "path": "work/q4-okrs.md",
+      "content": "# Q4 OKRs (Jordan)\n1. Launch usage-based pricing pilot with 3 design partners.\n2. Reduce onboarding drop-off by 15%.\n"
+    },
+    {
+      "path": "work/pricing-one-pager-draft.md",
+      "content": "# Usage-based pricing (draft v2)\nTiers: Starter, Growth, Enterprise. Metered on API calls.\n"
+    },
+    {
+      "path": "work/brightline-account-notes.md",
+      "content": "# Brightline\nChampion: ops lead. Renewal in Q1. Workshop in SF Nov 13.\n"
+    },
+    {
+      "path": "work/onboarding-research.md",
+      "content": "# Onboarding research\n12 interviews. Top drop-off: workspace setup step.\n"
+    },
+    {
+      "path": "personal/car-free.md",
+      "content": "No car. Citi Bike annual member, renews in April.\n"
+    },
+    {
+      "path": "personal/wifi.txt",
+      "content": "Network: ProspectPl-3R  (password in 1Password)\n"
+    },
+    {
+      "path": "photos/tahoe-cabin.jpg",
+      "content": "[image: snowy cabin at dusk]"
+    },
+    {
+      "path": "photos/maya-birthday-2026.jpg",
+      "content": "[image: birthday cake with candles]"
+    },
+    {
+      "path": "travel/known-traveler.txt",
+      "content": "TSA PreCheck KTN on file in airline profiles."
+    },
+    {
+      "path": "travel/lisbon-ideas.md",
+      "content": "# Lisbon ideas\n- Time Out Market\n- Day trip to Sintra\n"
+    },
+    {
+      "path": "finance/2026-budget-notes.md",
+      "content": "# 2026 money notes\n- Emergency fund target: $15k in savings.\n- Max Roth IRA by April.\n"
+    },
+    {
+      "path": "finance/roth-ira-2026.txt",
+      "content": "Roth IRA contributions 2026: $4,000 of $7,000."
+    }
+  ],
+  "accounts": [
+    {
+      "id": "acc-checking",
+      "name": "Everyday Checking ••4417",
+      "type": "checking",
+      "balance": 4820.55,
+      "currency": "USD"
+    },
+    {
+      "id": "acc-savings",
+      "name": "High-Yield Savings ••9032",
+      "type": "savings",
+      "balance": 12300.0,
+      "currency": "USD"
+    },
+    {
+      "id": "acc-card",
+      "name": "Sapphire Visa ••7781",
+      "type": "credit",
+      "balance": -642.18,
+      "credit_limit": 8000,
+      "currency": "USD"
+    }
+  ],
+  "payees": [
+    {
+      "id": "payee-halsey",
+      "name": "Halsey Property Mgmt",
+      "account_number": "021000021-55120934",
+      "bank": "Chase"
+    },
+    {
+      "id": "payee-conedison",
+      "name": "Con Edison",
+      "account_number": "ConEd-38810021"
+    },
+    {
+      "id": "payee-dana",
+      "name": "Dana Wolfe",
+      "account_number": "026009593-11873320",
+      "bank": "Bank of America"
+    },
+    {
+      "id": "payee-sam",
+      "name": "Sam Park",
+      "account_number": "121000248-90031177",
+      "bank": "Wells Fargo"
+    },
+    {
+      "id": "payee-own-checking",
+      "name": "Jordan Park - Everyday Checking",
+      "account_number": "own-4417",
+      "internal_account": "acc-checking"
+    },
+    {
+      "id": "payee-own-savings",
+      "name": "Jordan Park - High-Yield Savings",
+      "account_number": "own-9032",
+      "internal_account": "acc-savings"
+    }
+  ],
+  "transactions": [
+    {
+      "id": "tx-k01",
+      "account": "acc-checking",
+      "date": "2026-09-01",
+      "merchant": "Halsey Property Mgmt",
+      "amount": -2380.0,
+      "category": "rent",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n038",
+      "account": "acc-card",
+      "date": "2026-09-01",
+      "merchant": "WALGREENS #11873",
+      "amount": -13.41,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n069",
+      "account": "acc-card",
+      "date": "2026-09-02",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -28.35,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n012",
+      "account": "acc-card",
+      "date": "2026-09-03",
+      "merchant": "ETSY.COM",
+      "amount": -45.87,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n073",
+      "account": "acc-card",
+      "date": "2026-09-04",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -23.74,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k08",
+      "account": "acc-checking",
+      "date": "2026-09-05",
+      "merchant": "Sapphire Visa autopay",
+      "amount": -1288.61,
+      "category": "card payment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n005",
+      "account": "acc-card",
+      "date": "2026-09-05",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -27.12,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n077",
+      "account": "acc-card",
+      "date": "2026-09-05",
+      "merchant": "AMC THEATRES",
+      "amount": -17.74,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n062",
+      "account": "acc-card",
+      "date": "2026-09-06",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -13.59,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n016",
+      "account": "acc-card",
+      "date": "2026-09-07",
+      "merchant": "STARBUCKS #11821",
+      "amount": -6.22,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n035",
+      "account": "acc-card",
+      "date": "2026-09-07",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -53.59,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n087",
+      "account": "acc-card",
+      "date": "2026-09-07",
+      "merchant": "KEY FOOD #1123",
+      "amount": -37.91,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k10",
+      "account": "acc-checking",
+      "date": "2026-09-08",
+      "merchant": "ATM WITHDRAWAL 7TH AVE",
+      "amount": -100.0,
+      "category": "cash",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n067",
+      "account": "acc-card",
+      "date": "2026-09-08",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -14.73,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n078",
+      "account": "acc-card",
+      "date": "2026-09-09",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -15.87,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k06",
+      "account": "acc-checking",
+      "date": "2026-09-10",
+      "merchant": "Con Edison autopay",
+      "amount": -71.35,
+      "category": "utilities",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n020",
+      "account": "acc-card",
+      "date": "2026-09-10",
+      "merchant": "PRET A MANGER",
+      "amount": -13.84,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n047",
+      "account": "acc-card",
+      "date": "2026-09-10",
+      "merchant": "AMC THEATRES",
+      "amount": -30.23,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n050",
+      "account": "acc-card",
+      "date": "2026-09-10",
+      "merchant": "KEY FOOD #1123",
+      "amount": -61.15,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n017",
+      "account": "acc-card",
+      "date": "2026-09-11",
+      "merchant": "STARBUCKS #11821",
+      "amount": -5.16,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n041",
+      "account": "acc-card",
+      "date": "2026-09-11",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -14.92,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n006",
+      "account": "acc-card",
+      "date": "2026-09-12",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -23.24,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n045",
+      "account": "acc-card",
+      "date": "2026-09-13",
+      "merchant": "KEY FOOD #1123",
+      "amount": -53.02,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n055",
+      "account": "acc-card",
+      "date": "2026-09-13",
+      "merchant": "LYFT *RIDE",
+      "amount": -15.0,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n031",
+      "account": "acc-card",
+      "date": "2026-09-14",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k03",
+      "account": "acc-checking",
+      "date": "2026-09-15",
+      "merchant": "Acme payroll",
+      "amount": 3100.0,
+      "category": "income",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n028",
+      "account": "acc-card",
+      "date": "2026-09-16",
+      "merchant": "STARBUCKS #11821",
+      "amount": -7.52,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n080",
+      "account": "acc-card",
+      "date": "2026-09-18",
+      "merchant": "WALGREENS #11873",
+      "amount": -25.61,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n009",
+      "account": "acc-card",
+      "date": "2026-09-19",
+      "merchant": "KEY FOOD #1123",
+      "amount": -24.12,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n030",
+      "account": "acc-card",
+      "date": "2026-09-19",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -37.87,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n002",
+      "account": "acc-card",
+      "date": "2026-09-20",
+      "merchant": "WALGREENS #11873",
+      "amount": -8.77,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n015",
+      "account": "acc-card",
+      "date": "2026-09-20",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -21.82,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n106",
+      "account": "acc-card",
+      "date": "2026-09-20",
+      "merchant": "ETSY.COM",
+      "amount": -42.79,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n110",
+      "account": "acc-card",
+      "date": "2026-09-20",
+      "merchant": "AMC THEATRES",
+      "amount": -20.09,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n086",
+      "account": "acc-card",
+      "date": "2026-09-21",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -33.77,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n093",
+      "account": "acc-card",
+      "date": "2026-09-21",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -17.62,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n027",
+      "account": "acc-card",
+      "date": "2026-09-22",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -40.16,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n071",
+      "account": "acc-card",
+      "date": "2026-09-22",
+      "merchant": "STARBUCKS #11821",
+      "amount": -7.79,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n074",
+      "account": "acc-card",
+      "date": "2026-09-22",
+      "merchant": "LYFT *RIDE",
+      "amount": -27.4,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n019",
+      "account": "acc-card",
+      "date": "2026-09-23",
+      "merchant": "LYFT *RIDE",
+      "amount": -12.98,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n029",
+      "account": "acc-card",
+      "date": "2026-09-23",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n070",
+      "account": "acc-card",
+      "date": "2026-09-23",
+      "merchant": "STARBUCKS #11821",
+      "amount": -7.17,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n051",
+      "account": "acc-card",
+      "date": "2026-09-24",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -46.46,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n098",
+      "account": "acc-card",
+      "date": "2026-09-24",
+      "merchant": "PRET A MANGER",
+      "amount": -10.23,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n024",
+      "account": "acc-card",
+      "date": "2026-09-25",
+      "merchant": "ETSY.COM",
+      "amount": -37.33,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n004",
+      "account": "acc-card",
+      "date": "2026-09-26",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -14.75,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n022",
+      "account": "acc-card",
+      "date": "2026-09-26",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -22.97,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n023",
+      "account": "acc-card",
+      "date": "2026-09-26",
+      "merchant": "KEY FOOD #1123",
+      "amount": -35.38,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n097",
+      "account": "acc-card",
+      "date": "2026-09-26",
+      "merchant": "PRET A MANGER",
+      "amount": -11.09,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n107",
+      "account": "acc-card",
+      "date": "2026-09-26",
+      "merchant": "LYFT *RIDE",
+      "amount": -28.17,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n036",
+      "account": "acc-card",
+      "date": "2026-09-27",
+      "merchant": "KEY FOOD #1123",
+      "amount": -48.63,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n058",
+      "account": "acc-card",
+      "date": "2026-09-27",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n095",
+      "account": "acc-card",
+      "date": "2026-09-27",
+      "merchant": "LYFT *RIDE",
+      "amount": -19.6,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n032",
+      "account": "acc-card",
+      "date": "2026-09-28",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -15.33,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n066",
+      "account": "acc-card",
+      "date": "2026-09-28",
+      "merchant": "ETSY.COM",
+      "amount": -36.69,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n100",
+      "account": "acc-card",
+      "date": "2026-09-28",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -13.75,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n014",
+      "account": "acc-card",
+      "date": "2026-09-29",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -23.06,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n033",
+      "account": "acc-card",
+      "date": "2026-09-29",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -15.64,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n043",
+      "account": "acc-card",
+      "date": "2026-09-29",
+      "merchant": "KEY FOOD #1123",
+      "amount": -27.09,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k04",
+      "account": "acc-checking",
+      "date": "2026-09-30",
+      "merchant": "Acme payroll",
+      "amount": 3100.0,
+      "category": "income",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n063",
+      "account": "acc-card",
+      "date": "2026-09-30",
+      "merchant": "AMC THEATRES",
+      "amount": -27.33,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k02",
+      "account": "acc-checking",
+      "date": "2026-10-01",
+      "merchant": "Halsey Property Mgmt",
+      "amount": -2380.0,
+      "category": "rent",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n013",
+      "account": "acc-card",
+      "date": "2026-10-01",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -17.75,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n104",
+      "account": "acc-card",
+      "date": "2026-10-01",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -21.15,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n037",
+      "account": "acc-card",
+      "date": "2026-10-02",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -28.23,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n040",
+      "account": "acc-card",
+      "date": "2026-10-02",
+      "merchant": "AMC THEATRES",
+      "amount": -31.46,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n060",
+      "account": "acc-card",
+      "date": "2026-10-02",
+      "merchant": "LYFT *RIDE",
+      "amount": -17.83,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n021",
+      "account": "acc-card",
+      "date": "2026-10-03",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -87.78,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n061",
+      "account": "acc-card",
+      "date": "2026-10-03",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -18.45,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n068",
+      "account": "acc-card",
+      "date": "2026-10-03",
+      "merchant": "LYFT *RIDE",
+      "amount": -19.68,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n108",
+      "account": "acc-card",
+      "date": "2026-10-03",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -38.42,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n081",
+      "account": "acc-card",
+      "date": "2026-10-04",
+      "merchant": "ETSY.COM",
+      "amount": -30.51,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n082",
+      "account": "acc-card",
+      "date": "2026-10-04",
+      "merchant": "STARBUCKS #11821",
+      "amount": -7.0,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n101",
+      "account": "acc-card",
+      "date": "2026-10-04",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -14.25,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k09",
+      "account": "acc-checking",
+      "date": "2026-10-05",
+      "merchant": "Sapphire Visa autopay",
+      "amount": -1407.92,
+      "category": "card payment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n044",
+      "account": "acc-card",
+      "date": "2026-10-05",
+      "merchant": "HOME DEPOT #6170",
+      "amount": -50.6,
+      "category": "home",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n052",
+      "account": "acc-card",
+      "date": "2026-10-05",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -16.76,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n008",
+      "account": "acc-card",
+      "date": "2026-10-06",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -30.16,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n048",
+      "account": "acc-card",
+      "date": "2026-10-06",
+      "merchant": "WALGREENS #11873",
+      "amount": -20.2,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n059",
+      "account": "acc-card",
+      "date": "2026-10-06",
+      "merchant": "KEY FOOD #1123",
+      "amount": -26.23,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n105",
+      "account": "acc-card",
+      "date": "2026-10-06",
+      "merchant": "PRET A MANGER",
+      "amount": -13.18,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n010",
+      "account": "acc-card",
+      "date": "2026-10-07",
+      "merchant": "LYFT *RIDE",
+      "amount": -16.65,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n083",
+      "account": "acc-card",
+      "date": "2026-10-07",
+      "merchant": "KEY FOOD #1123",
+      "amount": -61.06,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n057",
+      "account": "acc-card",
+      "date": "2026-10-08",
+      "merchant": "AMC THEATRES",
+      "amount": -26.72,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n092",
+      "account": "acc-card",
+      "date": "2026-10-08",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -12.99,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n065",
+      "account": "acc-card",
+      "date": "2026-10-09",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k07",
+      "account": "acc-checking",
+      "date": "2026-10-10",
+      "merchant": "Con Edison autopay",
+      "amount": -88.4,
+      "category": "utilities",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n034",
+      "account": "acc-card",
+      "date": "2026-10-10",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -14.18,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n042",
+      "account": "acc-card",
+      "date": "2026-10-10",
+      "merchant": "STARBUCKS #11821",
+      "amount": -7.78,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n085",
+      "account": "acc-card",
+      "date": "2026-10-11",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n001",
+      "account": "acc-card",
+      "date": "2026-10-12",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -47.26,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k11",
+      "account": "acc-checking",
+      "date": "2026-10-13",
+      "merchant": "ATM WITHDRAWAL FLATBUSH",
+      "amount": -60.0,
+      "category": "cash",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n003",
+      "account": "acc-card",
+      "date": "2026-10-13",
+      "merchant": "MUJI USA",
+      "amount": -24.42,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n039",
+      "account": "acc-card",
+      "date": "2026-10-13",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -32.71,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n084",
+      "account": "acc-card",
+      "date": "2026-10-13",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n076",
+      "account": "acc-card",
+      "date": "2026-10-14",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n079",
+      "account": "acc-card",
+      "date": "2026-10-14",
+      "merchant": "AMC THEATRES",
+      "amount": -24.03,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k05",
+      "account": "acc-checking",
+      "date": "2026-10-15",
+      "merchant": "Acme payroll",
+      "amount": 3100.0,
+      "category": "income",
+      "status": "posted"
+    },
+    {
+      "id": "tx-k12",
+      "account": "acc-checking",
+      "date": "2026-10-15",
+      "merchant": "Acme expense reimbursement (Boston, Sep)",
+      "amount": 612.37,
+      "category": "reimbursement",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n054",
+      "account": "acc-card",
+      "date": "2026-10-15",
+      "merchant": "WALGREENS #11873",
+      "amount": -20.48,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n102",
+      "account": "acc-card",
+      "date": "2026-10-15",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n053",
+      "account": "acc-card",
+      "date": "2026-10-16",
+      "merchant": "GREENLIGHT BOOKSTORE",
+      "amount": -23.52,
+      "category": "books",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n089",
+      "account": "acc-card",
+      "date": "2026-10-16",
+      "merchant": "AMC THEATRES",
+      "amount": -23.93,
+      "category": "entertainment",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n103",
+      "account": "acc-card",
+      "date": "2026-10-16",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -25.26,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n018",
+      "account": "acc-card",
+      "date": "2026-10-17",
+      "merchant": "STARBUCKS #11821",
+      "amount": -6.47,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n025",
+      "account": "acc-card",
+      "date": "2026-10-17",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -33.58,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n099",
+      "account": "acc-card",
+      "date": "2026-10-17",
+      "merchant": "KEY FOOD #1123",
+      "amount": -24.65,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n049",
+      "account": "acc-card",
+      "date": "2026-10-24",
+      "merchant": "PRET A MANGER",
+      "amount": -14.98,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n091",
+      "account": "acc-card",
+      "date": "2026-10-24",
+      "merchant": "LYFT *RIDE",
+      "amount": -25.55,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n096",
+      "account": "acc-card",
+      "date": "2026-10-24",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -39.67,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n064",
+      "account": "acc-card",
+      "date": "2026-10-25",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -76.16,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n011",
+      "account": "acc-card",
+      "date": "2026-10-26",
+      "merchant": "UNIQLO 5TH AVE",
+      "amount": -35.0,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n026",
+      "account": "acc-card",
+      "date": "2026-10-27",
+      "merchant": "SWEETGREEN FLATIRON",
+      "amount": -14.71,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n072",
+      "account": "acc-card",
+      "date": "2026-10-27",
+      "merchant": "WALGREENS #11873",
+      "amount": -29.71,
+      "category": "health",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n094",
+      "account": "acc-card",
+      "date": "2026-10-27",
+      "merchant": "KEY FOOD #1123",
+      "amount": -28.39,
+      "category": "groceries",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n007",
+      "account": "acc-card",
+      "date": "2026-10-28",
+      "merchant": "CHIPOTLE 2210",
+      "amount": -14.09,
+      "category": "restaurants",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n046",
+      "account": "acc-card",
+      "date": "2026-10-28",
+      "merchant": "BAGGU BROOKLYN",
+      "amount": -43.53,
+      "category": "shopping",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n075",
+      "account": "acc-card",
+      "date": "2026-10-28",
+      "merchant": "CITI BIKE",
+      "amount": -4.79,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n088",
+      "account": "acc-card",
+      "date": "2026-10-28",
+      "merchant": "LYFT *RIDE",
+      "amount": -25.03,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n056",
+      "account": "acc-card",
+      "date": "2026-10-29",
+      "merchant": "LYFT *RIDE",
+      "amount": -22.38,
+      "category": "transport",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n109",
+      "account": "acc-card",
+      "date": "2026-10-29",
+      "merchant": "STARBUCKS #11821",
+      "amount": -4.0,
+      "category": "coffee",
+      "status": "posted"
+    },
+    {
+      "id": "tx-n090",
+      "account": "acc-card",
+      "date": "2026-10-31",
+      "merchant": "WALGREENS #11873",
+      "amount": -31.42,
+      "category": "health",
+      "status": "posted"
+    }
+  ],
+  "transfers": [],
+  "subscriptions": [],
+  "flights": [],
+  "hotels": [],
+  "bookings": [],
+  "products": [],
+  "orders": [],
+  "restaurants": [],
+  "reservations": [],
+  "messages": [],
+  "reminders": [],
+  "web": [],
+  "auto_replies": []
+}

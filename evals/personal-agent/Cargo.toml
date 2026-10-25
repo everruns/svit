@@ -1,0 +1,28 @@
+# Standalone workspace: the eval study stays out of the Svit workspace so the
+# trusted runtime build never pulls in Mira, live providers, or a judge client.
+# It path-depends on the local `svit` crate, so a run always evaluates the
+# working tree. Run it through the `mira` host CLI or its `run-local` mode.
+[workspace]
+
+[package]
+name = "svit-personal-agent-evals"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Mira eval study: hard personal-agent tasks run against a live Svit process"
+publish = false
+
+[[bin]]
+name = "personal_agent_evals"
+path = "src/main.rs"
+
+[dependencies]
+async-trait = "0.1"
+everruns-drivers = { git = "https://github.com/everruns/everruns", branch = "main", default-features = false, features = ["meta", "openrouter", "openai"] }
+mira-eval = "0.5"
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+svit = { path = "../../crates/svit" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "sync"] }

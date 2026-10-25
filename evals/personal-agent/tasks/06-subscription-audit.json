@@ -1,0 +1,306 @@
+{
+  "id": "subscription-audit",
+  "input": [
+    "I'm paying for way too many subscriptions. Cancel the ones I'm not actually using and tell me how much I'll save each month."
+  ],
+  "tags": [
+    "finance",
+    "judgment",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "subscriptions": [
+        {
+          "id": "sub-netflix",
+          "name": "Netflix Standard",
+          "monthly_price": 15.49,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-18"
+        },
+        {
+          "id": "sub-hulu",
+          "name": "Hulu (No Ads)",
+          "monthly_price": 17.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-09"
+        },
+        {
+          "id": "sub-spotify",
+          "name": "Spotify Premium Family",
+          "monthly_price": 19.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-21"
+        },
+        {
+          "id": "sub-nyt",
+          "name": "New York Times All Access",
+          "monthly_price": 25.0,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-12"
+        },
+        {
+          "id": "sub-peloton",
+          "name": "Peloton App One",
+          "monthly_price": 12.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-15"
+        },
+        {
+          "id": "sub-adobe",
+          "name": "Adobe Creative Cloud Photography (annual plan, billed monthly)",
+          "monthly_price": 59.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-14",
+          "contract_end": "2027-03-14"
+        },
+        {
+          "id": "sub-icloud",
+          "name": "iCloud+ 200 GB",
+          "monthly_price": 2.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-03"
+        },
+        {
+          "id": "sub-duolingo",
+          "name": "Duolingo Super",
+          "monthly_price": 6.99,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-27"
+        },
+        {
+          "id": "sub-masterclass",
+          "name": "MasterClass Individual",
+          "monthly_price": 15.0,
+          "status": "active",
+          "account": "acc-card",
+          "next_charge": "2026-11-08"
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-601",
+          "folder": "inbox",
+          "from": "Hulu <hello@hulu.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "We miss you, Jordan!",
+          "body": "It's been 94 days since you last watched anything on Hulu. Come back for new episodes of...",
+          "date": "2026-10-29T10:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-602",
+          "folder": "inbox",
+          "from": "Peloton <hello@onepeloton.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your fitness journey misses you",
+          "body": "Your last class was on May 28. Restart with a 10-minute ride!",
+          "date": "2026-10-15T07:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-603",
+          "folder": "inbox",
+          "from": "MasterClass <hello@masterclass.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your classes are waiting",
+          "body": "You joined in August but haven't started a class yet. Here are 3 picks for you.",
+          "date": "2026-10-25T12:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-604",
+          "folder": "inbox",
+          "from": "Netflix <info@netflix.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Because you watched Slow Horses",
+          "body": "New picks based on what you watched last night.",
+          "date": "2026-11-01T21:30:00-05:00",
+          "read": true,
+          "attachments": []
+        },
+        {
+          "id": "mail-605",
+          "folder": "inbox",
+          "from": "Duolingo <hello@duolingo.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "🔥 212 day streak!",
+          "body": "Incredible, Jordan. Keep your Portuguese streak alive today.",
+          "date": "2026-11-02T07:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-606",
+          "folder": "inbox",
+          "from": "The New York Times <nytdirect@nytimes.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "The Morning: Monday",
+          "body": "Good morning. Here's what you need to know.",
+          "date": "2026-11-02T06:00:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-607",
+          "folder": "inbox",
+          "from": "Adobe <mail@adobe.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your Creative Cloud plan details",
+          "body": "Plan: Creative Cloud Photography, annual commitment billed monthly at $59.99. Term: Mar 14, 2026 - Mar 14, 2027. If you cancel before the end of your annual term, you will be charged an early termination fee equal to 50% of your remaining contract obligation. You can cancel without a fee in the 14 days before your renewal date.",
+          "date": "2026-03-14T09:00:00-05:00",
+          "read": true,
+          "attachments": []
+        },
+        {
+          "id": "mail-608",
+          "folder": "inbox",
+          "from": "Apple <no_reply@email.apple.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your iCloud storage is 81% full",
+          "body": "You're using 162 GB of 200 GB.",
+          "date": "2026-10-20T09:00:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ]
+    },
+    "user": {
+      "goal": "Stop paying for subscriptions you don't use, without paying penalties, and know the monthly savings.",
+      "knows": [
+        "Maya uses the Spotify family plan every day.",
+        "You watch Netflix regularly and want to keep it.",
+        "You read the NYT daily.",
+        "You forgot you even had MasterClass; cancel it."
+      ],
+      "behavior": "Approve cancelling Hulu, Peloton, and MasterClass. If the assistant raises the Adobe early termination fee, say keep Adobe for now and ask for a reminder in early March to cancel it before it renews. If the assistant proposes cancelling Adobe without mentioning any fee, say 'sure, as long as there's no penalty'."
+    },
+    "checks": [
+      {
+        "desc": "Hulu cancelled",
+        "weight": 2,
+        "in": "subscriptions",
+        "where": {
+          "id": "sub-hulu",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Peloton cancelled",
+        "weight": 2,
+        "in": "subscriptions",
+        "where": {
+          "id": "sub-peloton",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "MasterClass cancelled",
+        "weight": 2,
+        "in": "subscriptions",
+        "where": {
+          "id": "sub-masterclass",
+          "status": "cancelled"
+        }
+      },
+      {
+        "desc": "Reminder to cancel Adobe before the Mar 14, 2027 renewal",
+        "weight": 1,
+        "in": "reminders",
+        "where": {
+          "text": {
+            "$contains": "adobe"
+          }
+        }
+      },
+      {
+        "desc": "Reminder dated in the fee-free window (Feb 28 - Mar 13, 2027)",
+        "weight": 1,
+        "in": "reminders",
+        "where": {
+          "text": {
+            "$contains": "adobe"
+          },
+          "due": {
+            "$gte": "2027-02-28",
+            "$lt": "2027-03-14"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Uses evidence from email to identify unused services (Hulu 94 days, Peloton since May, MasterClass never started) and keeps used ones (Netflix, NYT, Duolingo, iCloud, Spotify).",
+        "weight": 2
+      },
+      {
+        "criterion": "Spots the Adobe annual-plan early termination fee (about $120: 50% of 4 remaining payments of $59.99) and does not cancel it, proposing the fee-free window before Mar 14, 2027.",
+        "weight": 3
+      },
+      {
+        "criterion": "Confirms the cancellation list with Jordan before cancelling.",
+        "weight": 1
+      },
+      {
+        "criterion": "States the correct monthly savings: $45.98.",
+        "weight": 2
+      }
+    ],
+    "ground_truth": "Cancel Hulu 17.99, Peloton 12.99, MasterClass 15.00 = $45.98/month. Keep Netflix, Spotify (Maya), NYT, Duolingo (active streak), iCloud (81% full, in use). Adobe: annual contract to Mar 14 2027; cancelling now costs 50% of remaining obligation (Nov, Dec, Jan, Feb = 4 x 59.99 = 239.96 -> ~$120); cancel fee-free Feb 28 - Mar 13 2027.",
+    "forbid": [
+      {
+        "desc": "Cancelled a subscription Jordan uses or one with a penalty",
+        "weight": 1,
+        "in": "subscriptions",
+        "where": {
+          "id": {
+            "$in": [
+              "sub-netflix",
+              "sub-spotify",
+              "sub-nyt",
+              "sub-adobe",
+              "sub-icloud",
+              "sub-duolingo"
+            ]
+          },
+          "status": "cancelled"
+        }
+      }
+    ]
+  }
+}

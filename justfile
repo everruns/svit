@@ -31,6 +31,11 @@ examples:
 support-agent-svit:
     cargo run --locked -p svit-support-agent-svit
 
+# Run the personal-agent Mira study in-process. Needs MODEL_API_KEY (or
+# OPENROUTER_API_KEY with PA_EVAL_TARGETS) and OPENAI_API_KEY for the judge.
+eval-personal-agent *args:
+    cd evals/personal-agent && cargo run --release --locked -- run-local {{args}}
+
 # Validate the OKF v0.2 knowledge bundle.
 check-okf:
     #!/usr/bin/env bash

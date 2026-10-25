@@ -1,0 +1,291 @@
+{
+  "id": "multi-city-itinerary",
+  "input": [
+    "Book flights for me and Maya: New York to Mexico City on Dec 10, Mexico City to Oaxaca on Dec 13, and Oaxaca back to New York on Dec 17. Keep the total for both of us under $1,500 and follow my travel rules."
+  ],
+  "tags": [
+    "travel",
+    "optimization",
+    "documents"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "notes/travel-rules.md",
+          "content": "# Travel rules\n- Never book a departure before 8:00 AM local time.\n- Never book anything that lands after 11:00 PM local time.\n- Prefer nonstop when one exists within budget.\n- Names on tickets must match passports exactly (see travel/passports.txt).\n"
+        },
+        {
+          "path": "travel/passports.txt",
+          "content": "Jordan: PARK, JORDAN MIN (US passport, exp 2031)\nMaya: CHEN ORTIZ, MAYA LUCIA (US passport, exp 2029)\n"
+        }
+      ],
+      "flights": [
+        {
+          "id": "fl-am403",
+          "flight": "AM 403",
+          "airline": "Aeromexico",
+          "from": "New York (JFK)",
+          "to": "Mexico City (MEX)",
+          "depart": "2026-12-10T06:45:00-05:00",
+          "arrive": "2026-12-10T10:35:00-06:00",
+          "price": 289,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-dl591",
+          "flight": "DL 591",
+          "airline": "Delta",
+          "from": "New York (JFK)",
+          "to": "Mexico City (MEX)",
+          "depart": "2026-12-10T09:30:00-05:00",
+          "arrive": "2026-12-10T13:20:00-06:00",
+          "price": 312,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-y4901",
+          "flight": "Y4 901",
+          "airline": "Volaris",
+          "from": "New York (JFK)",
+          "to": "Mexico City (MEX)",
+          "depart": "2026-12-10T11:15:00-05:00",
+          "arrive": "2026-12-10T15:05:00-06:00",
+          "price": 219,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-aa1340",
+          "flight": "AA 1340",
+          "airline": "American",
+          "from": "New York (JFK)",
+          "to": "Mexico City (MEX) via Miami",
+          "depart": "2026-12-10T14:00:00-05:00",
+          "arrive": "2026-12-10T21:10:00-06:00",
+          "price": 205,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-vb1120",
+          "flight": "VB 1120",
+          "airline": "Viva Aerobus",
+          "from": "Mexico City (MEX)",
+          "to": "Oaxaca (OAX)",
+          "depart": "2026-12-13T07:10:00-06:00",
+          "arrive": "2026-12-13T08:25:00-06:00",
+          "price": 68,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-y4830",
+          "flight": "Y4 830",
+          "airline": "Volaris",
+          "from": "Mexico City (MEX)",
+          "to": "Oaxaca (OAX)",
+          "depart": "2026-12-13T10:05:00-06:00",
+          "arrive": "2026-12-13T11:20:00-06:00",
+          "price": 74,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 1
+        },
+        {
+          "id": "fl-am2141",
+          "flight": "AM 2141",
+          "airline": "Aeromexico",
+          "from": "Mexico City (MEX)",
+          "to": "Oaxaca (OAX)",
+          "depart": "2026-12-13T13:30:00-06:00",
+          "arrive": "2026-12-13T14:45:00-06:00",
+          "price": 96,
+          "stops": 0,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-am2156",
+          "flight": "AM 2156",
+          "airline": "Aeromexico",
+          "from": "Oaxaca (OAX)",
+          "to": "New York (JFK) via Mexico City",
+          "depart": "2026-12-17T06:00:00-06:00",
+          "arrive": "2026-12-17T14:40:00-05:00",
+          "price": 289,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-ua1877",
+          "flight": "UA 1877",
+          "airline": "United",
+          "from": "Oaxaca (OAX)",
+          "to": "New York (JFK) via Houston",
+          "depart": "2026-12-17T10:40:00-06:00",
+          "arrive": "2026-12-17T20:15:00-05:00",
+          "price": 356,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-aa2970",
+          "flight": "AA 2970",
+          "airline": "American",
+          "from": "Oaxaca (OAX)",
+          "to": "New York (JFK) via Dallas",
+          "depart": "2026-12-17T12:15:00-06:00",
+          "arrive": "2026-12-17T22:30:00-05:00",
+          "price": 332,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 6
+        },
+        {
+          "id": "fl-y4355",
+          "flight": "Y4 355",
+          "airline": "Volaris",
+          "from": "Oaxaca (OAX)",
+          "to": "New York (JFK) via Mexico City",
+          "depart": "2026-12-17T15:00:00-06:00",
+          "arrive": "2026-12-18T01:10:00-05:00",
+          "price": 301,
+          "stops": 1,
+          "refundable": false,
+          "seats_left": 6
+        }
+      ]
+    },
+    "user": {
+      "goal": "All three legs booked for both of you within budget and your rules.",
+      "knows": [],
+      "behavior": "Approve the itinerary if it is under $1,500 total and follows the rules. Approve charging the default card."
+    },
+    "checks": [
+      {
+        "desc": "Leg 1: Volaris Y4 901 for both",
+        "weight": 2,
+        "in": "bookings",
+        "where": {
+          "flight_id": "fl-y4901",
+          "status": "confirmed",
+          "passengers": {
+            "$len": 2
+          }
+        }
+      },
+      {
+        "desc": "Leg 2: Aeromexico AM 2141 for both (Y4 830 has one seat)",
+        "weight": 2,
+        "in": "bookings",
+        "where": {
+          "flight_id": "fl-am2141",
+          "status": "confirmed",
+          "passengers": {
+            "$len": 2
+          }
+        }
+      },
+      {
+        "desc": "Leg 3: American AA 2970 for both",
+        "weight": 2,
+        "in": "bookings",
+        "where": {
+          "flight_id": "fl-aa2970",
+          "status": "confirmed",
+          "passengers": {
+            "$len": 2
+          }
+        }
+      },
+      {
+        "desc": "Passport names used (Chen Ortiz)",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "kind": "flight",
+          "status": "confirmed",
+          "passengers": {
+            "$contains": "chen ortiz"
+          }
+        },
+        "min": 3
+      },
+      {
+        "desc": "Passport names used (Jordan Min)",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "kind": "flight",
+          "status": "confirmed",
+          "passengers": {
+            "$contains_any": [
+              "jordan min park",
+              "park, jordan min",
+              "jordan min"
+            ]
+          }
+        },
+        "min": 3
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Applies the rules: excludes AM 403, VB 1120, AM 2156 (before 8 AM) and Y4 355 (lands 1:10 AM); prefers nonstop Y4 901 over the cheaper 1-stop AA 1340.",
+        "weight": 3
+      },
+      {
+        "criterion": "Picks the cheapest valid option per leg that seats both: Y4 901 $219, AM 2141 $96 (Y4 830 has only one seat left, so it cannot take both), AA 2970 $332, total $1,294 for two.",
+        "weight": 2
+      },
+      {
+        "criterion": "Uses the exact passport names (Jordan Min Park, Maya Lucia Chen Ortiz).",
+        "weight": 2
+      },
+      {
+        "criterion": "Confirms the full itinerary and total before booking.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Y4 901 (JFK 11:15 -> MEX) $219, AM 2141 (MEX 13:30 -> OAX) $96, AA 2970 (OAX 12:15 -> JFK 22:30) $332; per person $647, total $1,294. Y4 830 is cheaper on leg 2 but has one seat left, so Jordan and Maya cannot fly it together; VB 1120 departs before 8 AM. AA 1340 is cheaper on leg 1 but has a stop while a nonstop fits the budget. Names: JORDAN MIN PARK, MAYA LUCIA CHEN ORTIZ.",
+    "forbid": [
+      {
+        "desc": "Booked a flight that breaks the travel rules",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "flight_id": {
+            "$in": [
+              "fl-am403",
+              "fl-vb1120",
+              "fl-am2156",
+              "fl-y4355"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Split Jordan and Maya across flights",
+        "weight": 1,
+        "in": "bookings",
+        "where": {
+          "kind": "flight",
+          "status": "confirmed",
+          "passengers": {
+            "$len": 1
+          }
+        }
+      }
+    ]
+  }
+}

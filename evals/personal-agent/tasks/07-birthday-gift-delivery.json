@@ -1,0 +1,196 @@
+{
+  "id": "birthday-gift-delivery",
+  "input": [
+    "Mom's birthday is next week. Get her something she actually wants, ship it straight to her, and include a note from me and Maya. Budget's in my notes."
+  ],
+  "tags": [
+    "shopping",
+    "constraints",
+    "inference"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "notes/gifts.md",
+          "content": "# Gift notes\n\n- Mom: birthday gift budget $300 max. Never send refurbished or used items as gifts.\n- Sam: likes coffee gear.\n"
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-701",
+          "folder": "inbox",
+          "from": "Linda Park <linda.park52@yahoo.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: Thanksgiving?",
+          "body": "Hi sweetie! Thanksgiving here would be wonderful. I tried a braise last week in my old pot and it scorched again. I keep looking at those Le Creuset dutch ovens, the 5.5 quart in that pretty Marseille blue. Someday! Love, Mom",
+          "date": "2026-10-20T19:44:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ],
+      "products": [
+        {
+          "id": "prd-lc55-outlet",
+          "name": "Le Creuset Signature Round Dutch Oven 5.5 qt, Marseille",
+          "price": 289.95,
+          "delivery_days": 8,
+          "rating": 4.8,
+          "seller": "Kitchen Outlet Direct",
+          "stock": 5
+        },
+        {
+          "id": "prd-lc55-official",
+          "name": "Le Creuset Signature Round Dutch Oven 5.5 qt, Marseille",
+          "price": 299.95,
+          "delivery_days": 4,
+          "rating": 4.9,
+          "seller": "Le Creuset Official Store",
+          "stock": 5
+        },
+        {
+          "id": "prd-lc725",
+          "name": "Le Creuset Signature Round Dutch Oven 7.25 qt, Marseille",
+          "price": 389.0,
+          "delivery_days": 3,
+          "rating": 4.9,
+          "seller": "Le Creuset Official Store",
+          "stock": 5
+        },
+        {
+          "id": "prd-lc55-cerise",
+          "name": "Le Creuset Signature Round Dutch Oven 5.5 qt, Cerise (red)",
+          "price": 279.95,
+          "delivery_days": 2,
+          "rating": 4.8,
+          "seller": "Le Creuset Official Store",
+          "stock": 5
+        },
+        {
+          "id": "prd-lc55-renewed",
+          "name": "Le Creuset Signature Round Dutch Oven 5.5 qt, Marseille - Renewed (minor cosmetic blemishes)",
+          "price": 199.0,
+          "delivery_days": 3,
+          "rating": 4.2,
+          "seller": "Second Chance Kitchen",
+          "stock": 5
+        },
+        {
+          "id": "prd-lodge-blue",
+          "name": "Lodge Enameled Cast Iron Dutch Oven 6 qt, Blue",
+          "price": 79.9,
+          "delivery_days": 2,
+          "rating": 4.7,
+          "seller": "Lodge",
+          "stock": 5
+        }
+      ]
+    },
+    "user": {
+      "goal": "Have the right gift arrive at Mom's in Portland before her Nov 9 birthday, with a note from you and Maya, within budget.",
+      "knows": [
+        "Sign the note from 'Jordan & Maya'."
+      ],
+      "behavior": "Approve an order that matches what Mom asked for, arrives by Nov 8, and is new. If the assistant proposes the renewed one, say no, gifts must be new. Approve paying with the default card."
+    },
+    "checks": [
+      {
+        "desc": "Ordered the 5.5 qt Marseille from the official store",
+        "weight": 4,
+        "in": "orders",
+        "where": {
+          "product_id": "prd-lc55-official",
+          "status": "placed"
+        }
+      },
+      {
+        "desc": "Shipped to Mom's Portland address",
+        "weight": 2,
+        "in": "orders",
+        "where": {
+          "product_id": "prd-lc55-official",
+          "shipping_address": {
+            "$contains_all": [
+              "2218",
+              "ankeny",
+              "portland"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Gift note from Jordan and Maya",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "product_id": "prd-lc55-official",
+          "gift_message": {
+            "$contains_all": [
+              "jordan",
+              "maya"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Only one item ordered",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "status": "placed"
+        },
+        "max": 1
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Infers the wanted item precisely from Mom's email (Le Creuset 5.5 qt, Marseille blue).",
+        "weight": 2
+      },
+      {
+        "criterion": "Rejects the cheaper outlet listing because it arrives Nov 10, after the birthday, and rejects the renewed, larger, red, and generic options for the right reasons.",
+        "weight": 2
+      },
+      {
+        "criterion": "Ships directly to Mom's address from contacts with a warm note signed by Jordan & Maya.",
+        "weight": 1
+      },
+      {
+        "criterion": "Confirms with Jordan before ordering and reports price and delivery date.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Order prd-lc55-official ($299.95, arrives Nov 6) to 2218 SE Ankeny St, Portland, OR 97214, with a gift note signed Jordan & Maya. The outlet listing ($289.95) arrives Nov 10 (too late), the renewed one violates the no-refurbished rule, 7.25 qt is over budget, Cerise is the wrong color, Lodge is not what she asked for.",
+    "forbid": [
+      {
+        "desc": "Ordered a refurbished, wrong, or late item",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "product_id": {
+            "$in": [
+              "prd-lc55-outlet",
+              "prd-lc725",
+              "prd-lc55-cerise",
+              "prd-lc55-renewed",
+              "prd-lodge-blue"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Shipped the gift to Jordan instead of Mom",
+        "weight": 1,
+        "in": "orders",
+        "where": {
+          "shipping_address": {
+            "$contains": "prospect"
+          }
+        }
+      }
+    ]
+  }
+}

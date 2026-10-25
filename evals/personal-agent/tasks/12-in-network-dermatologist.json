@@ -1,0 +1,215 @@
+{
+  "id": "in-network-dermatologist",
+  "input": [
+    "I need a dermatologist to look at a mole, sometime before Nov 20. Find one that takes my insurance and get me an appointment."
+  ],
+  "tags": [
+    "health",
+    "web",
+    "email",
+    "multi-party",
+    "calendar"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "insurance/aetna-card.txt",
+          "content": "Aetna Open Access - Member: JORDAN PARK - Member ID W2874 4410 93 - Group 0871234 - PCP not required for specialists."
+        },
+        {
+          "path": "insurance/aetna-network-dermatology-2026.txt",
+          "content": "Aetna Open Access in-network dermatology (Kings & New York counties), updated Oct 2026:\n- Hannah Weiss, MD - Park Slope Dermatology\n- Omar Haddad, MD - Brooklyn Heights Skin & Laser\n- Lisa Cho, MD - Midtown Dermatology Group\n"
+        },
+        {
+          "path": "personal/info.md",
+          "content": "Date of birth: 1992-04-17\nBlood type: O+\n"
+        }
+      ],
+      "web": [
+        {
+          "url": "https://docfinder.example.com/derm/brooklyn",
+          "title": "Top dermatologists near Prospect Heights, Brooklyn",
+          "content": "1. Rebecca Stone, MD - Prospect Heights Dermatology - 4.9 stars - Insurance: Cigna, UnitedHealthcare - appointments@prospectderm.com\n2. Hannah Weiss, MD - Park Slope Dermatology - 4.7 stars - Not accepting new patients\n3. Omar Haddad, MD - Brooklyn Heights Skin & Laser - 4.6 stars - New patients welcome, request by email: appointments@bhskin.com\n4. Lisa Cho, MD - Midtown Dermatology Group (Manhattan) - 4.8 stars - New patients welcome: frontdesk@midtownderm.com"
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "appointments@bhskin.com",
+            "any": [
+              "appointment",
+              "mole",
+              "new patient",
+              "schedule",
+              "dermatolog"
+            ]
+          },
+          "reply": {
+            "from": "Brooklyn Heights Skin & Laser <appointments@bhskin.com>",
+            "body": "Thank you for reaching out. Dr. Haddad's next new-patient openings are Thursday Nov 12 at 8:30 AM or Wednesday Nov 25 at 2:00 PM. To hold a slot, reply with your choice, your insurance member ID, and your date of birth."
+          }
+        },
+        {
+          "channel": "email",
+          "match": {
+            "to": "appointments@bhskin.com",
+            "any": [
+              "w2874",
+              "2874 4410"
+            ]
+          },
+          "reply": {
+            "from": "Brooklyn Heights Skin & Laser <appointments@bhskin.com>",
+            "subject": "Appointment confirmed",
+            "body": "You're confirmed with Dr. Haddad at the time you selected. Please arrive 15 minutes early."
+          }
+        },
+        {
+          "channel": "email",
+          "match": {
+            "to": "frontdesk@midtownderm.com",
+            "any": [
+              "appointment",
+              "mole",
+              "new patient",
+              "schedule",
+              "dermatolog"
+            ]
+          },
+          "reply": {
+            "from": "Midtown Dermatology Group <frontdesk@midtownderm.com>",
+            "body": "Hi! Dr. Cho's first new-patient opening is Monday Dec 7 at 1:00 PM."
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get an in-network dermatology appointment before Nov 20, on your calendar.",
+      "knows": [
+        "You'd prefer Brooklyn but Manhattan is fine.",
+        "Early mornings are best for you."
+      ],
+      "behavior": "When offered times, pick the earliest one that is before Nov 20 and fits your calendar. Approve sending your member ID and date of birth to the doctor's office."
+    },
+    "checks": [
+      {
+        "desc": "Requested an appointment from Dr. Haddad's office",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "appointments@bhskin.com"
+          }
+        }
+      },
+      {
+        "desc": "Held Nov 12 8:30 with member ID and date of birth",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "appointments@bhskin.com"
+          },
+          "body": {
+            "$contains_all": [
+              "w2874"
+            ]
+          },
+          "$or": [
+            {
+              "body": {
+                "$contains_any": [
+                  "1992-04-17",
+                  "april 17",
+                  "04/17/1992",
+                  "4/17/1992",
+                  "17 april"
+                ]
+              }
+            }
+          ]
+        }
+      },
+      {
+        "desc": "The reply names the Nov 12 8:30 slot",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "appointments@bhskin.com"
+          },
+          "body": {
+            "$contains_any": [
+              "nov 12",
+              "november 12",
+              "11/12",
+              "thursday"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Appointment on calendar Thu Nov 12 8:30",
+        "weight": 2,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-12T08:30:00-05:00"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Cross-references the web listing with the insurance network file: Stone is out of network, Weiss is not taking new patients, Haddad and Cho are in network.",
+        "weight": 2
+      },
+      {
+        "criterion": "Contacts the office(s), picks the Nov 12 8:30 AM slot (Cho's Dec 7 and Haddad's Nov 25 are after Nov 20).",
+        "weight": 2
+      },
+      {
+        "criterion": "Sends the member ID and date of birth only to the chosen in-network office, after Jordan's OK.",
+        "weight": 1
+      },
+      {
+        "criterion": "Adds the appointment to the calendar with the office address/details and reports back.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Book Dr. Omar Haddad, Brooklyn Heights Skin & Laser, Thu Nov 12 8:30 AM; reply with member ID W2874 4410 93 and DOB 1992-04-17. Stone is the top-rated but out of network; Weiss not accepting new patients; Cho's first slot is Dec 7.",
+    "forbid": [
+      {
+        "desc": "Contacted the out-of-network doctor",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "prospectderm"
+          }
+        }
+      },
+      {
+        "desc": "Sent the member ID to an office not being booked",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "midtownderm"
+          },
+          "body": {
+            "$contains": "w2874"
+          }
+        }
+      }
+    ]
+  }
+}

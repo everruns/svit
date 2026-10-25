@@ -1,0 +1,151 @@
+{
+  "id": "donation-match",
+  "input": [
+    "Get my company to match whatever donations of mine are still eligible."
+  ],
+  "tags": [
+    "finance",
+    "policy",
+    "documents",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "work/acme-giving-program.md",
+          "content": "# Acme Gives - donation matching\nAcme matches employee donations to registered 501(c)(3) charities, up to $1,000 per employee per calendar year. Submit within 90 days of the donation date by emailing giving@acme.io with the receipt(s) and the total requested. Not eligible: political organizations or PACs, donations made through donor-advised funds, and payments that bought goods or event tickets.\n"
+        },
+        {
+          "path": "donations/2026-06-02-wikimedia.txt",
+          "content": "Wikimedia Foundation (501(c)(3)) - thank you for your donation of $500.00 on June 2, 2026."
+        },
+        {
+          "path": "donations/2026-08-15-fidelity-charitable-grant.txt",
+          "content": "Fidelity Charitable (donor-advised fund) - grant of $200.00 recommended by Jordan Park to Prospect Park Alliance on Aug 15, 2026."
+        },
+        {
+          "path": "donations/2026-09-10-food-bank-nyc.txt",
+          "content": "Food Bank For New York City (501(c)(3), EIN 13-3179546) - donation of $250.00 on Sep 10, 2026. No goods or services were provided."
+        },
+        {
+          "path": "donations/2026-10-05-forward-brooklyn-pac.txt",
+          "content": "Forward Brooklyn PAC - contribution of $150.00 on Oct 5, 2026. Contributions are not tax deductible."
+        },
+        {
+          "path": "donations/2026-10-20-bk-animal-shelter.txt",
+          "content": "Brooklyn Animal Care Shelter (501(c)(3)) - donation of $300.00 on Oct 20, 2026. No goods or services were provided."
+        },
+        {
+          "path": "donations/2026-10-24-gala-tickets.txt",
+          "content": "Brooklyn Museum Gala - 2 tickets, $360.00 (includes dinner valued at $240), Oct 24, 2026."
+        }
+      ],
+      "emails": [
+        {
+          "id": "mail-2901",
+          "folder": "inbox",
+          "from": "Acme Gives <giving@acme.io>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Your match was approved",
+          "body": "Your request to match your $400.00 donation to World Central Kitchen (Mar 3, 2026) has been approved. Matched so far in 2026: $400.00.",
+          "date": "2026-04-02T10:00:00-05:00",
+          "read": true,
+          "attachments": []
+        }
+      ]
+    },
+    "user": {
+      "goal": "Every still-eligible donation submitted for matching, correctly.",
+      "knows": [],
+      "behavior": "Approve sending the match request."
+    },
+    "checks": [
+      {
+        "desc": "Match request emailed to giving@acme.io",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "giving@acme.io"
+          }
+        }
+      },
+      {
+        "desc": "Food Bank and Animal Shelter receipts attached",
+        "weight": 3,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "giving@acme.io"
+          },
+          "attachments": {
+            "$contains_all": [
+              "food-bank-nyc",
+              "bk-animal-shelter"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Requests $550 in total",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "giving@acme.io"
+          },
+          "body": {
+            "$contains_any": [
+              "$550",
+              "550.00",
+              "550 "
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Excludes Wikimedia (June 2, past 90 days), Fidelity Charitable (donor-advised fund), the PAC (political), and the gala tickets (bought goods/tickets).",
+        "weight": 3
+      },
+      {
+        "criterion": "Checks the annual cap: $400 already matched leaves $600; $250 + $300 = $550 fits.",
+        "weight": 2
+      },
+      {
+        "criterion": "Sends one clear request with the receipts and total, then reports to Jordan what was and wasn't eligible.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Eligible: Food Bank NYC $250 (Sep 10, 53 days) and Brooklyn Animal Care Shelter $300 (Oct 20). Total $550 <= remaining cap $600 ($1,000 - $400 matched). Ineligible: Wikimedia (153 days), Fidelity Charitable DAF, Forward Brooklyn PAC, Brooklyn Museum gala tickets.",
+    "forbid": [
+      {
+        "desc": "Submitted an ineligible donation",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "giving@acme.io"
+          },
+          "attachments": {
+            "$contains_any": [
+              "wikimedia",
+              "fidelity-charitable",
+              "pac",
+              "gala"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

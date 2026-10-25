@@ -1,0 +1,125 @@
+{
+  "id": "sublet-lease-addendum",
+  "input": [
+    "I want to sublet my place while I'm away in December. Check what my lease says and email the landlord to ask."
+  ],
+  "tags": [
+    "documents",
+    "reasoning",
+    "email"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "home/lease-2026-renewal.txt",
+          "content": "RESIDENTIAL LEASE RENEWAL\nLandlord: Halsey Property Management (Grace Lee, grace@halseyproperty.com)\nTenant: Jordan Park, 417 Prospect Pl Apt 3R\nTerm: Nov 1, 2026 - Oct 31, 2027. Rent $2,450/month.\n...\n14. SUBLETTING. Tenant may not sublet without Landlord's prior written consent, which will not be unreasonably withheld. Tenant must request consent in writing at least 30 days before the proposed sublet start date and identify the proposed subtenant. The proposed subtenant must submit a rental application and a $150 non-refundable application fee.\n15. GUESTS. Guests may stay up to 14 consecutive nights.\n"
+        },
+        {
+          "path": "home/lease-addendum-A.txt",
+          "content": "ADDENDUM A to Lease Renewal (signed Sep 28, 2026)\n1. Section 14 (Subletting) is amended: written requests must be received at least 45 days before the proposed sublet start date. The maximum sublet term is 60 days.\n2. All other terms remain in effect.\n"
+        }
+      ],
+      "calendar": [
+        {
+          "id": "evt-dec-trip",
+          "title": "Lisbon + Porto trip",
+          "start": "2026-12-05T00:00:00-05:00",
+          "end": "2027-01-03T23:59:00-05:00",
+          "attendees": [],
+          "location": null,
+          "notes": null,
+          "status": "confirmed"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Get the landlord's permission to sublet while you're away.",
+      "knows": [
+        "You'll be away Dec 5 through Jan 3.",
+        "The subtenant is Chris Ortega (chris.ortega@gmail.com), your coworker's cousin, employed nurse.",
+        "Your flights are already booked, so the dates can't move."
+      ],
+      "behavior": "Answer questions about dates and subtenant from your facts. If the assistant points out you're inside the 45-day notice window, say 'ugh, the flights are booked, ask Grace if she can make an exception.' Approve the email."
+    },
+    "checks": [
+      {
+        "desc": "Emailed Grace at the real landlord address",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "grace@halseyproperty.com"
+          }
+        }
+      },
+      {
+        "desc": "Names the subtenant Chris Ortega",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "grace@halseyproperty.com"
+          },
+          "body": {
+            "$contains": "chris ortega"
+          }
+        }
+      },
+      {
+        "desc": "States the Dec 5 - Jan 3 dates",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "grace@halseyproperty.com"
+          },
+          "body": {
+            "$contains_any": [
+              "dec 5",
+              "december 5",
+              "12/5",
+              "dec. 5"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Acknowledges the 45-day notice requirement and asks for an exception",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains": "grace@halseyproperty.com"
+          },
+          "body": {
+            "$contains": "45"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Finds Addendum A and applies the 45-day rule instead of the original 30 days.",
+        "weight": 3
+      },
+      {
+        "criterion": "Works out that a Dec 5 start is only 33 days away, so the notice requirement is already missed, and tells Jordan before emailing.",
+        "weight": 2
+      },
+      {
+        "criterion": "Mentions the subtenant application and $150 fee, and that the 29-night term is within the 60-day maximum.",
+        "weight": 1
+      },
+      {
+        "criterion": "The email is a clear, polite written consent request with dates, subtenant, and an exception request.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Addendum A raises notice to 45 days. Today is Nov 2; Dec 5 is 33 days away, so the request is 12 days late (45 days before Dec 5 was Oct 21). Term Dec 5 - Jan 3 is 29 nights, within 60-day max. Subtenant must apply with $150 fee. Email Grace with consent request + exception request."
+  }
+}

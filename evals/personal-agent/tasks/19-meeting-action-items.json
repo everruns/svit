@@ -1,0 +1,212 @@
+{
+  "id": "meeting-action-items",
+  "input": [
+    "Send everyone their action items from Friday's roadmap sync, and put mine in my reminders with real due dates."
+  ],
+  "tags": [
+    "documents",
+    "dates",
+    "email",
+    "reminders"
+  ],
+  "metadata": {
+    "world": {
+      "files": [
+        {
+          "path": "notes/2026-10-30-roadmap-sync.md",
+          "content": "# Roadmap sync - Friday Oct 30, 2026\nAttendees: Jordan, Priya, Tom, Kai (Northwind)\n\n## Decisions\n- Ship usage-based pricing pilot to 3 design partners in Dec.\n\n## Action items\n- Jordan: send revised pricing one-pager to Priya by next Wednesday.\n- Jordan: schedule user interviews with 5 enterprise customers by end of next week.\n- Tom: fix the CSV export bug before the Nov 10 release.\n- Priya: get legal sign-off on the new ToS by Nov 13.\n- Kai (Northwind): share API rate-limit numbers by Monday.\n- Everyone: read the roadmap doc before the next sync on Nov 13.\n"
+        }
+      ],
+      "contacts": [
+        {
+          "id": "ct-kai",
+          "name": "Kai Nakamura",
+          "email": "kai@northwind.dev",
+          "relationship": "partner engineer at Northwind"
+        }
+      ],
+      "auto_replies": [
+        {
+          "channel": "email",
+          "match": {
+            "to": "tom.becker@acme.io",
+            "any": []
+          },
+          "reply": {
+            "from": "Tom Becker <tom.becker@acme.io>",
+            "subject": "Out of office: Tom Becker",
+            "body": "I'm on leave from Nov 2 through Nov 13 with no email access. Raj Patel (raj.patel@acme.io) owns my release work, including anything that has to ship in the Nov 10 release."
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Everyone knows their follow-ups and your own are in reminders with correct dates.",
+      "knows": [],
+      "behavior": "Approve sending the follow-up emails. If the assistant says Tom is out and suggests passing his item to Raj, agree."
+    },
+    "checks": [
+      {
+        "desc": "Tom got the CSV export item",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "$or": [
+            {
+              "to": {
+                "$contains": "tom.becker"
+              }
+            },
+            {
+              "cc": {
+                "$contains": "tom.becker"
+              }
+            }
+          ],
+          "body": {
+            "$contains": "csv"
+          }
+        }
+      },
+      {
+        "desc": "Raj (Tom's cover) got the CSV export item before the release",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "$or": [
+            {
+              "to": {
+                "$contains": "raj.patel"
+              }
+            },
+            {
+              "cc": {
+                "$contains": "raj.patel"
+              }
+            }
+          ],
+          "body": {
+            "$contains": "csv"
+          }
+        }
+      },
+      {
+        "desc": "Priya got the legal/ToS item",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "$or": [
+            {
+              "to": {
+                "$contains": "priya.raman"
+              }
+            },
+            {
+              "cc": {
+                "$contains": "priya.raman"
+              }
+            }
+          ],
+          "body": {
+            "$contains_any": [
+              "legal",
+              "tos",
+              "terms"
+            ]
+          }
+        }
+      },
+      {
+        "desc": "Kai got the rate-limit item",
+        "weight": 1,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "$or": [
+            {
+              "to": {
+                "$contains": "kai@northwind.dev"
+              }
+            },
+            {
+              "cc": {
+                "$contains": "kai@northwind.dev"
+              }
+            }
+          ],
+          "body": {
+            "$contains": "rate"
+          }
+        }
+      },
+      {
+        "desc": "Reminder: pricing one-pager due Wed Nov 4",
+        "weight": 2,
+        "in": "reminders",
+        "where": {
+          "text": {
+            "$contains": "pricing"
+          },
+          "due": {
+            "$gte": "2026-11-04",
+            "$lt": "2026-11-05"
+          }
+        }
+      },
+      {
+        "desc": "Reminder: user interviews due Fri Nov 6",
+        "weight": 2,
+        "in": "reminders",
+        "where": {
+          "text": {
+            "$contains": "interview"
+          },
+          "due": {
+            "$gte": "2026-11-06",
+            "$lt": "2026-11-07"
+          }
+        }
+      },
+      {
+        "desc": "Reminder: read roadmap doc by Nov 13",
+        "weight": 1,
+        "in": "reminders",
+        "where": {
+          "text": {
+            "$contains": "roadmap"
+          },
+          "due": {
+            "$gte": "2026-11-09",
+            "$lt": "2026-11-14"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Resolves relative dates against the meeting date (Fri Oct 30): 'next Wednesday' = Nov 4, 'end of next week' = Fri Nov 6, 'by Monday' = Nov 2 (today).",
+        "weight": 3
+      },
+      {
+        "criterion": "Each person gets only their own items plus the shared 'read the roadmap doc' item, with dates spelled out.",
+        "weight": 2
+      },
+      {
+        "criterion": "Notes to Kai (external) are professional and flag that his item is due today.",
+        "weight": 1
+      },
+      {
+        "criterion": "Notices Tom's out-of-office reply and hands the CSV export fix to Raj Patel, since it must ship in the Nov 10 release while Tom is away until Nov 13.",
+        "weight": 2
+      },
+      {
+        "criterion": "Creates Jordan's reminders with due dates and reports them.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Jordan: pricing one-pager to Priya due Wed Nov 4; interviews scheduled by Fri Nov 6; read roadmap doc before Nov 13. Tom: CSV export bug before Nov 10; Tom's auto-reply says he is out until Nov 13 and Raj Patel owns his release work, so the item must also go to raj.patel@acme.io. Priya: legal ToS sign-off by Nov 13. Kai: rate-limit numbers by Mon Nov 2 (today)."
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "id": "the-usual-friday",
+  "input": [
+    "Book us the usual for Friday."
+  ],
+  "tags": [
+    "dining",
+    "inference",
+    "messages"
+  ],
+  "metadata": {
+    "world": {
+      "reservations": [
+        {
+          "id": "rsv-h1",
+          "restaurant_id": "rst-lucali",
+          "restaurant": "Lucali",
+          "date": "2026-10-09",
+          "time": "20:00",
+          "party_size": 2,
+          "name": "Jordan Park",
+          "notes": "booth if possible",
+          "status": "completed"
+        },
+        {
+          "id": "rsv-h2",
+          "restaurant_id": "rst-rucola",
+          "restaurant": "Rucola",
+          "date": "2026-10-03",
+          "time": "19:00",
+          "party_size": 4,
+          "name": "Jordan Park",
+          "notes": null,
+          "status": "completed"
+        },
+        {
+          "id": "rsv-h3",
+          "restaurant_id": "rst-lucali",
+          "restaurant": "Lucali",
+          "date": "2026-10-16",
+          "time": "20:00",
+          "party_size": 2,
+          "name": "Jordan Park",
+          "notes": "booth if possible",
+          "status": "completed"
+        },
+        {
+          "id": "rsv-h4",
+          "restaurant_id": "rst-lucali",
+          "restaurant": "Lucali",
+          "date": "2026-10-23",
+          "time": "20:00",
+          "party_size": 2,
+          "name": "Jordan Park",
+          "notes": "booth if possible",
+          "status": "completed"
+        },
+        {
+          "id": "rsv-h5",
+          "restaurant_id": "rst-misi",
+          "restaurant": "Misi",
+          "date": "2026-10-30",
+          "time": "19:30",
+          "party_size": 3,
+          "name": "Jordan Park",
+          "notes": "Sam visiting",
+          "status": "completed"
+        }
+      ],
+      "restaurants": [
+        {
+          "id": "rst-lucali",
+          "name": "Lucali",
+          "city": "Brooklyn (Carroll Gardens)",
+          "cuisine": "Pizza",
+          "price_level": "$$",
+          "rating": 4.7,
+          "slots": {
+            "2026-11-06": [
+              {
+                "time": "18:30",
+                "max_party": 2
+              },
+              {
+                "time": "21:15",
+                "max_party": 4
+              }
+            ],
+            "2026-11-07": [
+              {
+                "time": "20:00",
+                "max_party": 2
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-rucola",
+          "name": "Rucola",
+          "city": "Brooklyn (Boerum Hill)",
+          "cuisine": "Italian",
+          "price_level": "$$",
+          "rating": 4.4,
+          "slots": {
+            "2026-11-06": [
+              {
+                "time": "20:00",
+                "max_party": 4
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-misi",
+          "name": "Misi",
+          "city": "Brooklyn (Williamsburg)",
+          "cuisine": "Pasta",
+          "price_level": "$$$",
+          "rating": 4.6,
+          "slots": {
+            "2026-11-06": [
+              {
+                "time": "20:00",
+                "max_party": 2
+              }
+            ]
+          }
+        }
+      ],
+      "messages": [
+        {
+          "id": "sms-u1",
+          "with": "+1 917 555 0142",
+          "direction": "in",
+          "text": "pizza friday again? 🍕",
+          "date": "2026-10-22T17:30:00-05:00"
+        },
+        {
+          "id": "sms-u2",
+          "with": "+1 917 555 0142",
+          "direction": "out",
+          "text": "obviously",
+          "date": "2026-10-22T17:31:00-05:00"
+        }
+      ]
+    },
+    "user": {
+      "goal": "Have your regular Friday dinner with Maya booked and Maya in the loop.",
+      "knows": [
+        "'The usual' is Lucali at 8pm for you and Maya, with a booth if possible."
+      ],
+      "behavior": "If the assistant asks what 'the usual' means, say 'come on, check our past reservations.' If told 8pm isn't available and offered 6:30 or 9:15, pick 9:15. Approve texting Maya."
+    },
+    "checks": [
+      {
+        "desc": "Lucali booked Fri Nov 6 at 21:15 for 2",
+        "weight": 4,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": "rst-lucali",
+          "date": "2026-11-06",
+          "time": "21:15",
+          "party_size": 2,
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Booth request carried over",
+        "weight": 1,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": "rst-lucali",
+          "date": "2026-11-06",
+          "notes": {
+            "$contains": "booth"
+          }
+        }
+      },
+      {
+        "desc": "Dinner on the calendar at 21:15",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "status": "confirmed",
+          "start": {
+            "$time_eq": "2026-11-06T21:15:00-05:00"
+          }
+        }
+      },
+      {
+        "desc": "Texted Maya the plan",
+        "weight": 1,
+        "in": "messages",
+        "where": {
+          "direction": "out",
+          "with": "+1 917 555 0142",
+          "text": {
+            "$contains_any": [
+              "9:15",
+              "21:15",
+              "lucali"
+            ]
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Infers 'the usual' from history (Lucali, Fridays 8pm, party of 2, booth) without making Jordan explain it.",
+        "weight": 3
+      },
+      {
+        "criterion": "Notices 8:00 PM is unavailable and asks Jordan to choose between 6:30 and 9:15 rather than silently picking.",
+        "weight": 2
+      },
+      {
+        "criterion": "Books, adds to the calendar, and lets Maya know.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Three of the last four Friday reservations are Lucali 20:00 for 2 with 'booth if possible'. Friday Nov 6 Lucali has 18:30 and 21:15 only; Jordan picks 21:15. Text Maya (+1 917 555 0142).",
+    "forbid": [
+      {
+        "desc": "Booked somewhere other than Lucali",
+        "weight": 1,
+        "in": "reservations",
+        "where": {
+          "status": "confirmed",
+          "restaurant_id": {
+            "$ne": "rst-lucali"
+          }
+        }
+      }
+    ]
+  }
+}

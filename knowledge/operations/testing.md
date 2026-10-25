@@ -35,6 +35,11 @@ same `discover`, `write`, `exec`, port, and `/memory` interactions a live model
 uses. A scenario is not satisfied by a host-specific helper or by preloading
 the expected durable result.
 
+[`Personal Agent Eval`](personal-agent-eval.md) is the opposite kind of
+evidence: a graded live-model Mira study under `evals/`, run by hand to compare
+models and agent changes. It is nondeterministic and never stands in for a
+deterministic test.
+
 Package-relative `.svit-script` files should enter Rust through
 `svit_script!(file ...)`, which catches Lisp compiler errors during
 `cargo check`. `svit_script_test!` supplies a fresh real process with the

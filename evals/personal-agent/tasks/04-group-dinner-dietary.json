@@ -1,0 +1,377 @@
+{
+  "id": "group-dinner-dietary",
+  "input": [
+    "Book dinner this Saturday for me, Maya, and the four friends from Maya's email thread. Somewhere that works for everyone, starting between 7 and 8:30pm, Brooklyn or Manhattan, not crazy expensive. Then let everyone know the details."
+  ],
+  "tags": [
+    "dining",
+    "constraints",
+    "email",
+    "multi-party"
+  ],
+  "metadata": {
+    "world": {
+      "emails": [
+        {
+          "id": "mail-401",
+          "folder": "inbox",
+          "from": "Maya Chen <maya.chen@gmail.com>",
+          "to": [
+            "jordan.park@fastmail.com",
+            "dana.wolfe@gmail.com",
+            "ravi.shah@proton.me",
+            "elena.rossi@gmail.com",
+            "marcus.hill@hey.com"
+          ],
+          "cc": [],
+          "subject": "Saturday dinner crew!",
+          "body": "Hi all! Jordan and I are hosting dinner out this Saturday (Nov 7). Reply-all with any food stuff we need to know about.",
+          "date": "2026-10-31T10:02:00-05:00",
+          "read": true,
+          "attachments": []
+        },
+        {
+          "id": "mail-402",
+          "folder": "inbox",
+          "from": "Ravi Shah <ravi.shah@proton.me>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: Saturday dinner crew!",
+          "body": "I'm in! Reminder that I'm celiac, so it has to be properly gluten-free, not just 'gluten-friendly'.",
+          "date": "2026-10-31T11:40:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-403",
+          "folder": "inbox",
+          "from": "Elena Rossi <elena.rossi@gmail.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: Saturday dinner crew!",
+          "body": "Yay! I'm vegan these days 🌱",
+          "date": "2026-10-31T13:15:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-404",
+          "folder": "inbox",
+          "from": "Marcus Hill <marcus.hill@hey.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: Saturday dinner crew!",
+          "body": "Count me in. Severe tree nut allergy as usual, EpiPen and all, so the kitchen needs to be able to handle that.",
+          "date": "2026-10-31T18:22:00-05:00",
+          "read": false,
+          "attachments": []
+        },
+        {
+          "id": "mail-405",
+          "folder": "inbox",
+          "from": "Dana Wolfe <dana.wolfe@gmail.com>",
+          "to": [
+            "jordan.park@fastmail.com"
+          ],
+          "cc": [],
+          "subject": "Re: Saturday dinner crew!",
+          "body": "I eat everything, see you there!",
+          "date": "2026-11-01T09:05:00-05:00",
+          "read": false,
+          "attachments": []
+        }
+      ],
+      "contacts": [
+        {
+          "id": "ct-ravi",
+          "name": "Ravi Shah",
+          "email": "ravi.shah@proton.me"
+        },
+        {
+          "id": "ct-elena",
+          "name": "Elena Rossi",
+          "email": "elena.rossi@gmail.com"
+        },
+        {
+          "id": "ct-marcus",
+          "name": "Marcus Hill",
+          "email": "marcus.hill@hey.com"
+        }
+      ],
+      "restaurants": [
+        {
+          "id": "rst-olmsted",
+          "name": "Olmsted",
+          "city": "Brooklyn (Prospect Heights)",
+          "cuisine": "New American",
+          "price_level": "$$$",
+          "rating": 4.7,
+          "dietary": [
+            "vegetarian",
+            "vegan options",
+            "gluten-free options"
+          ],
+          "notes": "Many dishes use pistachio or almond; the kitchen cannot accommodate tree nut allergies.",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "19:30",
+                "max_party": 6
+              },
+              {
+                "time": "21:30",
+                "max_party": 4
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-dirtcandy",
+          "name": "Dirt Candy",
+          "city": "Manhattan (Lower East Side)",
+          "cuisine": "Vegetarian",
+          "price_level": "$$$",
+          "rating": 4.6,
+          "dietary": [
+            "vegetarian",
+            "vegan",
+            "celiac-safe gluten-free",
+            "nut-free kitchen"
+          ],
+          "notes": "",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "18:00",
+                "max_party": 6
+              },
+              {
+                "time": "19:15",
+                "max_party": 4
+              },
+              {
+                "time": "21:00",
+                "max_party": 8
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-rucola",
+          "name": "Rucola",
+          "city": "Brooklyn (Boerum Hill)",
+          "cuisine": "Italian",
+          "price_level": "$$",
+          "rating": 4.4,
+          "dietary": [
+            "vegetarian",
+            "gluten-free pasta (shared kitchen)",
+            "nut allergy aware"
+          ],
+          "notes": "Gluten-free pasta is cooked in shared water; not suitable for celiac. Vegan options very limited.",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "19:00",
+                "max_party": 6
+              },
+              {
+                "time": "20:00",
+                "max_party": 6
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-modernlove",
+          "name": "Modern Love Brooklyn",
+          "city": "Brooklyn (Williamsburg)",
+          "cuisine": "Vegan comfort food",
+          "price_level": "$$",
+          "rating": 4.5,
+          "dietary": [
+            "vegan",
+            "vegetarian",
+            "celiac-safe gluten-free menu",
+            "tree-nut-free preparation on request"
+          ],
+          "notes": "Dedicated gluten-free fryer. Tell us about allergies in the reservation notes.",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "18:15",
+                "max_party": 6
+              },
+              {
+                "time": "19:45",
+                "max_party": 6
+              },
+              {
+                "time": "20:00",
+                "max_party": 2
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-atomix",
+          "name": "Atomix",
+          "city": "Manhattan (NoMad)",
+          "cuisine": "Korean tasting",
+          "price_level": "$$$$",
+          "rating": 4.9,
+          "dietary": [
+            "accommodates most allergies with notice"
+          ],
+          "notes": "",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "20:00",
+                "max_party": 6
+              }
+            ]
+          }
+        },
+        {
+          "id": "rst-luger",
+          "name": "Peter Luger",
+          "city": "Brooklyn (Williamsburg)",
+          "cuisine": "Steakhouse",
+          "price_level": "$$$$",
+          "rating": 4.3,
+          "dietary": [],
+          "notes": "",
+          "slots": {
+            "2026-11-07": [
+              {
+                "time": "19:30",
+                "max_party": 8
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "user": {
+      "goal": "Have a dinner reservation for six this Saturday that is safe for everyone, and everyone informed.",
+      "knows": [
+        "'Not crazy expensive' means $$ or $$$ at most.",
+        "Maya is vegetarian."
+      ],
+      "behavior": "Approve a reservation if it fits the constraints. Approve the email to the group."
+    },
+    "checks": [
+      {
+        "desc": "Reserved Modern Love for 6 on Nov 7 at 19:45",
+        "weight": 4,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": "rst-modernlove",
+          "date": "2026-11-07",
+          "time": "19:45",
+          "party_size": 6,
+          "status": "confirmed"
+        }
+      },
+      {
+        "desc": "Reservation notes mention the celiac and tree-nut needs",
+        "weight": 1,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": "rst-modernlove",
+          "notes": {
+            "$contains_any": [
+              "celiac",
+              "gluten"
+            ]
+          },
+          "$or": [
+            {
+              "notes": {
+                "$contains": "nut"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "desc": "Email to all four friends and Maya with the details",
+        "weight": 2,
+        "in": "emails",
+        "where": {
+          "folder": "sent",
+          "to": {
+            "$contains_all": [
+              "dana.wolfe",
+              "ravi.shah",
+              "elena.rossi",
+              "marcus.hill",
+              "maya.chen"
+            ]
+          },
+          "body": {
+            "$contains": "modern love"
+          }
+        }
+      },
+      {
+        "desc": "Dinner on Jordan's calendar",
+        "weight": 1,
+        "in": "calendar",
+        "where": {
+          "title": {
+            "$contains_any": [
+              "dinner",
+              "modern love"
+            ]
+          },
+          "start": {
+            "$time_eq": "2026-11-07T19:45:00-05:00"
+          }
+        }
+      }
+    ],
+    "rubric": [
+      {
+        "criterion": "Identifies all constraints: party of 6, Nov 7, 7:00-8:30 PM start, celiac-safe, vegan, tree-nut allergy, vegetarian (Maya), price $$-$$$.",
+        "weight": 2
+      },
+      {
+        "criterion": "Rejects Olmsted (cannot handle tree nuts), Rucola (not celiac-safe, limited vegan), Dirt Candy (no 6-top in the window), Atomix and Peter Luger (price/diet), with correct reasoning.",
+        "weight": 2
+      },
+      {
+        "criterion": "Books Modern Love 19:45 for 6 with allergy notes.",
+        "weight": 2
+      },
+      {
+        "criterion": "Group email includes date, time, place, and that dietary needs were flagged.",
+        "weight": 1
+      }
+    ],
+    "ground_truth": "Only Modern Love Brooklyn at 19:45 for 6 satisfies every constraint. Dirt Candy is diet-perfect but its 6-person slots are 18:00 and 21:00 (outside 19:00-20:30) and the 19:15 slot seats 4.",
+    "forbid": [
+      {
+        "desc": "Booked a restaurant that is unsafe for the group",
+        "weight": 1,
+        "in": "reservations",
+        "where": {
+          "restaurant_id": {
+            "$in": [
+              "rst-olmsted",
+              "rst-rucola",
+              "rst-luger"
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
