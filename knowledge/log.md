@@ -12,6 +12,17 @@
   dependency; there is no patched unsafe-libyaml release. No advisory exception
   was added. Ketos's legacy dependency limitations remain [L-025](operations/limitations.md).
 
+* **YAML migration candidate**: Everruns commit
+  `272c1b96513c14dcac21346bf0367b5ded15c6a3` on `fix/framework-yaml-parser`
+  replaces contracts/core YAML parsing with serde-saphyr 2.0.0. An isolated Svit
+  copy using those local crates passed all 257 tests, feature/workspace Clippy,
+  documentation, 11 deterministic examples, repository validators, and `cargo deny`
+  without new exceptions; its dependency graph contains neither serde_yaml nor
+  unsafe-libyaml. Upstream parser checks passed 1,209 contracts tests and 30
+  agent-package tests. This is validation evidence, not a shipped dependency:
+  the upstream commit is local, Svit's committed lockfile is unchanged, and
+  adoption requires publishing the upstream fix and refreshing that lockfile.
+
 ## 2026-10-25
 
 * **Personal agent eval**: `evals/personal-agent/` is a graded Mira study of
