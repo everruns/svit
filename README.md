@@ -69,7 +69,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .instructions(
             "Write requested durable facts to the exact process path before replying.",
         )
-        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+        .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
         .build()
         .await?;
 
@@ -186,7 +186,7 @@ async fn build_persisted() -> Result<Svit, Box<dyn std::error::Error>> {
     let durable = store.create(process).await?;
 
     Ok(Svit::persisted(durable)?
-        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+        .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
         .build()
         .await?)
 }
@@ -215,7 +215,7 @@ use svit::{
     HttpAllowlist, OpenAI, Ports, Reasoner, ReqwestHttpTransport, Svit,
 };
 
-let reasoner = Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?);
+let reasoner = Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?);
 let ports = Ports::new()
     .http(
         HttpAllowlist::new().allow("https://api.github.com/"),

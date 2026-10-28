@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
              Before replying, call commit_answer exactly once with your complete answer. \
              Return the same answer as your final response.",
         )
-        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+        .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
         .build()
         .await?;
 

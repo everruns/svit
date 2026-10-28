@@ -4,6 +4,18 @@ All notable changes to Svit will be documented here.
 
 ## Unreleased
 
+### Security
+
+- Refresh locked pulldown-cmark, rustls, rustls-webpki, webpki-root-certs and
+  Tokio patch versions for parser, TLS and I/O-safety advisories. Update the
+  Everruns framework dependency to remove unmaintained serde_yaml/unsafe-libyaml
+  from skill and agent-package parsing without adding advisory exceptions.
+
+### Changed
+
+- Lampa and runnable OpenAI examples now use GPT-6.1 Terra by default.
+  Explicit model selections and recorded evaluation baselines are unchanged.
+
 ### Added
 
 - Carry provider reasoning artifacts and file references across the message
