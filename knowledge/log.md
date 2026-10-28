@@ -8,20 +8,19 @@
   additional AsyncFd unsoundness advisory. The TLS verification fixes affect
   network clients; Lampa's Markdown parser does not enable the vulnerable
   wikilink option, and rustls Brotli certificate decompression is not enabled.
-  `cargo deny` still rejects unsafe-libyaml through Everruns' serde_yaml
-  dependency; there is no patched unsafe-libyaml release. No advisory exception
-  was added. Ketos's legacy dependency limitations remain [L-025](operations/limitations.md).
+  Updating Everruns removes its unmaintained serde_yaml/unsafe-libyaml parser
+  dependencies from Svit's graph. No advisory exception was added. Ketos's
+  legacy dependency limitations remain [L-025](operations/limitations.md).
 
-* **YAML migration candidate**: Everruns commit
-  `272c1b96513c14dcac21346bf0367b5ded15c6a3` on `fix/framework-yaml-parser`
-  replaces contracts/core YAML parsing with serde-saphyr 2.0.0. An isolated Svit
-  copy using those local crates passed all 257 tests, feature/workspace Clippy,
-  documentation, 11 deterministic examples, repository validators, and `cargo deny`
-  without new exceptions; its dependency graph contains neither serde_yaml nor
-  unsafe-libyaml. Upstream parser checks passed 1,209 contracts tests and 30
-  agent-package tests. This is validation evidence, not a shipped dependency:
-  the upstream commit is local, Svit's committed lockfile is unchanged, and
-  adoption requires publishing the upstream fix and refreshing that lockfile.
+* **Framework YAML parsing**: Everruns contracts/core use maintained
+  serde-saphyr with YAML 1.2 scalar behavior, literal merge keys, bounded parsing
+  and source snippets disabled in errors. File includes and interpolation stay
+  disabled. Compatibility evidence covers skill descriptions, aliases and
+  agent-package format round trips; negative tests reject excessive nesting.
+  Svit's consumer checks cover 257 tests, feature/workspace Clippy, documentation,
+  11 deterministic examples and repository validators. `cargo deny` passes
+  without new exceptions, and the graph contains neither serde_yaml nor
+  unsafe-libyaml.
 
 ## 2026-10-25
 

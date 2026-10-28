@@ -7,8 +7,9 @@ All notable changes to Svit will be documented here.
 ### Security
 
 - Refresh locked pulldown-cmark, rustls, rustls-webpki, webpki-root-certs and
-  Tokio patch versions for parser, TLS and I/O-safety advisories. The transitive
-  unmaintained unsafe-libyaml dependency still blocks the dependency policy gate.
+  Tokio patch versions for parser, TLS and I/O-safety advisories. Update the
+  Everruns framework dependency to remove unmaintained serde_yaml/unsafe-libyaml
+  from skill and agent-package parsing without adding advisory exceptions.
 
 ### Changed
 
