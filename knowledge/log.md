@@ -1,5 +1,17 @@
 # Svit Knowledge Update Log
 
+## 2026-10-28
+
+* **Dependency audit**: Patch updates to pulldown-cmark 0.13.5, rustls 0.23.46,
+  rustls-webpki 0.103.16 and webpki-root-certs 1.0.10 remove the seven
+  vulnerability findings in the locked graph. Tokio 1.53.3 addresses the
+  additional AsyncFd unsoundness advisory. The TLS verification fixes affect
+  network clients; Lampa's Markdown parser does not enable the vulnerable
+  wikilink option, and rustls Brotli certificate decompression is not enabled.
+  `cargo deny` still rejects unsafe-libyaml through Everruns' serde_yaml
+  dependency; there is no patched unsafe-libyaml release. No advisory exception
+  was added. Ketos's legacy dependency limitations remain [L-025](operations/limitations.md).
+
 ## 2026-10-25
 
 * **Personal agent eval**: `evals/personal-agent/` is a graded Mira study of

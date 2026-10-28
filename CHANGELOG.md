@@ -4,6 +4,12 @@ All notable changes to Svit will be documented here.
 
 ## Unreleased
 
+### Security
+
+- Refresh locked pulldown-cmark, rustls, rustls-webpki, webpki-root-certs and
+  Tokio patch versions for parser, TLS and I/O-safety advisories. The transitive
+  unmaintained unsafe-libyaml dependency still blocks the dependency policy gate.
+
 ### Changed
 
 - Lampa and runnable OpenAI examples now use GPT-6.1 Terra by default.
