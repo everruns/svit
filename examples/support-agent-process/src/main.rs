@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
              commit succeeds. A ticket intent is queued, not delivered; describe it only as \
              queued.",
         )
-        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+        .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
         .max_iterations(8)
         .build()
         .await?;

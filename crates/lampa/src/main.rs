@@ -9,7 +9,7 @@ use svit::{
 
 mod tui;
 
-const DEFAULT_MODEL: &str = "gpt-5.6-terra";
+const DEFAULT_MODEL: &str = "gpt-6.1-terra";
 const DEFAULT_INSTANCE_ID: &str = "default";
 const USAGE: &str = "usage: lampa [--instance <instance-id>] [--model <model>] [--mount <name>=<path>] [--mount-rw <name>=<path>] [--import-legacy <shared-db>]";
 
@@ -433,6 +433,11 @@ mod tests {
         assert!(parse(&["--mount", "=/tmp/docs"]).is_err());
         assert!(parse(&["--mount"]).is_err());
         assert!(parse(&["--unknown"]).is_err());
+    }
+
+    #[test]
+    fn the_default_model_is_current_terra() {
+        assert_eq!(parse(&[]).unwrap().model, "gpt-6.1-terra");
     }
 
     #[test]

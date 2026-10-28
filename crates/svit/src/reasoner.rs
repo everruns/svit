@@ -10,10 +10,10 @@ use everruns_contracts::ModelSpec;
 /// use svit::{OpenAI, Reasoner};
 ///
 /// let reasoner = Reasoner::new(
-///     "gpt-5.6-terra",
+///     "gpt-6.1-terra",
 ///     OpenAI::from_env()?,
 /// );
-/// assert_eq!(reasoner.model_id(), "gpt-5.6-terra");
+/// assert_eq!(reasoner.model_id(), "gpt-6.1-terra");
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone)]

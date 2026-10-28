@@ -4,6 +4,11 @@ All notable changes to Svit will be documented here.
 
 ## Unreleased
 
+### Changed
+
+- Lampa and runnable OpenAI examples now use GPT-6.1 Terra by default.
+  Explicit model selections and recorded evaluation baselines are unchanged.
+
 ### Added
 
 - Carry provider reasoning artifacts and file references across the message

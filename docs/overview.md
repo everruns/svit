@@ -87,7 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .instructions(
             "Write requested durable facts to the exact process path before replying.",
         )
-        .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+        .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
         .build()
         .await?;
 

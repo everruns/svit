@@ -209,7 +209,7 @@ deterministic suite.
 Agent-loop integration tests snapshot and restore a conversation, continue a
 fork in a child process, and assert parent isolation.
 The credentialed `support-agent-svit` consumer exercises one process-owned Svit
-with `gpt-5.6-terra`. It remains outside the deterministic suite; lifecycle,
+with `gpt-6.1-terra`. It remains outside the deterministic suite; lifecycle,
 snapshot, and fork behavior stays covered by integration tests.
 
 ## Transaction matrix

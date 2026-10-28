@@ -41,7 +41,7 @@ processing. The extension reads committed process state through
 
 `support-agent-process/` constructs memory, mounts, and scripts through the
 lower-level `Process` builder, then runs that process through `Svit::resume`
-with `gpt-5.6-terra`. The model sees Svit's complete process surface:
+with `gpt-6.1-terra`. The model sees Svit's complete process surface:
 
 - `discover`: list children under any Svit process path;
 - `read`: read a value by absolute process path;
@@ -80,7 +80,7 @@ model is ignored.
 ## Direct Svit support workflow
 
 `support-agent-svit/` builds the complete instance directly through
-`Svit::builder`. It uses OpenAI `gpt-5.6-terra` and demonstrates:
+`Svit::builder`. It uses OpenAI `gpt-6.1-terra` and demonstrates:
 
 - one runnable `Svit`, with Everruns behind the Svit API;
 - explicit inbox submission, process start, outbox listening, and blocking drain;

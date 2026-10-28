@@ -11,7 +11,7 @@
 //!
 //! # async fn run() -> Result<(), Box<dyn std::error::Error>> {
 //! let mut svit = Svit::builder("svit://local/example/readme")?
-//!     .reasoner(Reasoner::new("gpt-5.6-terra", OpenAI::from_env()?))
+//!     .reasoner(Reasoner::new("gpt-6.1-terra", OpenAI::from_env()?))
 //!     .build()
 //!     .await?;
 //!
