@@ -116,7 +116,7 @@ pub struct Rubric {
 impl Rubric {
     pub fn from_env() -> Self {
         Self {
-            llm: Llm::from_env("PA_EVAL_JUDGE_MODEL", "gpt-6.1-sol", "medium"),
+            llm: Llm::from_env("PA_EVAL_JUDGE_MODEL", "gpt-6.2-sol", "medium"),
         }
     }
 }

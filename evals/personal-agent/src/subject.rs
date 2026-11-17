@@ -65,7 +65,7 @@ fn infra(error: impl Into<String>) -> CaseError {
 async fn run_case(sample: &Sample, cx: &RunCx) -> Result<Transcript, CaseError> {
     let world_state = merged_world(sample.metadata.get("world"))?;
     let world = World::new(world_state.clone());
-    let simulator_llm = Llm::from_env("PA_EVAL_USER_MODEL", "gpt-6.1-sol", "low")
+    let simulator_llm = Llm::from_env("PA_EVAL_USER_MODEL", "gpt-6.2-sol", "low")
         .ok_or_else(|| infra("OPENAI_API_KEY is required for the simulated user"))?;
     let user = sample.metadata.get("user").cloned().unwrap_or(json!({}));
     let simulator = UserSimulator::new(simulator_llm, &user, &world_state);

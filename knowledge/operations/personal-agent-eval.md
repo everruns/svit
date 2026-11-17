@@ -82,6 +82,10 @@ the design:
 
 ## Running
 
+New runs default the simulated user and rubric judge to `gpt-6.2-sol`;
+`PA_EVAL_USER_MODEL` and `PA_EVAL_JUDGE_MODEL` still override them. The baseline
+results above retain the models that produced them and are not re-scored.
+
 `just eval-personal-agent` runs every case in-process and writes reports under
 `evals/personal-agent/results/`, which git ignores. The `mira` host CLI works
 too. The eval's `README.md` lists the required secrets and tuning variables.
