@@ -339,6 +339,22 @@ community ecosystem of open-source AI projects by
 [Mykhailo Chalyi](https://chaliy.name) and contributors. Questions, ideas and
 research discussion are welcome on [Discord](https://everruns.com/discord).
 
+## Citation
+
+If you use Svit in research, please cite it. GitHub's "Cite this repository"
+button reads the same metadata from [`CITATION.cff`](CITATION.cff).
+
+```bibtex
+@software{chalyi_svit,
+  author  = {Chalyi, Mykhailo and {Everruns contributors}},
+  title   = {Svit: Memory and behavior, committed together},
+  url     = {https://github.com/everruns/svit},
+  version = {0.1.0},
+  year    = {2026},
+  license = {MIT}
+}
+```
+
 ## License
 
 Svit is available under the [MIT License](LICENSE). See [`NOTICE`](NOTICE) for
