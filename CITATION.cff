@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use Svit in research, please cite it using these metadata."
+type: software
+title: "Svit: Memory and behavior, committed together"
+abstract: >-
+  Svit is a research-stage Rust runtime for agents that need durable state and
+  reusable code. It keeps structured memory, named Svit Lisp scripts, inbox
+  state, buffered message intents, and runtime metadata in one serializable
+  process, and commits each activation atomically.
+authors:
+  - family-names: Chalyi
+    given-names: Mykhailo
+  - name: "Everruns contributors"
+repository-code: "https://github.com/everruns/svit"
+url: "https://github.com/everruns/svit"
+license: MIT
+version: "0.1.0"
+keywords:
+  - agent
+  - runtime
+  - lisp
+  - sandbox
+  - memory
