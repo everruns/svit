@@ -1,6 +1,6 @@
 # Development commands. Usage: just <recipe>
 
-okf_lint_version := "0.1.1"
+okf_lint_version := "0.2.0"
 
 default:
     @just --list

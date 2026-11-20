@@ -6,6 +6,10 @@ All notable changes to Svit will be documented here.
 
 ### Security
 
+- Refresh the documentation site's npm dependencies (Astro 7.4, Wrangler 4.162,
+  Mermaid 12, Tailwind 4.3.5, TypeScript 6) to clear the open undici, Vite,
+  launch-editor, Astro, DOMPurify, zod and fast-uri advisories; `pnpm audit`
+  reports none. Update the personal-agent eval lock to rustls 0.23.46.
 - Refresh locked pulldown-cmark, rustls, rustls-webpki, webpki-root-certs and
   Tokio patch versions for parser, TLS and I/O-safety advisories. Update the
   Everruns framework dependency to remove unmaintained serde_yaml/unsafe-libyaml
@@ -13,6 +17,10 @@ All notable changes to Svit will be documented here.
 
 ### Changed
 
+- Update the pinned Rust toolchain to 1.100.0, Turso to 0.8.3, Lampa to
+  Tuika 0.13.0 and `tuika-codeformatters` 0.7.0, and advance the Everruns
+  `main` lock to `1ad53124` (0.53.1). CI actions and `okf-lint` 0.2.0 move to
+  their current releases.
 - Lampa and runnable OpenAI examples now use GPT-6.1 Terra by default.
   Explicit model selections and recorded evaluation baselines are unchanged.
 

@@ -18,7 +18,7 @@ just examples
 `just check-okf` also uses `okf-lint` when installed:
 
 ```console
-cargo install okf-lint --version 0.1.1 --locked
+cargo install okf-lint --version 0.2.0 --locked
 ```
 
 ## Development workflow

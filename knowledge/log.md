@@ -1,5 +1,17 @@
 # Svit Knowledge Update Log
 
+## 2026-11-20
+
+* **Dependency refresh**: Rust 1.99.0 to 1.100.0, Turso 0.8.1 to 0.8.3, Tuika
+  0.12.0 to 0.13.0 with `tuika-codeformatters` 0.7.0, and the Everruns `main`
+  lock to `1ad53124` (0.53.1). Registry releases published within the last
+  seven days were held back, as before: Turso 0.8.4 and
+  `tuika-codeformatters` 0.8.0 wait for the next refresh. `llmsim` 0.9.0 is
+  the exception because the Everruns lock requires it. The eval lock moves to
+  rustls 0.23.46. The site keeps Nimbus 0.9: 0.20 requires a reviewed
+  migration of the agent Markdown and llms routes, which is separate work.
+  The site stays on TypeScript 6 because `@astrojs/check` does not support 7.
+
 ## 2026-10-28
 
 * **Dependency audit**: Patch updates to pulldown-cmark 0.13.5, rustls 0.23.46,
