@@ -11,6 +11,10 @@
   rustls 0.23.46. The site keeps Nimbus 0.9: 0.20 requires a reviewed
   migration of the agent Markdown and llms routes, which is separate work.
   The site stays on TypeScript 6 because `@astrojs/check` does not support 7.
+* **Advisory exceptions**: cargo-deny 0.21 fails on RUSTSEC-2026-0543 and
+  RUSTSEC-2026-0555 (chrono and chrono-tz unmaintained, no safe upgrade).
+  Both crates enter only through Everruns and Turso, so `deny.toml` ignores
+  exactly those two IDs; [L-053](operations/limitations.md) tracks removal.
 
 ## 2026-10-28
 

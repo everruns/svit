@@ -29,6 +29,11 @@ ignore = [
     # exceptions when Ketos is forked, replaced, or republishes its manifest.
     { id = "RUSTSEC-2026-0214", reason = "unused Ketos REPL dependency; no fixed Ketos release" },
     { id = "RUSTSEC-2026-0215", reason = "transitive unused Ketos REPL dependency; no fixed Ketos release" },
+    # chrono and chrono-tz enter only through Everruns (contracts, core,
+    # drivers) and Turso's SQL date functions. Svit calls neither crate and no
+    # maintained release exists; remove when both upstreams move to jiff.
+    { id = "RUSTSEC-2026-0543", reason = "chrono via Everruns and Turso; no maintained release" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz via Everruns core; no maintained release" },
 ]
 
 [bans]
